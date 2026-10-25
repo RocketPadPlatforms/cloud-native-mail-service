@@ -1,22 +1,51 @@
 # Cloud Native Mail Service (CNMS)
 
-CNMS is a Kubernetes operator that runs and manages email servers on
-Kubernetes: **Postfix** (SMTP in/out, relay), **Rspamd** with **Valkey**
-(spam filtering, DKIM signing, SPF/DMARC checks, rate limits), and
-**Dovecot** (IMAP, LMTP, SASL authentication).
+CNMS is a Kubernetes operator by Rocket Pad Platforms that runs and manages
+email servers on Kubernetes: **Postfix** (SMTP in/out, relay), **Rspamd**
+with **Valkey** (spam filtering, DKIM signing, SPF/DMARC checks, rate
+limits), and **Dovecot** (IMAP, LMTP, SASL authentication).
 
-The operator is a control plane: it renders configuration for proven
-software and manages its lifecycle. Control plane and data plane are
+The operator is a control plane, not an MTA: it renders configuration for
+proven software and manages its lifecycle. Control plane and data plane are
 separate — if the operator is down, mail keeps flowing.
 
 **Status:** pre-v1 — API version `cnms.rpp.gmbh/v1alpha1`, subject to
 change. Upgrade notes are published for every release.
 
-## Explore
+## What CNMS gives you
 
-- [Roadmap](roadmap.md)
-- [Architecture decisions (ADRs)](decisions/index.md)
-- [Backlog](backlog.md)
+- **Mail servers as custom resources.** Declare a `MailServer` and CNMS runs
+  the full data plane — Postfix, Rspamd, Valkey and Dovecot — with
+  production-grade defaults: TLS, rate limits, DKIM signing, recipient
+  validation.
+- **Reputation isolation.** Every `MailServer` owns its workloads, queues,
+  sending addresses, DKIM keys and HELO names, so several mail systems on
+  one cluster never share sender reputation.
+- **Mail is never lost to a component outage.** Filtering or lookup
+  failures delay mail (4xx and queueing) — they never reject it or send it
+  unsigned.
+- **Users stay outside the operator.** Mailboxes and accounts come from an
+  external directory (LDAP or SQL); CNMS only configures Postfix and Dovecot
+  to query it.
+
+## Documentation
+
+- [Getting started](getting-started/index.md) — install on kind, first send
+  and first receive.
+- [How-to guides](how-to/index.md) — install, DNS records, rDNS, IP pools,
+  directories, relay mode, mailboxes, observability, backup, GitOps.
+- [Concepts](concepts/index.md) — resource model, domain authorization,
+  architecture, control plane vs data plane, reputation isolation, failure
+  modes.
+- [Operations](operations/index.md) — runbooks and operating procedures.
+- [Reference](reference/index.md) — API reference, third-party licenses.
+
+## Project
+
+- [Roadmap](roadmap.md) — the phase plan and its status.
+- [Architecture decisions (ADRs)](decisions/index.md) — design decisions
+  with their rationale.
+- [Backlog](backlog.md) — ideas parked outside the current phase.
 
 ## Repository
 
