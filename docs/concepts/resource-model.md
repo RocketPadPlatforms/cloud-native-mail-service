@@ -1,15 +1,30 @@
 # Resource model
 
-CNMS v1alpha1 (API group `cnms.rpp.gmbh`) currently defines three resources.
-They are all namespace-scoped: a tenant's mail system lives in one namespace,
-and every reference between CNMS resources stays inside that namespace
-(name-only references, no cross-namespace RBAC).
+CNMS v1alpha1 (API group `cnms.rpp.gmbh`) currently defines four resources.
+Three of them are namespace-scoped: a tenant's mail system lives in one
+namespace, and every reference between CNMS resources stays inside that
+namespace (name-only references, no cross-namespace RBAC). The fourth,
+`MailDomainGrant`, is cluster-scoped and admin-owned.
 
 The full API reference is [generated from the Go types](../reference/api.md)
 (`make api-ref`). Design decisions are recorded in
-[ADR 0002](../decisions/0002-v1alpha1-api-design.md).
+[ADR 0002](../decisions/0002-v1alpha1-api-design.md) and
+[ADR 0003](../decisions/0003-security-defaults-and-domain-ownership.md).
+How domain authorization works is explained in
+[domain authorization](domain-authorization.md).
 
-## The three resources
+## The four resources
+
+### `MailDomainGrant`
+
+Grants one namespace the right to use one domain for mail (sending,
+receiving, DKIM signing, certificates, DNS records). Cluster-scoped and
+admin-owned; the object name is the domain itself, so there is exactly one
+grant per exact domain and the name is normalized by the API server.
+`spec.namespace` names the tenant; `spec.includeSubdomains` (default
+`false`) also covers subdomains, with more specific grants taking
+precedence. The operator enforces the grants and fails closed; without a
+matching grant a domain is inactive.
 
 ### `MailServer`
 
@@ -65,15 +80,19 @@ is down) and Dovecot authentication (submission and IMAP). `status` carries a
 ## How they fit together
 
 ```
+MailDomainGrant ──authorizes──> namespace + domain   (admin-owned, cluster-scoped)
 MailServer ──references──> MailDirectory   (auth + recipient validation)
 MailServer ──references──> MailDomain      (DKIM signing, submission domains)
 MailDomain ─── publishes ──> DNS records   (DKIM/SPF/DMARC/MTA-STS/TLS-RPT)
 ```
 
 `MailServer` references its domains; `MailDomain` is independent and can in
-principle be used by several `MailServer`s. The controller (Phase 2 onward)
-validates those references at reconcile time; the API server enforces only the
-per-object rules (schema, defaults, CEL).
+principle be used by several `MailServer`s. A `MailDomain` is only active for
+its domain when a `MailDomainGrant` names its namespace (or the operator
+runs unrestricted); without one, the domain is inactive and fail closed.
+The controller (Phase 2 onward) validates those references and evaluates
+the grants at reconcile time; the API server enforces only the per-object
+rules (schema, defaults, CEL).
 
 ## What is not here yet
 

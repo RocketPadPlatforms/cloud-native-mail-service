@@ -3,6 +3,7 @@
 Background on how CNMS works:
 
 - [Resource model](resource-model.md) (current v1alpha1 resources)
+- [Domain authorization](domain-authorization.md) (`MailDomainGrant`, fail-closed)
 - Architecture
 - Control plane vs data plane
 - Reputation isolation between mail servers
