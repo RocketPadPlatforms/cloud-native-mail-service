@@ -50,10 +50,12 @@ present. Metric sources per component, verified on 2026-10-25:
    are extending the sidecar to parse stdout or adopting a maintained
    exporter at that time.
 2. **Rspamd metrics:** expose the controller worker's `/metrics`
-   (OpenMetrics) on named port `cnms-rspamd-metrics` (11311) with a
-   Service. No controller password in v1: each `MailServer` has its
-   own Rspamd set, access is restricted by the NetworkPolicies of
-   ADR-0006, and the metrics path is the only one the operator needs.
+   (OpenMetrics) on named port `cnms-rspamd-metrics` (11334, the Rspamd
+   4.x controller worker default; verified against the 4.2.3
+   configuration) with a Service. No controller password in v1: each
+   `MailServer` has its own Rspamd set, access is restricted by the
+   NetworkPolicies of ADR-0006, and the metrics path is the only one
+   the operator needs.
    The write endpoints of the controller are reachable in-cluster;
    this trade-off is documented in the observability docs.
 3. **Valkey metrics:** `oliver006/redis_exporter` v1.96.0 (MIT) as a

@@ -88,7 +88,7 @@ container image with a known user, writable paths, and a log path
   system in 4.0. All Rspamd rendering is verified against the 4.2
   documentation before the Rspamd renderer commit lands (principle 8);
   assumptions are recorded there.
-- Rspamd 9.x compatibility: the Valkey 9 behavior changes (auth order,
+- Valkey 9.x compatibility: the Valkey 9 behavior changes (auth order,
   command validation) are exercised by the e2e Rspamd↔Valkey path; if
   the redis module misbehaves, the Valkey pin may be moved to 8.1.x in
   a follow-up ADR.

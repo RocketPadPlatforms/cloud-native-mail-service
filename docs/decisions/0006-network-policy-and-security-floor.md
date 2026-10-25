@@ -21,7 +21,7 @@ narrowing of port-25 egress arrives with Phase 7.
    `cnms.rpp.gmbh/managed-by=cnms` plus the app label):
    - Ingress default-deny for CNMS pods, with allows: the inbound
      Service ports (25, 587) from anywhere; the component ports
-     (postfix→rspamd milter 11319, postfix→dovecot 24 and the auth
+     (postfix→rspamd milter 11332, postfix→dovecot 24 and the auth
      port, rspamd→valkey 6379) only between the pods of the same
      `MailServer`; the metrics ports (ADR-0005) from the cluster
      (documented: v1 allows in-cluster scraping without extra
