@@ -24,14 +24,18 @@ smtpd_recipient_restrictions = permit_mynetworks, permit_sasl_authenticated, rej
 mydestination =
 
 # --- TLS (ADR 0006 floor: AUTH only over TLS, TLS >= 1.2) ---
-smtpd_tls_security_level = encrypt
+# Inbound on port 25 is opportunistic (STARTTLS offered,
+# cleartext accepted); the submission listener (587)
+# requires TLS via the per-service override in
+# master.cf. Outbound delivery is opportunistic.
+smtpd_tls_security_level = may
 smtpd_tls_auth_only = yes
 smtpd_tls_mandatory_protocols = >=TLSv1.2
 smtpd_tls_mandatory_ciphers = medium
 smtpd_tls_cert_file = /etc/postfix/tls/tls.crt
 smtpd_tls_key_file = /etc/postfix/tls/tls.key
 smtpd_tls_loglevel = 1
-smtp_tls_security_level = encrypt
+smtp_tls_security_level = may
 smtp_tls_mandatory_protocols = >=TLSv1.2
 smtp_tls_mandatory_ciphers = medium
 smtp_tls_loglevel = 1

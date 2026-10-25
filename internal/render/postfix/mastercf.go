@@ -28,7 +28,8 @@ import (
 // table mirrors the Postfix 3.11 shipped master.cf verbatim (the master
 // needs every internal service and delivery agent to process mail). The
 // submission listener uses the numeric service name "587" so it does not
-// depend on an /etc/services entry; AUTH is enabled only for it.
+// depend on an /etc/services entry; AUTH is enabled only for it, and TLS
+// is enforced for it (the main.cf default is opportunistic).
 func renderMasterCF(req *render.RenderRequest) string {
 	var b strings.Builder
 	b.WriteString("# CNMS-rendered Postfix master.cf -- do not edit.\n")
@@ -40,6 +41,7 @@ func renderMasterCF(req *render.RenderRequest) string {
 	if submissionEnabled(req) {
 		b.WriteString("587       inet  n       -       n       -       -       smtpd\n")
 		b.WriteString("  -o smtpd_sasl_auth_enable=yes\n")
+		b.WriteString("  -o smtpd_tls_security_level=encrypt\n")
 	}
 	b.WriteString("pickup    unix  n       -       n       60      1       pickup\n")
 	b.WriteString("cleanup   unix  n       -       n       -       0       cleanup\n")
