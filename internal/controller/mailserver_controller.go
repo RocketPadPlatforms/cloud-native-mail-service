@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -29,6 +30,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -648,7 +650,11 @@ func applyObject(ctx context.Context, c client.Client, scheme *runtime.Scheme, o
 			return c.Create(ctx, desired)
 		}
 	}
-	mergeOwnedFields(existing, desired)
+	// Skip the write when the owned fields already match, so a
+	// reconcile does not re-trigger itself through a watch event.
+	if !mergeOwnedFields(existing, desired) {
+		return nil
+	}
 	return c.Update(ctx, existing)
 }
 
@@ -672,41 +678,123 @@ func volumeClaimTemplatesEqual(a, b []corev1.PersistentVolumeClaim) bool {
 
 // mergeOwnedFields copies the controller-owned fields (labels,
 // annotations, spec) from desired into the fetched existing object,
-// preserving the server-managed status.
-func mergeOwnedFields(existing, desired client.Object) {
+// preserving the server-managed status and metadata owned by other
+// actors (for example deployment.kubernetes.io/revision, maintained
+// by the kube deployment controller). Dropping foreign annotations
+// would change the object on every write and, for Deployments, bump
+// the generation each time. It reports whether anything changed.
+func mergeOwnedFields(existing, desired client.Object) bool {
+	var changed bool
+	// mergeStrings overlays the owned keys onto the existing map,
+	// keeping keys that only the existing object has.
+	mergeStrings := func(e *map[string]string, owned map[string]string) {
+		if len(owned) == 0 {
+			return
+		}
+		if *e == nil {
+			*e = make(map[string]string, len(owned))
+		}
+		for k, v := range owned {
+			if (*e)[k] != v {
+				(*e)[k] = v
+				changed = true
+			}
+		}
+	}
+	// sameValue reports whether an owned value field already matches.
+	sameValue := func(current, owned any) bool {
+		return equality.Semantic.DeepEqual(current, owned)
+	}
 	switch d := desired.(type) {
 	case *corev1.ConfigMap:
 		e := existing.(*corev1.ConfigMap)
-		e.Labels, e.Annotations, e.Data = d.Labels, d.Annotations, d.Data
+		mergeStrings(&e.Labels, d.Labels)
+		mergeStrings(&e.Annotations, d.Annotations)
+		if !sameValue(e.Data, d.Data) {
+			e.Data = d.Data
+			changed = true
+		}
 	case *corev1.Service:
 		e := existing.(*corev1.Service)
-		e.Labels, e.Annotations, e.Spec = d.Labels, d.Annotations, d.Spec
+		mergeStrings(&e.Labels, d.Labels)
+		mergeStrings(&e.Annotations, d.Annotations)
+		if !sameValue(e.Spec, d.Spec) {
+			e.Spec = d.Spec
+			changed = true
+		}
 	case *corev1.PersistentVolumeClaim:
 		e := existing.(*corev1.PersistentVolumeClaim)
-		e.Labels, e.Annotations = d.Labels, d.Annotations
-		e.Spec.Resources = d.Spec.Resources // the only resizable field
+		mergeStrings(&e.Labels, d.Labels)
+		mergeStrings(&e.Annotations, d.Annotations)
+		if !sameValue(e.Spec.Resources, d.Spec.Resources) { // the only resizable field
+			e.Spec.Resources = d.Spec.Resources
+			changed = true
+		}
 	case *appsv1.StatefulSet:
 		e := existing.(*appsv1.StatefulSet)
-		e.Labels, e.Annotations, e.Spec = d.Labels, d.Annotations, d.Spec
+		mergeStrings(&e.Labels, d.Labels)
+		mergeStrings(&e.Annotations, d.Annotations)
+		if !sameValue(e.Spec, d.Spec) {
+			e.Spec = d.Spec
+			changed = true
+		}
 	case *appsv1.Deployment:
 		e := existing.(*appsv1.Deployment)
-		e.Labels, e.Annotations, e.Spec = d.Labels, d.Annotations, d.Spec
+		mergeStrings(&e.Labels, d.Labels)
+		mergeStrings(&e.Annotations, d.Annotations)
+		if !sameValue(e.Spec, d.Spec) {
+			e.Spec = d.Spec
+			changed = true
+		}
 	case *policyv1.PodDisruptionBudget:
 		e := existing.(*policyv1.PodDisruptionBudget)
-		e.Labels, e.Annotations, e.Spec = d.Labels, d.Annotations, d.Spec
+		mergeStrings(&e.Labels, d.Labels)
+		mergeStrings(&e.Annotations, d.Annotations)
+		if !sameValue(e.Spec, d.Spec) {
+			e.Spec = d.Spec
+			changed = true
+		}
 	case *networkingv1.NetworkPolicy:
 		e := existing.(*networkingv1.NetworkPolicy)
-		e.Labels, e.Annotations, e.Spec = d.Labels, d.Annotations, d.Spec
+		mergeStrings(&e.Labels, d.Labels)
+		mergeStrings(&e.Annotations, d.Annotations)
+		if !sameValue(e.Spec, d.Spec) {
+			e.Spec = d.Spec
+			changed = true
+		}
 	default:
 		// Unstructured objects (Certificate, ServiceMonitor).
 		u := desired.(*unstructured.Unstructured)
 		e := existing.(*unstructured.Unstructured)
-		e.SetLabels(u.GetLabels())
+		// GetLabels returns a copy, so merge explicitly and re-set.
+		if owned := u.GetLabels(); len(owned) > 0 {
+			cur := e.GetLabels()
+			if len(cur) == 0 {
+				e.SetLabels(owned)
+				changed = true
+			} else {
+				merged := make(map[string]string, len(cur)+len(owned))
+				maps.Copy(merged, cur)
+				labelsChanged := false
+				for k, v := range owned {
+					if merged[k] != v {
+						merged[k] = v
+						labelsChanged = true
+					}
+				}
+				if labelsChanged {
+					e.SetLabels(merged)
+					changed = true
+				}
+			}
+		}
 		spec, found, _ := unstructured.NestedMap(u.Object, "spec")
-		if found {
+		if found && !sameValue(e.Object["spec"], spec) {
 			_ = unstructured.SetNestedMap(e.Object, spec, "spec")
+			changed = true
 		}
 	}
+	return changed
 }
 
 // isUnstructuredKind reports whether obj is an unstructured object of

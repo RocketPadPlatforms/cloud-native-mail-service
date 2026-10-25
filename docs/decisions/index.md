@@ -27,3 +27,5 @@ See [TEMPLATE.md](TEMPLATE.md).
 | [0004](0004-data-plane-images-and-build-strategy.md) | Data-plane images and build strategy | Accepted |
 | [0005](0005-component-metrics-sources.md) | Component metrics sources | Accepted |
 | [0006](0006-network-policy-and-security-floor.md) | NetworkPolicy floor and security floor | Accepted |
+| [0007](0007-deployment-annotation-merge.md) | Merging operator-owned annotations and skipping no-op writes | Accepted |
+
