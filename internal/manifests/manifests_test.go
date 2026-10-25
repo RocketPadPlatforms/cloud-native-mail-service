@@ -285,6 +285,20 @@ func TestDovecotStatefulSet(t *testing.T) {
 		!slices.Contains(main.SecurityContext.Capabilities.Add, corev1.Capability("NET_BIND_SERVICE")) {
 		t.Error("dovecot main container needs NET_BIND_SERVICE (ports 24/143)")
 	}
+	for i := range sts.Spec.Template.Spec.Containers {
+		c := &sts.Spec.Template.Spec.Containers[i]
+		if c.Name != certReloadContainerName {
+			continue
+		}
+		// The Dovecot image lacks coreutils; the sidecar runs the
+		// Postfix image as vmail and reloads via SIGHUP.
+		if c.Image != images.Postfix {
+			t.Errorf("dovecot cert-reload image = %s, want the Postfix image", c.Image)
+		}
+		if c.SecurityContext == nil || c.SecurityContext.RunAsUser == nil || *c.SecurityContext.RunAsUser != dovecotVmailID {
+			t.Error("dovecot cert-reload must run as vmail to signal the master")
+		}
+	}
 	svc := mustFind[*corev1.Service](t, find(t, objs, kindService, testName+"-dovecot"), testName+"-dovecot")
 	if hasPort(svc, "imap") || hasPort(svc, "imaps") {
 		t.Error("dovecot service exposes IMAP without mailboxes")
@@ -348,7 +362,7 @@ func TestValkeyDeployment(t *testing.T) {
 	if exporter == nil {
 		t.Fatal("redis-exporter sidecar missing")
 	}
-	wantArg := "--redis.address=redis://127.0.0.1:" + fmt.Sprintf("%d", render.PortValkey)
+	wantArg := "--redis.addr=redis://127.0.0.1:" + fmt.Sprintf("%d", render.PortValkey)
 	if !slices.Contains(exporter.Args, wantArg) {
 		t.Errorf("exporter args = %v, want %q", exporter.Args, wantArg)
 	}

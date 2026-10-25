@@ -247,11 +247,18 @@ func dovecotStatefulSet(server *cnmsv1alpha1.MailServer, r *render.RenderResult)
 						ReadinessProbe: portProbe(render.PortDovecotLMTP),
 						LivenessProbe:  portProbe(render.PortDovecotLMTP),
 					}, {
-						Name:    "cert-reload",
-						Image:   images.Dovecot,
-						Command: certReloadLoop(dovecotSSLDir()+"/"+TLSCertFile, r.ReloadCommand),
-						// doveadm talks to the master over the
+						// The loop needs coreutils (sleep,
+						// sha256sum), which the minimal Dovecot
+						// image lacks, so it runs in the Postfix
+						// image and reloads by signaling the
+						// Dovecot master (doveadm reload is the
+						// same SIGHUP) via the pidfile in the
 						// shared runtime directory.
+						Name:            "cert-reload",
+						Image:           images.Postfix,
+						SecurityContext: &corev1.SecurityContext{RunAsUser: new(dovecotVmailID)},
+						Command: certReloadLoop(dovecotSSLDir()+"/"+TLSCertFile,
+							[]string{"kill", "-HUP", "$(cat " + dovecotRunDir + "/master.pid)"}),
 						VolumeMounts: dovecotMounts(false),
 					}},
 				},
@@ -380,7 +387,9 @@ func valkeyDeployment(server *cnmsv1alpha1.MailServer, r *render.RenderResult) *
 						Name:  "redis-exporter",
 						Image: images.RedisExporter,
 						Args: []string{
-							fmt.Sprintf("--redis.address=redis://127.0.0.1:%d", render.PortValkey),
+							// The flag is redis.addr (not
+							// redis.address) in the pinned exporter.
+							fmt.Sprintf("--redis.addr=redis://127.0.0.1:%d", render.PortValkey),
 						},
 						Ports: []corev1.ContainerPort{{
 							Name:          "valkey-metrics",
