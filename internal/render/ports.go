@@ -45,6 +45,11 @@ const (
 	PortValkeyMetrics int32 = 9121 // redis_exporter sidecar (ADR-0005)
 )
 
+// AllComponents lists the data-plane components in a fixed order.
+func AllComponents() []Component {
+	return []Component{ComponentPostfix, ComponentRspamd, ComponentDovecot, ComponentValkey}
+}
+
 // ComponentPorts are the in-cluster service ports of a component.
 func ComponentPorts(c Component) []int32 {
 	switch c {
