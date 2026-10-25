@@ -22,7 +22,9 @@ const config = {
           path: '../docs',
           routeBasePath: '/',
           sidebarPath: require.resolve('./sidebars.js'),
-          editUrl: 'https://github.com/RocketPadPlatforms/cloud-native-mail-service/',
+          // No trailing slash: Docusaurus appends the file path relative to
+          // the site root (../docs/...), and GitHub normalizes the "/../".
+          editUrl: 'https://github.com/RocketPadPlatforms/cloud-native-mail-service/edit/main',
           // "main" is published as "Next (unreleased)"; a docs version is cut
           // per minor release (see docs/roadmap.md and the release workflow).
           versions: {
