@@ -54,7 +54,9 @@ var _ = Describe("MailDomain Controller", func() {
 						Name:      resourceName,
 						Namespace: resourceNamespace,
 					},
-					// TODO(user): Specify other spec details if needed.
+					Spec: cnmsv1alpha1.MailDomainSpec{
+						Domain: "example.org",
+					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}
