@@ -21,38 +21,120 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
+// DirectoryType is the type of an external user directory.
+type DirectoryType string
 
-// MailDirectorySpec defines the desired state of MailDirectory
+const (
+	// DirectoryTypeLDAP is an LDAP directory.
+	DirectoryTypeLDAP DirectoryType = "ldap"
+	// DirectoryTypeSQL is a SQL (PostgreSQL) directory.
+	DirectoryTypeSQL DirectoryType = "sql"
+)
+
+// MailDirectorySpec defines the desired state of a MailDirectory.
+//
+// A MailDirectory is an external user directory. Mail is delivered to
+// users and authenticated against it; the directory and its accounts
+// are managed outside of CNMS.
+//
+// +kubebuilder:validation:XValidation:rule="has(self.ldap) != has(self.sql) && ((self.type == 'ldap' && has(self.ldap)) || (self.type == 'sql' && has(self.sql)))",message="exactly one of ldap or sql must be set and must match type"
 type MailDirectorySpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
+	// Directory type.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Enum=ldap;sql
+	Type DirectoryType `json:"type"`
 
-	// foo is an example field of MailDirectory. Edit maildirectory_types.go to remove/update
+	// LDAP settings. Required when type is "ldap".
 	// +optional
-	Foo *string `json:"foo,omitempty"`
+	LDAP *LDAP `json:"ldap,omitempty"`
+
+	// SQL settings. Required when type is "sql".
+	// +optional
+	SQL *SQL `json:"sql,omitempty"`
 }
 
-// MailDirectoryStatus defines the observed state of MailDirectory.
+// LDAP configures an LDAP user directory.
+//
+// +kubebuilder:validation:XValidation:rule="!has(self.bindDN) || has(self.bindSecretRef)",message="bindSecretRef is required when bindDN is set"
+type LDAP struct {
+	// Server host.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MaxLength=253
+	Host string `json:"host"`
+
+	// Server port. Defaults to 389.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	// +kubebuilder:default=389
+	Port *int32 `json:"port,omitempty"`
+
+	// Use StartTLS. Defaults to true.
+	// +optional
+	// +kubebuilder:default=true
+	StartTLS *bool `json:"startTls,omitempty"`
+
+	// Base DN for user searches.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MaxLength=256
+	BaseDN string `json:"baseDN"`
+
+	// Bind DN used for searches. Empty means an anonymous bind.
+	// +nullable
+	// +optional
+	// +kubebuilder:validation:MaxLength=256
+	BindDN *string `json:"bindDN,omitempty"`
+
+	// Secret with the bind password (key "password"). Required when
+	// bindDN is set.
+	// +optional
+	BindSecretRef *SecretReference `json:"bindSecretRef,omitempty"`
+
+	// Search filter for users; %s is replaced with the user's mail
+	// address. Defaults to "(mail=%s)".
+	// +optional
+	// +kubebuilder:validation:MaxLength=256
+	UserFilter *string `json:"userFilter,omitempty"`
+}
+
+// SQL configures a SQL user directory (PostgreSQL).
+type SQL struct {
+	// Server host.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MaxLength=253
+	Host string `json:"host"`
+
+	// Server port. Defaults to 5432.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	// +kubebuilder:default=5432
+	Port *int32 `json:"port,omitempty"`
+
+	// Database name.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MaxLength=63
+	Database string `json:"database"`
+
+	// Database user.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MaxLength=63
+	Username string `json:"username"`
+
+	// Secret with the database password (key "password").
+	// +kubebuilder:validation:Required
+	PasswordSecretRef SecretReference `json:"passwordSecretRef"`
+}
+
+// MailDirectoryStatus defines the observed state of a MailDirectory.
 type MailDirectoryStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	// ObservedGeneration is the generation of the spec last applied.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
-
-	// conditions represent the current state of the MailDirectory resource.
-	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
-	//
-	// Standard condition types include:
-	// - "Available": the resource is fully functional
-	// - "Progressing": the resource is being created or updated
-	// - "Degraded": the resource failed to reach or maintain its desired state
-	//
-	// The status of each condition is one of True, False, or Unknown.
+	// Conditions represent the current state of the MailDirectory.
+	// The "Ready" condition is true when the directory is reachable
+	// and answers queries.
 	// +listType=map
 	// +listMapKey=type
 	// +optional
@@ -61,8 +143,11 @@ type MailDirectoryStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Type",type="string",JSONPath=".spec.type"
+// +kubebuilder:printcolumn:name="Ready",type="string",JSONPath=".status.conditions[?(@.type=='Ready')].status"
+// +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
-// MailDirectory is the Schema for the maildirectories API
+// MailDirectory is the Schema for the cnms mail directories.
 type MailDirectory struct {
 	metav1.TypeMeta `json:",inline"`
 
@@ -70,11 +155,11 @@ type MailDirectory struct {
 	// +optional
 	metav1.ObjectMeta `json:"metadata,omitzero"`
 
-	// spec defines the desired state of MailDirectory
+	// spec defines the desired state of the MailDirectory
 	// +required
 	Spec MailDirectorySpec `json:"spec"`
 
-	// status defines the observed state of MailDirectory
+	// status defines the observed state of the MailDirectory
 	// +optional
 	Status MailDirectoryStatus `json:"status,omitzero"`
 }
