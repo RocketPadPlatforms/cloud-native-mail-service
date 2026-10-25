@@ -1,0 +1,22 @@
+# CNMS-rendered Valkey valkey.conf -- do not edit.
+# Source: MailServer tenant1/mail (ADR 0004)
+
+# One dedicated Valkey instance per MailServer (principle 6):
+# rate-limit, reputation and Bayes state are never shared
+# between servers.
+# Internal state store: reached only from the Rspamd pods of
+# the same MailServer (ADR 0006); no auth by design.
+port 6379
+bind * -::*
+protected-mode no
+# Log to stdout (container log).
+logfile ""
+# Data directory: emptyDir by default, RWO PVC when
+# spec.valkey.persistence is enabled (ADR 0004). The image
+# entrypoint chowns the directory to the valkey user (999).
+dir /data
+# RDB snapshots (the built-in defaults, made explicit): with
+# persistence enabled they land on the volume; Valkey state
+# is excluded from backups by default (rebuildable except
+# trained Bayes data).
+save 3600 1 300 100 60 10000
