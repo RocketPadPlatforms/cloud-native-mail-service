@@ -57,6 +57,74 @@
       "depName": "github.com/elastic/crd-ref-docs",
       "datasource": "go",
       "versioning": "semver"
+    },
+    {
+      "description": "CNMS data-plane image pins (ADR 0004 section 6): tag and digest.",
+      "fileMatch": ["^internal/images/images\\.go$"],
+      "matchStrings": [
+        "Dovecot\\s*=\\s*\"dovecot/dovecot:(?<currentValue>[^\"@]+)@(?<currentDigest>sha256:[0-9a-f]+)\""
+      ],
+      "depName": "dovecot/dovecot",
+      "datasource": "docker",
+      "versioning": "docker"
+    },
+    {
+      "description": "CNMS data-plane image pins (ADR 0004 section 6): tag and digest.",
+      "fileMatch": ["^internal/images/images\\.go$"],
+      "matchStrings": [
+        "Rspamd\\s*=\\s*\"rspamd/rspamd:(?<currentValue>[^\"@]+)@(?<currentDigest>sha256:[0-9a-f]+)\""
+      ],
+      "depName": "rspamd/rspamd",
+      "datasource": "docker",
+      "versioning": "docker"
+    },
+    {
+      "description": "CNMS data-plane image pins (ADR 0004 section 6): tag and digest.",
+      "fileMatch": ["^internal/images/images\\.go$"],
+      "matchStrings": [
+        "Valkey\\s*=\\s*\"valkey/valkey:(?<currentValue>[^\"@]+)@(?<currentDigest>sha256:[0-9a-f]+)\""
+      ],
+      "depName": "valkey/valkey",
+      "datasource": "docker",
+      "versioning": "docker"
+    },
+    {
+      "description": "CNMS data-plane image pins (ADR 0004 section 6): tag and digest.",
+      "fileMatch": ["^internal/images/images\\.go$"],
+      "matchStrings": [
+        "RedisExporter\\s*=\\s*\"oliver006/redis_exporter:(?<currentValue>[^\"@]+)@(?<currentDigest>sha256:[0-9a-f]+)\""
+      ],
+      "depName": "oliver006/redis_exporter",
+      "datasource": "docker",
+      "versioning": "docker"
+    },
+    {
+      "description": "CNMS e2e sink image pin (ADR 0004 section 7): tag and digest.",
+      "fileMatch": ["^internal/images/images\\.go$"],
+      "matchStrings": [
+        "Mailpit\\s*=\\s*\"axllent/mailpit:(?<currentValue>[^\"@]+)@(?<currentDigest>sha256:[0-9a-f]+)\""
+      ],
+      "depName": "axllent/mailpit",
+      "datasource": "docker",
+      "versioning": "docker"
+    },
+    {
+      "description": "CNMS-built image tags (synced with the Dockerfiles, ADR 0004).",
+      "fileMatch": ["^internal/images/images\\.go$"],
+      "matchStrings": ["Postfix\\s*=\\s*\"cnms/postfix:(?<currentValue>[^\"]+)\""],
+      "depName": "cnms/postfix",
+      "datasource": "docker",
+      "versioning": "semver",
+      "skipUnresolvable": true
+    },
+    {
+      "description": "CNMS-built image tags (synced with the Dockerfiles, ADR 0004).",
+      "fileMatch": ["^internal/images/images\\.go$"],
+      "matchStrings": ["E2EClient\\s*=\\s*\"cnms/e2e-client:(?<currentValue>[^\"]+)\""],
+      "depName": "cnms/e2e-client",
+      "datasource": "docker",
+      "versioning": "semver",
+      "skipUnresolvable": true
     }
   ]
 }
