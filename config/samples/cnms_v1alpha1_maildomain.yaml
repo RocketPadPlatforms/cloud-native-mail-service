@@ -6,4 +6,19 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: maildomain-sample
 spec:
-  # TODO(user): Add fields here
+  domain: example.org
+  dnsMode: manual
+  dkim:
+    selector: cnms
+    rotation:
+      interval: 2160h
+      overlap: 24h
+  dmarc:
+    policy: none
+    rua: dmarc-feedback@example.org
+    testing: true
+  mtaSts:
+    enabled: false
+  tlsRpt:
+    enabled: true
+    rua: tls-rpt@example.org

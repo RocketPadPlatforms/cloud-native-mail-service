@@ -6,4 +6,36 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: mailserver-sample
 spec:
-  # TODO(user): Add fields here
+  directoryRef:
+    name: maildirectory-sample
+  outbound:
+    direct: {}
+  domains:
+    - name: maildomain-sample
+  tls:
+    issuerRef:
+      kind: Issuer
+      name: selfsigned-issuer
+  inbound:
+    serviceType: LoadBalancer
+    externalTrafficPolicy: Local
+  submission:
+    enabled: true
+    staticUsers:
+      secretName: sample-static-users
+  mailboxes:
+    enabled: true
+    storage: 10Gi
+  postfix:
+    replicas: 2
+    queueStorage: 1Gi
+  rspamd:
+    replicas: 2
+  valkey:
+    persistence: false
+  availability:
+    postfixMinAvailable: 1
+  observability:
+    prometheusOperator: auto
+  backup:
+    enabled: true
