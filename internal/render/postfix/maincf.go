@@ -99,10 +99,12 @@ func renderMainCF(req *render.RenderRequest) string {
 	b.WriteString("# --- Rspamd milter (principle 5: never unsigned) ---\n")
 	b.WriteString("# An unreachable or timing-out milter tempfails mail; it is\n")
 	b.WriteString("# never relayed unsigned.\n")
-	fmt.Fprintf(&b, "smtpd_milters = %s:%d\n",
+	// The endpoint needs the explicit inet transport; without it
+	// Postfix rejects the milter name and tempfails every message.
+	fmt.Fprintf(&b, "smtpd_milters = inet:%s:%d\n",
 		render.ServiceFQDN(req.Server.Name, req.Server.Namespace, render.ComponentRspamd),
 		render.PortRspamdMilter)
-	fmt.Fprintf(&b, "non_smtpd_milters = %s:%d\n",
+	fmt.Fprintf(&b, "non_smtpd_milters = inet:%s:%d\n",
 		render.ServiceFQDN(req.Server.Name, req.Server.Namespace, render.ComponentRspamd),
 		render.PortRspamdMilter)
 	b.WriteString("milter_default_action = tempfail\n")
