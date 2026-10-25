@@ -11,6 +11,7 @@ Package v1alpha1 contains API Schema definitions for the cnms v1alpha1 API group
 ### Resource Types
 - [MailDirectory](#maildirectory)
 - [MailDomain](#maildomain)
+- [MailDomainGrant](#maildomaingrant)
 - [MailServer](#mailserver)
 
 
@@ -343,6 +344,72 @@ MailDomain is the Schema for the cnms mail domains.
 | `status` _[MailDomainStatus](#maildomainstatus)_ | status defines the observed state of the MailDomain |  | Optional: \{\} <br /> |
 
 
+#### MailDomainGrant
+
+
+
+MailDomainGrant grants one namespace the right to use one domain for
+mail: sending, receiving, DKIM signing, certificates and DNS records.
+
+Grants are cluster-scoped, admin-owned resources (GitOps). The object
+name is the domain itself, so the API server guarantees exactly one
+grant per exact domain and normalizes the name (lowercase, no
+trailing dot, no underscores). Domain authorization is a pure
+function of the grants and the claimed `MailDomain`s; see the domain
+authorization documentation for the uniqueness and wildcard rules.
+
+
+
+
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `cnms.rpp.gmbh/v1alpha1` | | |
+| `kind` _string_ | `MailDomainGrant` | | |
+| `kind` _string_ | Kind is a string value representing the REST resource this object represents.<br />Servers may infer this from the endpoint the client submits requests to.<br />Cannot be updated.<br />In CamelCase.<br />More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds |  | Optional: \{\} <br /> |
+| `apiVersion` _string_ | APIVersion defines the versioned schema of this representation of an object.<br />Servers should convert recognized schemas to the latest internal value, and<br />may reject unrecognized values.<br />More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources |  | Optional: \{\} <br /> |
+| `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  | Optional: \{\} <br /> |
+| `spec` _[MailDomainGrantSpec](#maildomaingrantspec)_ | spec defines the desired state of the MailDomainGrant |  | Required: \{\} <br /> |
+| `status` _[MailDomainGrantStatus](#maildomaingrantstatus)_ | status defines the observed state of the MailDomainGrant |  | Optional: \{\} <br /> |
+
+
+#### MailDomainGrantSpec
+
+
+
+MailDomainGrantSpec defines the desired state of a MailDomainGrant.
+
+
+
+_Appears in:_
+- [MailDomainGrant](#maildomaingrant)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `namespace` _string_ | Namespace that is allowed to use this domain. The grant binds to<br />an explicit namespace name (not a label selector, which a tenant<br />could influence). |  | MaxLength: 63 <br />Pattern: `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$` <br />Required: \{\} <br /> |
+| `includeSubdomains` _boolean_ | IncludeSubdomains also grants all subdomains of the domain, at<br />any depth. The apex domain is always covered. A more specific<br />grant for a subdomain takes precedence over this grant. Defaults<br />to false. | false | Optional: \{\} <br /> |
+
+
+#### MailDomainGrantStatus
+
+
+
+MailDomainGrantStatus defines the observed state of a MailDomainGrant.
+
+Conditions are informational only; they never feed back into
+authorization decisions.
+
+
+
+_Appears in:_
+- [MailDomainGrant](#maildomaingrant)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `observedGeneration` _integer_ | ObservedGeneration is the generation of the spec last applied. |  | Optional: \{\} <br /> |
+| `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#condition-v1-meta) array_ | Conditions represent the current state of the MailDomainGrant. |  | Optional: \{\} <br /> |
+
+
 #### MailDomainSpec
 
 
@@ -360,7 +427,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `domain` _string_ | Domain name, e.g. "example.org". Lowercase FQDN. |  | MaxLength: 253 <br />Pattern: `^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$` <br />Required: \{\} <br /> |
+| `domain` _string_ | Domain name, e.g. "example.org". Lowercase DNS name with at<br />least two labels (A-labels only, no trailing dot). |  | MaxLength: 253 <br />Pattern: `^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$` <br />Required: \{\} <br /> |
 | `dnsMode` _string_ | DNS mode: "manual" (default) reports the required records in<br />the status for the operator to create; "externalDNS" creates<br />DNSEndpoint resources. | manual | Enum: [manual externalDNS] <br />Optional: \{\} <br /> |
 | `dkim` _[DKIM](#dkim)_ | DKIM signing configuration. |  | Optional: \{\} <br /> |
 | `dmarc` _[DMARC](#dmarc)_ | DMARC policy. Records published by CNMS use DMARC1 semantics<br />(RFC 9989-9991). |  | Optional: \{\} <br /> |

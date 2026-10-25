@@ -63,6 +63,14 @@ var _ = Describe("CRD samples", func() {
 			Expect(files).NotTo(BeEmpty())
 			slices.Sort(files)
 
+			var clusterScoped []string
+			defer func() {
+				for _, name := range clusterScoped {
+					grant := &cnmsv1alpha1.MailDomainGrant{ObjectMeta: metav1.ObjectMeta{Name: name}}
+					Expect(k8sClient.Delete(ctx, grant)).To(Succeed())
+				}
+			}()
+
 			for _, file := range files {
 				data, err := os.ReadFile(file)
 				Expect(err).NotTo(HaveOccurred(), "reading %s", file)
@@ -70,7 +78,12 @@ var _ = Describe("CRD samples", func() {
 				obj := &unstructured.Unstructured{}
 				Expect(yaml.Unmarshal(data, &obj.Object)).To(Succeed(), "parsing %s", file)
 				Expect(obj.GetAPIVersion()).To(Equal("cnms.rpp.gmbh/v1alpha1"), "apiVersion in %s", file)
-				obj.SetNamespace(sampleNamespace)
+				if obj.GetKind() == "MailDomainGrant" {
+					// Cluster-scoped: no namespace.
+					clusterScoped = append(clusterScoped, obj.GetName())
+				} else {
+					obj.SetNamespace(sampleNamespace)
+				}
 
 				Expect(k8sClient.Create(ctx, obj)).To(Succeed(), "applying %s", file)
 			}
@@ -99,6 +112,32 @@ var _ = Describe("CRD samples", func() {
 				Spec:       cnmsv1alpha1.MailDirectorySpec{Type: cnmsv1alpha1.DirectoryTypeLDAP},
 			}
 			Expect(k8sClient.Create(ctx, md)).To(MatchError(ContainSubstring("exactly one of ldap or sql")))
+		})
+
+		It("rejects a MailDomainGrant named after a single-label domain", func() {
+			grant := &cnmsv1alpha1.MailDomainGrant{
+				ObjectMeta: metav1.ObjectMeta{Name: "org"},
+				Spec:       cnmsv1alpha1.MailDomainGrantSpec{Namespace: sampleNamespace},
+			}
+			Expect(k8sClient.Create(ctx, grant)).To(MatchError(ContainSubstring("at least two labels")))
+		})
+
+		It("rejects a MailDomainGrant whose name has no label separator", func() {
+			// "exampleorg" is one label; a regex dot that matches any
+			// character would wrongly accept it.
+			grant := &cnmsv1alpha1.MailDomainGrant{
+				ObjectMeta: metav1.ObjectMeta{Name: "exampleorg"},
+				Spec:       cnmsv1alpha1.MailDomainGrantSpec{Namespace: sampleNamespace},
+			}
+			Expect(k8sClient.Create(ctx, grant)).To(MatchError(ContainSubstring("at least two labels")))
+		})
+
+		It("rejects a MailDomainGrant pointing at an invalid namespace", func() {
+			grant := &cnmsv1alpha1.MailDomainGrant{
+				ObjectMeta: metav1.ObjectMeta{Name: "grant.example.org"},
+				Spec:       cnmsv1alpha1.MailDomainGrantSpec{Namespace: "Tenant A"},
+			}
+			Expect(k8sClient.Create(ctx, grant)).To(MatchError(ContainSubstring("spec.namespace")))
 		})
 
 		It("rejects an LDAP directory with a bind DN but no bind secret", func() {

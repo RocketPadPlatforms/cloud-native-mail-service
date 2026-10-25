@@ -120,9 +120,11 @@ spec:
                 - externalDNS
                 type: string
               domain:
-                description: Domain name, e.g. "example.org". Lowercase FQDN.
+                description: |-
+                  Domain name, e.g. "example.org". Lowercase DNS name with at
+                  least two labels (A-labels only, no trailing dot).
                 maxLength: 253
-                pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
+                pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$
                 type: string
               mtaSts:
                 description: MTA-STS policy publication.

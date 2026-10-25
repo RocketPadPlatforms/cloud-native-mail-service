@@ -8,6 +8,7 @@ rules:
   - cnms.rpp.gmbh
   resources:
   - maildirectories
+  - maildomaingrants
   - maildomains
   - mailservers
   verbs:
@@ -22,6 +23,7 @@ rules:
   - cnms.rpp.gmbh
   resources:
   - maildirectories/finalizers
+  - maildomaingrants/finalizers
   - maildomains/finalizers
   - mailservers/finalizers
   verbs:
@@ -30,6 +32,7 @@ rules:
   - cnms.rpp.gmbh
   resources:
   - maildirectories/status
+  - maildomaingrants/status
   - maildomains/status
   - mailservers/status
   verbs:

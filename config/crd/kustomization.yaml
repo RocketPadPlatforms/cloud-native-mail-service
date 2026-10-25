@@ -5,6 +5,7 @@ resources:
 - bases/cnms.rpp.gmbh_mailservers.yaml
 - bases/cnms.rpp.gmbh_maildomains.yaml
 - bases/cnms.rpp.gmbh_maildirectories.yaml
+- bases/cnms.rpp.gmbh_maildomaingrants.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

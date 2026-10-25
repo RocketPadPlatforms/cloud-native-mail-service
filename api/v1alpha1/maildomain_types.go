@@ -27,10 +27,11 @@ import (
 // DMARC, MTA-STS and TLS-RPT. The status lists every required record
 // and whether a lookup verified it.
 type MailDomainSpec struct {
-	// Domain name, e.g. "example.org". Lowercase FQDN.
+	// Domain name, e.g. "example.org". Lowercase DNS name with at
+	// least two labels (A-labels only, no trailing dot).
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MaxLength=253
-	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$`
 	Domain string `json:"domain"`
 
 	// DNS mode: "manual" (default) reports the required records in
