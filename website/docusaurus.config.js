@@ -45,6 +45,9 @@ const config = {
     metaDescription:
       'CNMS is a Kubernetes operator by Rocket Pad Platforms that runs and manages Postfix, Rspamd and Dovecot mail servers with production-grade defaults.',
     navbar: {
+      // Title rendered next to the logo in the top bar (Docusaurus 3.10:
+      // navbar.title, not logo.label).
+      title: 'Cloud Native Mail Service',
       logo: {
         src: 'img/favicon.svg',
         alt: 'Cloud Native Mail Service',
