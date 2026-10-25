@@ -86,7 +86,7 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 	esac
 
 .PHONY: test-e2e
-test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
+test-e2e: setup-test-e2e manifests generate fmt vet docker-build-data-plane ## Run the e2e tests. Expected an isolated environment using Kind.
 	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) go test -tags=e2e ./test/e2e/ -v -ginkgo.v
 	$(MAKE) cleanup-test-e2e
 
@@ -124,6 +124,16 @@ run: manifests generate fmt vet ## Run a controller from your host.
 .PHONY: docker-build
 docker-build: ## Build docker image with the manager.
 	$(CONTAINER_TOOL) build $(if $(BASE_IMAGE),--build-arg BASE_IMAGE=$(BASE_IMAGE)) -t ${IMG} .
+
+# Data-plane and e2e client images (ADR 0004); built for the local
+# architecture, loaded into the e2e Kind cluster by the test suite.
+POSTFIX_IMAGE ?= cnms/postfix:3.11.7
+E2E_CLIENT_IMAGE ?= cnms/e2e-client:3.11.7
+
+.PHONY: docker-build-data-plane
+docker-build-data-plane: ## Build the Postfix data-plane and the e2e client images.
+	$(CONTAINER_TOOL) build -t $(POSTFIX_IMAGE) images/postfix
+	$(CONTAINER_TOOL) build -t $(E2E_CLIENT_IMAGE) images/e2e-client
 
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
