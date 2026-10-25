@@ -87,9 +87,15 @@ container image with a known user, writable paths, and a log path
    (Renovate dockerfile manager).
 7. **E2E-only images:** a swaks client image
    (`debian:trixie-slim` + `swaks` + `openssl` + `curl`, apt swaks
-   `20201014.0` upstream) and `axllent/mailpit:v1.32.0` (MIT; SMTP on
-   1025, API/UI on 8025). Test-only, version-pinned in the e2e suite,
-   not part of the product.
+   `20201014.0` upstream) and `axllent/mailpit:v1.32.0` (MIT; the
+   sink runs with `--smtp [::]:25`, API/UI on 8025). Test-only,
+   version-pinned in the e2e suite, not part of the product.
+   The sink must listen on port 25: the kind cluster's NetworkPolicy
+   enforcement (kindnet, nftables `queue` to a userspace evaluator)
+   evaluates Service traffic on the post-DNAT tuple, so the Postfix
+   pod's port-25 egress allow (`mail-egress-smtp`) must match the
+   delivery path's target port; a 25→1025 Service would leave the
+   flow at dport 1025 and be dropped.
 8. **Multi-arch:** CNMS-built images are built for the local/CI
    architecture; e2e runs amd64. A multi-arch publish pipeline is a
    Phase 10 concern (Makefile `docker-buildx` support already exists).

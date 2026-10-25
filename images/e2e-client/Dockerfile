@@ -8,5 +8,5 @@ FROM ${BASE_IMAGE}
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-        ca-certificates curl openssl swaks \
+        ca-certificates curl openssl swaks libnet-ssleay-perl \
  && rm -rf /var/lib/apt/lists/*
