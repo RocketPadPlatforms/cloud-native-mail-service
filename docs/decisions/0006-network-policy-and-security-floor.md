@@ -43,7 +43,11 @@ narrowing of port-25 egress arrives with Phase 7.
      only over TLS).
    - TLS ≥ 1.2 for smtpd and smtp (`*_tls_mandatory_protocols`),
      modern cipher floors (`*_tls_mandatory_ciphers`).
-   - `reject_unauth_destination` (no open relay).
+   - `reject_unauth_destination` (no open relay), present in both
+     `smtpd_recipient_restrictions` and `smtpd_relay_restrictions` —
+     the latter's default (`defer_unauth_destination`) would otherwise
+     tempfail (454) unauthenticated relay attempts before the recipient
+     restrictions run.
    - Anvil rate limits with explicit values as renderer constants
      (connection/message/recipient rate per client), verified against
      the 3.11 `postconf.5` at render time.

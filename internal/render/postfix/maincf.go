@@ -50,6 +50,11 @@ func renderMainCF(req *render.RenderRequest) string {
 	b.WriteString("# --- recipient and sender checks (ADR 0006 floor) ---\n")
 	b.WriteString("smtpd_helo_required = yes\n")
 	b.WriteString("smtpd_sender_restrictions = reject_non_fqdn_sender\n")
+	// relay_restrictions default (defer_unauth_destination) would
+	// tempfail (454) unauthenticated relay attempts before the
+	// recipient restrictions run; reject permanently instead.
+	b.WriteString("smtpd_relay_restrictions = permit_mynetworks, " +
+		"permit_sasl_authenticated, reject_unauth_destination\n")
 	b.WriteString("smtpd_recipient_restrictions = permit_mynetworks, " +
 		"permit_sasl_authenticated, reject_unauth_destination\n\n")
 

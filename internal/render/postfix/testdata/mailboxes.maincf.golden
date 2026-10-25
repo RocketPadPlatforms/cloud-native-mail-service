@@ -15,6 +15,7 @@ mynetworks = 127.0.0.0/8
 # --- recipient and sender checks (ADR 0006 floor) ---
 smtpd_helo_required = yes
 smtpd_sender_restrictions = reject_non_fqdn_sender
+smtpd_relay_restrictions = permit_mynetworks, permit_sasl_authenticated, reject_unauth_destination
 smtpd_recipient_restrictions = permit_mynetworks, permit_sasl_authenticated, reject_unauth_destination
 
 # --- delivery routing: mailboxes enabled ---
