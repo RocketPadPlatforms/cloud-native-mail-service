@@ -1,0 +1,10 @@
+Cloud Native Mail Service (CNMS)
+Copyright 2026 Rocket Pad Platforms GmbH
+
+This product includes software developed at Rocket Pad Platforms
+(https://github.com/RocketPadPlatforms/cloud-native-mail-service).
+
+CNMS is a control plane that manages well-known mail software (Postfix,
+Rspamd, Dovecot, Valkey); those engines are distributed under their own
+licenses (see docs/reference/third-party-licenses.md and the ADRs in
+docs/decisions/ for the Go dependency report and version decisions).
