@@ -1,0 +1,8 @@
+# CNMS-rendered Dovecot passwd-file (users) -- do not edit.
+# Source: MailServer tenant1/mail (ADR 0004)
+
+# Format: user:password:uid:gid::home:
+testuser@a.example:{SHA512-CRYPT}x:1000:1000::/srv/mail/testuser:
+testuser:{SHA512-CRYPT}x:1000:1000::/srv/mail/testuser:
+alice@a.example:{SHA512-CRYPT}y:1000:1000::/srv/mail/alice:
+alice:{SHA512-CRYPT}y:1000:1000::/srv/mail/alice:

@@ -1,0 +1,73 @@
+# CNMS-rendered Dovecot dovecot.conf -- do not edit.
+# Source: MailServer tenant1/mail (ADR 0004)
+
+# Self-contained configuration: mounted at /etc/dovecot it
+# shadows the image's shipped configuration tree (no conf.d
+# includes); the listener set is exactly the one rendered
+# here. Verified against dovecot/dovecot:2.4.5 (ADR 0001).
+
+# 2.4 configuration format markers: the first setting must
+# be dovecot_config_version; unknown settings are fatal.
+dovecot_config_version = 2.4.3
+dovecot_storage_version = 2.4.3
+protocols = lmtp imap
+log_path = /dev/stdout
+base_dir = /var/run/dovecot
+state_dir = /var/run/dovecot
+default_internal_user = vmail
+default_internal_group = vmail
+default_login_user = vmail
+mail_uid = vmail
+mail_gid = vmail
+# 2.4 requires an explicit mail driver; autodetection fails
+# on the first delivery into a not-yet-existing maildir.
+mail_driver = maildir
+mail_path = ~/mail
+# TLS floor (ADR 0006): all login protocols require TLS.
+# The imaps listener does implicit TLS; AUTH on the imap
+# listener is only possible after STARTTLS.
+ssl = required
+ssl_min_protocol = TLSv1.2
+# Certificate of the MailServer TLS Secret (ADR 0004); the
+# paths are the image's default ssl_server location.
+ssl_server {
+  cert_file = /etc/dovecot/ssl/tls.crt
+  key_file = /etc/dovecot/ssl/tls.key
+}
+# SASL backend for Postfix (smtpd_sasl_type = dovecot): plain
+# TCP inside the NetworkPolicy-restricted pod pair (ADR 0006).
+# The name "auth" selects the auth-client protocol (VERSION,
+# MECH, SPID, CUID) that the Postfix 3.11 client speaks; the
+# names "auth-master" and "auth-userdb" select other protocols.
+service auth {
+  inet_listener auth {
+    port = 4190
+  }
+}
+# Internal LMTP hop (Postfix virtual_transport): plain TCP by
+# design (ADR 0006). `ssl = no` keeps the listener exempt from
+# the global `ssl = required` (without it 2.4 forces implicit
+# TLS on the listener; verified).
+service lmtp {
+  inet_listener lmtp {
+    port = 24
+    ssl = no
+  }
+}
+service imap-login {
+  inet_listener imap {
+    port = 143
+  }
+  inet_listener imaps {
+    port = 993
+  }
+}
+# Phase 2 test source: the passwd-file rendered into this same
+# tree (users, from insecureStaticUsers). Phase 3 replaces it
+# with the directory (MailDirectory).
+passdb passwd-file {
+  passwd_file_path = /etc/dovecot/users
+}
+userdb passwd-file {
+  passwd_file_path = /etc/dovecot/users
+}
