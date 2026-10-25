@@ -41,17 +41,19 @@ container image with a known user, writable paths, and a log path
    (`smtpd_sasl_type = dovecot`); Dovecot is the SASL backend,
    consistent with "auth-only Dovecot for submission" and with the
    LMTP flow (Postfix delivers to Dovecot, never the other way around).
-   The auth channel crosses the pod boundary: Dovecot runs an auth
-   service listener, Postfix connects to it. If Postfix's
-   `smtpd_sasl_path` supports `host:port` (TCP) for the dovecot
-   sasl type, use a TCP auth listener inside the Dovecot container;
-   otherwise fall back to a shared socket volume. Verified against the
-   3.11 source/docs during the Dovecot renderer commit; the outcome is
-   recorded in the renderer code. The same TCP mechanism serves the
-   LMTP listener (port 24) used by `virtual_transport`.
+   The auth channel crosses the pod boundary as plain TCP:
+   `smtpd_sasl_path = inet:<dovecot-service>:4190`. Verified against
+   the 3.11.7 source: the dovecot SASL client connects to `inet:`
+   paths without TLS. The Dovecot listener must be named `auth` to
+   serve the auth-client protocol the client speaks; the names
+   `auth-master` and `auth-userdb` serve other protocols. The same
+   container serves the LMTP listener (port 24) used by
+   `virtual_transport`.
 3. **Dovecot image:** official `dovecot/dovecot:2.4.5` (rootless,
    hardened). Rendered config is mounted at `/etc/dovecot`; mail
-   storage (when enabled) is an RWO volume mounted at `/srv/mail`;
+   storage (when enabled) is an RWO volume mounted at `/srv/mail`,
+   writable by the vmail account (uid/gid 1000; the manifest
+   enforces this, e.g. via fsGroup);
    runtime directories (`/var/run/dovecot`, auth sockets) live on
    `emptyDir` as documented exceptions to the read-only root FS.
    Rendering targets Dovecot 2.4 syntax only (2.3 incompatibilities

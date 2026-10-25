@@ -54,9 +54,15 @@ narrowing of port-25 egress arrives with Phase 7.
      unsigned").
    - `mynetworks = 127.0.0.0/8` (loopback only); everything else
      relays via authentication or the accepted-domain maps.
-4. **Dovecot floor:** `ssl = required` with a TLS 1.2 minimum
-   (`ssl_min_implied_version = tls12`) on the submission/auth-facing
-   listeners; the internal LMTP/auth listeners are TCP without TLS,
+4. **Dovecot floor** (verified against `dovecot/dovecot:2.4.5`): the
+   global `ssl = required` with `ssl_min_protocol = TLSv1.2`.
+   Verified 2.4 behaviour: the listener named `imaps` does implicit
+   TLS; on the `imap` listener AUTH is only possible after STARTTLS;
+   the auth protocol listener (4190) is not affected by `ssl` and
+   stays plain TCP, reachable only from the Postfix pods of the same
+   `MailServer`. The internal LMTP listener is exempt from
+   `ssl = required` via a per-listener `ssl = no` (without it, 2.4
+   forces implicit TLS on the listener); it is TCP without TLS,
    reachable only via the NetworkPolicies (documented).
 5. **E2E contract (open-relay and floor tests):** unauthenticated
    inbound mail on 25 for a foreign domain is rejected (554);
