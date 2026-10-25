@@ -54,7 +54,16 @@ var _ = Describe("MailServer Controller", func() {
 						Name:      resourceName,
 						Namespace: resourceNamespace,
 					},
-					// TODO(user): Specify other spec details if needed.
+					Spec: cnmsv1alpha1.MailServerSpec{
+						DirectoryRef: cnmsv1alpha1.NameReference{Name: "test-directory"},
+						Outbound: cnmsv1alpha1.Outbound{
+							Direct: &cnmsv1alpha1.DirectOutbound{},
+						},
+						Domains: []cnmsv1alpha1.NameReference{{Name: "test-domain"}},
+						TLS: cnmsv1alpha1.TLS{
+							IssuerRef: cnmsv1alpha1.IssuerReference{Kind: "Issuer", Name: "test-issuer"},
+						},
+					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}

@@ -1,0 +1,429 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.22.0
+  name: mailservers.cnms.rpp.gmbh
+spec:
+  group: cnms.rpp.gmbh
+  names:
+    kind: MailServer
+    listKind: MailServerList
+    plural: mailservers
+    singular: mailserver
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.conditions[?(@.type=='Ready')].status
+      name: Ready
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: MailServer is the Schema for the cnms mail servers.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of the MailServer
+            properties:
+              availability:
+                description: Availability settings (disruption budget, topology spread).
+                properties:
+                  postfixMinAvailable:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    default: "1"
+                    description: |-
+                      Minimum available Postfix replicas (PodDisruptionBudget).
+                      Defaults to 1.
+                    x-kubernetes-int-or-string: true
+                  topologySpread:
+                    description: Topology spread constraints for mail server pods.
+                    properties:
+                      maxSkew:
+                        default: 1
+                        description: Maximum allowed skew between topology domains.
+                          Defaults to 1.
+                        format: int32
+                        type: integer
+                      topologyKey:
+                        default: kubernetes.io/hostname
+                        description: Topology key. Defaults to kubernetes.io/hostname.
+                        maxLength: 316
+                        type: string
+                    type: object
+                type: object
+              backup:
+                description: Backup settings (k8up annotations on managed resources).
+                properties:
+                  enabled:
+                    default: true
+                    description: Annotate managed volumes and pods for k8up. Defaults
+                      to true.
+                    type: boolean
+                type: object
+              directoryRef:
+                description: |-
+                  Directory used for recipient validation and user authentication.
+                  References a MailDirectory in the same namespace.
+                properties:
+                  name:
+                    description: Name of the referenced resource.
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                    type: string
+                required:
+                - name
+                type: object
+              domains:
+                description: |-
+                  Domains handled by this mail server. They are signed with DKIM
+                  (when enabled on the domain) and accepted for submission.
+                  Each entry references a MailDomain in the same namespace.
+                items:
+                  description: |-
+                    NameReference references a CNMS resource in the same namespace.
+
+                    All references between CNMS resources are namespace-scoped: a resource
+                    may only reference resources in its own namespace. This keeps tenant
+                    isolation simple and requires no cross-namespace RBAC.
+                  properties:
+                    name:
+                      description: Name of the referenced resource.
+                      maxLength: 253
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                  required:
+                  - name
+                  type: object
+                maxItems: 50
+                minItems: 1
+                type: array
+                x-kubernetes-validations:
+                - message: domain references must be unique
+                  rule: self.all(x, self.filter(y, y == x).size() == 1)
+              inbound:
+                description: Inbound mail (port 25) service settings.
+                properties:
+                  externalTrafficPolicy:
+                    default: Local
+                    description: |-
+                      externalTrafficPolicy of the inbound service. Defaults to Local
+                      so that client addresses are preserved for postscreen and
+                      rate limiting.
+                    enum:
+                    - Local
+                    - Cluster
+                    type: string
+                  serviceType:
+                    default: LoadBalancer
+                    description: Service type for inbound mail. Defaults to LoadBalancer.
+                    enum:
+                    - LoadBalancer
+                    - ClusterIP
+                    type: string
+                type: object
+              mailboxes:
+                description: |-
+                  Mailboxes configures Dovecot mail storage (IMAP, LMTP delivery).
+                  When disabled while submission is enabled, Dovecot runs in
+                  auth-only mode.
+                properties:
+                  enabled:
+                    default: false
+                    description: |-
+                      Enable mail storage (IMAP access, LMTP delivery). Defaults to
+                      false.
+                    type: boolean
+                  quota:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: Per-user quota. Unset means no quota.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  storage:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    default: 10Gi
+                    description: Size of the mail storage volume. Defaults to 10Gi.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                type: object
+              observability:
+                description: Observability settings.
+                properties:
+                  prometheusOperator:
+                    default: auto
+                    description: |-
+                      Create Prometheus Operator ServiceMonitors: "auto" creates them
+                      when the CRDs are present, "enabled" requires them, "disabled"
+                      never creates them. Defaults to auto.
+                    enum:
+                    - auto
+                    - enabled
+                    - disabled
+                    type: string
+                type: object
+              outbound:
+                description: Outbound selects the outbound delivery mode.
+                properties:
+                  direct:
+                    description: |-
+                      Deliver directly from the mail server's own sending addresses
+                      (reputation is tied to those addresses).
+                    properties:
+                      ipPoolClaimRef:
+                        description: |-
+                          Reference to a MailIPPoolClaim providing the sending addresses.
+                          Optional: without a claim, mail leaves via the pods' source
+                          addresses.
+                        properties:
+                          name:
+                            description: Name of the referenced resource.
+                            maxLength: 253
+                            pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    type: object
+                  relay:
+                    description: Deliver via a smart host.
+                    properties:
+                      relayRef:
+                        description: Reference to a MailRelay in the same namespace.
+                        properties:
+                          name:
+                            description: Name of the referenced resource.
+                            maxLength: 253
+                            pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - relayRef
+                    type: object
+                type: object
+                x-kubernetes-validations:
+                - message: exactly one of direct or relay must be set
+                  rule: has(self.direct) != has(self.relay)
+              postfix:
+                description: Postfix workload settings.
+                properties:
+                  queueStorage:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    default: 1Gi
+                    description: Size of the per-replica queue volume. Defaults to
+                      1Gi.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  replicas:
+                    default: 2
+                    description: |-
+                      Number of replicas. Each replica runs with its own queue
+                      volume. Defaults to 2.
+                    format: int32
+                    maximum: 10
+                    minimum: 1
+                    type: integer
+                type: object
+              rspamd:
+                description: Rspamd workload settings.
+                properties:
+                  replicas:
+                    default: 2
+                    description: Number of replicas. Defaults to 2.
+                    format: int32
+                    maximum: 10
+                    minimum: 1
+                    type: integer
+                type: object
+              submission:
+                description: Submission (port 587) settings.
+                properties:
+                  enabled:
+                    default: true
+                    description: Enable submission. Defaults to true.
+                    type: boolean
+                  staticUsers:
+                    description: |-
+                      StaticUsers provides test users from a Secret instead of the
+                      MailDirectory for authentication (Phase 2 test source). The
+                      Secret must contain the key "users.yaml".
+                    properties:
+                      secretName:
+                        description: Name of the Secret in the same namespace.
+                        maxLength: 253
+                        pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                        type: string
+                    required:
+                    - secretName
+                    type: object
+                type: object
+              tls:
+                description: |-
+                  TLS for inbound, submission and outbound mail. The certificate
+                  is managed by cert-manager from the referenced issuer.
+                properties:
+                  issuerRef:
+                    description: Issuer used to request the certificate.
+                    properties:
+                      kind:
+                        description: Kind of the issuer.
+                        enum:
+                        - Issuer
+                        - ClusterIssuer
+                        type: string
+                      name:
+                        description: Name of the issuer.
+                        maxLength: 253
+                        pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                        type: string
+                    required:
+                    - kind
+                    - name
+                    type: object
+                  secretName:
+                    description: |-
+                      Name of the Secret the certificate is written to. Defaults to
+                      `"<name>-tls"`.
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                    type: string
+                required:
+                - issuerRef
+                type: object
+              valkey:
+                description: Valkey (Rspamd state) settings.
+                properties:
+                  persistence:
+                    default: false
+                    description: |-
+                      Persist Valkey data (Bayes, fuzzy and rate-limit state).
+                      Defaults to false.
+                    type: boolean
+                  storage:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: |-
+                      Size of the persistence volume. Required when persistence is
+                      enabled.
+                    nullable: true
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                type: object
+                x-kubernetes-validations:
+                - message: storage is required when persistence is enabled
+                  rule: '!has(self.persistence) || !self.persistence || has(self.storage)'
+            required:
+            - directoryRef
+            - domains
+            - outbound
+            - tls
+            type: object
+          status:
+            description: status defines the observed state of the MailServer
+            properties:
+              conditions:
+                description: |-
+                  Conditions represent the current state of the MailServer. The
+                  "Ready" condition is true when all managed workloads are
+                  running with validated configuration.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              observedGeneration:
+                description: ObservedGeneration is the generation of the spec last
+                  applied.
+                format: int64
+                type: integer
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

@@ -17,42 +17,297 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	intstr "k8s.io/apimachinery/pkg/util/intstr"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
-
-// MailServerSpec defines the desired state of MailServer
+// MailServerSpec defines the desired state of a MailServer.
+//
+// A MailServer is a tenant-facing mail system: inbound and submission
+// services, outbound delivery, mailboxes, and the set of domains it
+// handles. Each MailServer is isolated from all others: own workloads,
+// queues, IPs, DKIM keys and Rspamd/Valkey instances.
 type MailServerSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
+	// Directory used for recipient validation and user authentication.
+	// References a MailDirectory in the same namespace.
+	// +kubebuilder:validation:Required
+	DirectoryRef NameReference `json:"directoryRef"`
 
-	// foo is an example field of MailServer. Edit mailserver_types.go to remove/update
+	// Outbound selects the outbound delivery mode.
+	// +kubebuilder:validation:Required
+	Outbound Outbound `json:"outbound"`
+
+	// Domains handled by this mail server. They are signed with DKIM
+	// (when enabled on the domain) and accepted for submission.
+	// Each entry references a MailDomain in the same namespace.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=50
+	// +kubebuilder:validation:XValidation:rule="self.all(x, self.filter(y, y == x).size() == 1)",message="domain references must be unique"
+	Domains []NameReference `json:"domains"`
+
+	// TLS for inbound, submission and outbound mail. The certificate
+	// is managed by cert-manager from the referenced issuer.
+	// +kubebuilder:validation:Required
+	TLS TLS `json:"tls"`
+
+	// Inbound mail (port 25) service settings.
 	// +optional
-	Foo *string `json:"foo,omitempty"`
+	Inbound *Inbound `json:"inbound,omitempty"`
+
+	// Submission (port 587) settings.
+	// +optional
+	Submission *Submission `json:"submission,omitempty"`
+
+	// Mailboxes configures Dovecot mail storage (IMAP, LMTP delivery).
+	// When disabled while submission is enabled, Dovecot runs in
+	// auth-only mode.
+	// +optional
+	Mailboxes *Mailboxes `json:"mailboxes,omitempty"`
+
+	// Postfix workload settings.
+	// +optional
+	Postfix *Postfix `json:"postfix,omitempty"`
+
+	// Rspamd workload settings.
+	// +optional
+	Rspamd *Rspamd `json:"rspamd,omitempty"`
+
+	// Valkey (Rspamd state) settings.
+	// +optional
+	Valkey *Valkey `json:"valkey,omitempty"`
+
+	// Availability settings (disruption budget, topology spread).
+	// +optional
+	Availability *Availability `json:"availability,omitempty"`
+
+	// Observability settings.
+	// +optional
+	Observability *Observability `json:"observability,omitempty"`
+
+	// Backup settings (k8up annotations on managed resources).
+	// +optional
+	Backup *Backup `json:"backup,omitempty"`
 }
 
-// MailServerStatus defines the observed state of MailServer.
+// Outbound selects the outbound delivery mode.
+// Exactly one of direct or relay must be set.
+//
+// +kubebuilder:validation:XValidation:rule="has(self.direct) != has(self.relay)",message="exactly one of direct or relay must be set"
+type Outbound struct {
+	// Deliver directly from the mail server's own sending addresses
+	// (reputation is tied to those addresses).
+	// +optional
+	Direct *DirectOutbound `json:"direct,omitempty"`
+
+	// Deliver via a smart host.
+	// +optional
+	Relay *RelayOutbound `json:"relay,omitempty"`
+}
+
+// DirectOutbound delivers mail directly.
+type DirectOutbound struct {
+	// Reference to a MailIPPoolClaim providing the sending addresses.
+	// Optional: without a claim, mail leaves via the pods' source
+	// addresses.
+	// +optional
+	IpPoolClaimRef *NameReference `json:"ipPoolClaimRef,omitempty"`
+}
+
+// RelayOutbound delivers mail via a smart host.
+type RelayOutbound struct {
+	// Reference to a MailRelay in the same namespace.
+	// +kubebuilder:validation:Required
+	RelayRef NameReference `json:"relayRef"`
+}
+
+// TLS configures the certificate of a MailServer via cert-manager.
+type TLS struct {
+	// Issuer used to request the certificate.
+	// +kubebuilder:validation:Required
+	IssuerRef IssuerReference `json:"issuerRef"`
+
+	// Name of the Secret the certificate is written to. Defaults to
+	// `"<name>-tls"`.
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	SecretName *string `json:"secretName,omitempty"`
+}
+
+// IssuerReference references a cert-manager Issuer or ClusterIssuer.
+type IssuerReference struct {
+	// Kind of the issuer.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Enum=Issuer;ClusterIssuer
+	Kind string `json:"kind"`
+
+	// Name of the issuer.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Name string `json:"name"`
+}
+
+// Inbound configures the inbound (port 25) Service.
+type Inbound struct {
+	// Service type for inbound mail. Defaults to LoadBalancer.
+	// +optional
+	// +kubebuilder:validation:Enum=LoadBalancer;ClusterIP
+	// +kubebuilder:default=LoadBalancer
+	ServiceType *string `json:"serviceType,omitempty"`
+
+	// externalTrafficPolicy of the inbound service. Defaults to Local
+	// so that client addresses are preserved for postscreen and
+	// rate limiting.
+	// +optional
+	// +kubebuilder:validation:Enum=Local;Cluster
+	// +kubebuilder:default=Local
+	ExternalTrafficPolicy *string `json:"externalTrafficPolicy,omitempty"`
+}
+
+// Submission configures authenticated submission (port 587).
+type Submission struct {
+	// Enable submission. Defaults to true.
+	// +optional
+	// +kubebuilder:default=true
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// StaticUsers provides test users from a Secret instead of the
+	// MailDirectory for authentication (Phase 2 test source). The
+	// Secret must contain the key "users.yaml".
+	// +optional
+	StaticUsers *StaticUsers `json:"staticUsers,omitempty"`
+}
+
+// StaticUsers points at a Secret with static test users.
+type StaticUsers struct {
+	// Name of the Secret in the same namespace.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	SecretName string `json:"secretName"`
+}
+
+// Mailboxes configures Dovecot mail storage.
+type Mailboxes struct {
+	// Enable mail storage (IMAP access, LMTP delivery). Defaults to
+	// false.
+	// +optional
+	// +kubebuilder:default=false
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Size of the mail storage volume. Defaults to 10Gi.
+	// +optional
+	// +kubebuilder:default="10Gi"
+	Storage *resource.Quantity `json:"storage,omitempty"`
+
+	// Per-user quota. Unset means no quota.
+	// +optional
+	Quota *resource.Quantity `json:"quota,omitempty"`
+}
+
+// Postfix configures the Postfix workload.
+type Postfix struct {
+	// Number of replicas. Each replica runs with its own queue
+	// volume. Defaults to 2.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=10
+	// +kubebuilder:default=2
+	Replicas *int32 `json:"replicas,omitempty"`
+
+	// Size of the per-replica queue volume. Defaults to 1Gi.
+	// +optional
+	// +kubebuilder:default="1Gi"
+	QueueStorage *resource.Quantity `json:"queueStorage,omitempty"`
+}
+
+// Rspamd configures the Rspamd workload.
+type Rspamd struct {
+	// Number of replicas. Defaults to 2.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=10
+	// +kubebuilder:default=2
+	Replicas *int32 `json:"replicas,omitempty"`
+}
+
+// Valkey configures the Rspamd key-value store.
+//
+// +kubebuilder:validation:XValidation:rule="!has(self.persistence) || !self.persistence || has(self.storage)",message="storage is required when persistence is enabled"
+type Valkey struct {
+	// Persist Valkey data (Bayes, fuzzy and rate-limit state).
+	// Defaults to false.
+	// +optional
+	// +kubebuilder:default=false
+	Persistence *bool `json:"persistence,omitempty"`
+
+	// Size of the persistence volume. Required when persistence is
+	// enabled.
+	// +nullable
+	// +optional
+	Storage *resource.Quantity `json:"storage,omitempty"`
+}
+
+// Availability configures disruption budgets and topology spread.
+type Availability struct {
+	// Minimum available Postfix replicas (PodDisruptionBudget).
+	// Defaults to 1.
+	// +optional
+	// +kubebuilder:default="1"
+	PostfixMinAvailable *intstr.IntOrString `json:"postfixMinAvailable,omitempty"`
+
+	// Topology spread constraints for mail server pods.
+	// +optional
+	TopologySpread *TopologySpread `json:"topologySpread,omitempty"`
+}
+
+// TopologySpread configures topology spread constraints.
+// WhenUnsatisfiable is always ScheduleAnyway.
+type TopologySpread struct {
+	// Maximum allowed skew between topology domains. Defaults to 1.
+	// +optional
+	// +kubebuilder:default=1
+	MaxSkew *int32 `json:"maxSkew,omitempty"`
+
+	// Topology key. Defaults to kubernetes.io/hostname.
+	// +optional
+	// +kubebuilder:validation:MaxLength=316
+	// +kubebuilder:default="kubernetes.io/hostname"
+	TopologyKey *string `json:"topologyKey,omitempty"`
+}
+
+// Observability configures monitoring integrations.
+type Observability struct {
+	// Create Prometheus Operator ServiceMonitors: "auto" creates them
+	// when the CRDs are present, "enabled" requires them, "disabled"
+	// never creates them. Defaults to auto.
+	// +optional
+	// +kubebuilder:validation:Enum=auto;enabled;disabled
+	// +kubebuilder:default=auto
+	PrometheusOperator *string `json:"prometheusOperator,omitempty"`
+}
+
+// Backup configures backup annotations (k8up) on managed resources.
+type Backup struct {
+	// Annotate managed volumes and pods for k8up. Defaults to true.
+	// +optional
+	// +kubebuilder:default=true
+	Enabled *bool `json:"enabled,omitempty"`
+}
+
+// MailServerStatus defines the observed state of a MailServer.
 type MailServerStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	// ObservedGeneration is the generation of the spec last applied.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
-
-	// conditions represent the current state of the MailServer resource.
-	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
-	//
-	// Standard condition types include:
-	// - "Available": the resource is fully functional
-	// - "Progressing": the resource is being created or updated
-	// - "Degraded": the resource failed to reach or maintain its desired state
-	//
-	// The status of each condition is one of True, False, or Unknown.
+	// Conditions represent the current state of the MailServer. The
+	// "Ready" condition is true when all managed workloads are
+	// running with validated configuration.
 	// +listType=map
 	// +listMapKey=type
 	// +optional
@@ -61,8 +316,10 @@ type MailServerStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Ready",type="string",JSONPath=".status.conditions[?(@.type=='Ready')].status"
+// +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
-// MailServer is the Schema for the mailservers API
+// MailServer is the Schema for the cnms mail servers.
 type MailServer struct {
 	metav1.TypeMeta `json:",inline"`
 
@@ -70,11 +327,11 @@ type MailServer struct {
 	// +optional
 	metav1.ObjectMeta `json:"metadata,omitzero"`
 
-	// spec defines the desired state of MailServer
+	// spec defines the desired state of the MailServer
 	// +required
 	Spec MailServerSpec `json:"spec"`
 
-	// status defines the observed state of MailServer
+	// status defines the observed state of the MailServer
 	// +optional
 	Status MailServerStatus `json:"status,omitzero"`
 }
