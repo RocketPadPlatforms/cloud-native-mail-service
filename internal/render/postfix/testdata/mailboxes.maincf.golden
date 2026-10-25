@@ -1,0 +1,67 @@
+# CNMS-rendered Postfix main.cf -- do not edit.
+# Source: MailServer tenant1/mail, authorized domains: a.example, b.example
+
+# --- identity (D2: the first authorized domain) ---
+myhostname = a.example
+myorigin = $myhostname
+# --- version (ADR 0001 pin: Postfix 3.11) ---
+compatibility_level = 3.11
+
+# --- network (ADR 0006: loopback only is trusted) ---
+inet_protocols = all
+inet_interfaces = all
+mynetworks = 127.0.0.0/8
+
+# --- recipient and sender checks (ADR 0006 floor) ---
+smtpd_helo_required = yes
+smtpd_sender_restrictions = reject_non_fqdn_sender
+smtpd_recipient_restrictions = permit_mynetworks, permit_sasl_authenticated, reject_unauth_destination
+
+# --- delivery routing: mailboxes enabled ---
+# Recipients of the authorized domains are delivered to
+# Dovecot, which validates users against the directory.
+mydestination =
+virtual_mailbox_domains = a.example, b.example
+virtual_transport = lmtp:mail-dovecot.tenant1.svc.cluster.local:24
+
+# --- submission: Dovecot is the SASL backend (ADR 0004) ---
+smtpd_sasl_type = dovecot
+smtpd_sasl_path = inet:mail-dovecot.tenant1.svc.cluster.local:4190
+smtpd_sasl_security_options = noanonymous
+
+# --- TLS (ADR 0006 floor: AUTH only over TLS, TLS >= 1.2) ---
+smtpd_tls_security_level = encrypt
+smtpd_tls_auth_only = yes
+smtpd_tls_mandatory_protocols = >=TLSv1.2
+smtpd_tls_mandatory_ciphers = medium
+smtpd_tls_cert_file = /etc/postfix/tls/tls.crt
+smtpd_tls_key_file = /etc/postfix/tls/tls.key
+smtpd_tls_loglevel = 1
+smtp_tls_security_level = encrypt
+smtp_tls_mandatory_protocols = >=TLSv1.2
+smtp_tls_mandatory_ciphers = medium
+smtp_tls_loglevel = 1
+
+# --- Rspamd milter (principle 5: never unsigned) ---
+# An unreachable or timing-out milter tempfails mail; it is
+# never relayed unsigned.
+smtpd_milters = mail-rspamd.tenant1.svc.cluster.local:11332
+non_smtpd_milters = mail-rspamd.tenant1.svc.cluster.local:11332
+milter_default_action = tempfail
+milter_connect_timeout = 10s
+milter_command_timeout = 30s
+milter_content_timeout = 120s
+
+# --- per-client rate limits (anvil; ADR 0006 floor) ---
+smtpd_client_connection_rate_limit = 30
+smtpd_client_message_rate_limit = 60
+smtpd_client_recipient_rate_limit = 100
+anvil_rate_time_unit = 60s
+smtpd_error_sleep_time = 1s
+smtpd_soft_error_limit = 3
+smtpd_hard_error_limit = 5
+
+# --- limits and logging (ADR 0004) ---
+message_size_limit = 10485760
+# postlog writes to the pod stdout.
+maillog_file = /dev/stdout
