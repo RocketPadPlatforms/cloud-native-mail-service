@@ -8,4 +8,32 @@ layout:
 - go.kubebuilder.io/v4
 projectName: cloud-native-mail-service
 repo: github.com/RocketPadPlatforms/cloud-native-mail-service
+resources:
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: rpp.gmbh
+  group: cnms
+  kind: MailServer
+  path: github.com/RocketPadPlatforms/cloud-native-mail-service/api/v1alpha1
+  version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: rpp.gmbh
+  group: cnms
+  kind: MailDomain
+  path: github.com/RocketPadPlatforms/cloud-native-mail-service/api/v1alpha1
+  version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: rpp.gmbh
+  group: cnms
+  kind: MailDirectory
+  path: github.com/RocketPadPlatforms/cloud-native-mail-service/api/v1alpha1
+  version: v1alpha1
 version: "3"

@@ -1,0 +1,9 @@
+apiVersion: cnms.rpp.gmbh/v1alpha1
+kind: MailServer
+metadata:
+  labels:
+    app.kubernetes.io/name: cloud-native-mail-service
+    app.kubernetes.io/managed-by: kustomize
+  name: mailserver-sample
+spec:
+  # TODO(user): Add fields here

@@ -1,0 +1,6 @@
+## Append samples of your project ##
+resources:
+- cnms_v1alpha1_mailserver.yaml
+- cnms_v1alpha1_maildomain.yaml
+- cnms_v1alpha1_maildirectory.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples
