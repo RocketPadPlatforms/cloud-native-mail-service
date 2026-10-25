@@ -26,8 +26,9 @@ isolation, see [resource model](../concepts/resource-model.md)):
 | Dovecot   | IMAP, LMTP delivery, SASL auth | 24 (LMTP), 4190 (auth protocol), 143/993 (IMAP, mailboxes only) |
 | Valkey    | Rspamd state (one set per server) | 6379, 9121 (metrics) |
 
-Ports 24 and 4190 are internal: they are reachable only from the
-Postfix pods of the same `MailServer` (NetworkPolicies,
+Ports 24 and 4190 (Postfix→Dovecot) and 6379 (Rspamd→Valkey) are
+internal: each is reachable only from the pods of the same
+`MailServer` (NetworkPolicies,
 [ADR 0006](../decisions/0006-network-policy-and-security-floor.md)).
 
 ## Dovecot

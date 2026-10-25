@@ -66,8 +66,15 @@ container image with a known user, writable paths, and a log path
    against the running image and recorded in the renderer commit.
    Metrics: the controller worker serves `GET /metrics` (OpenMetrics);
    see ADR-0005.
-5. **Valkey image:** official `valkey/valkey:9.1.2`. Persistence: RWO
-   PVC when enabled in `spec`, `emptyDir` otherwise.
+5. **Valkey image:** official `valkey/valkey:9.1.2`. The rendered
+   config is mounted at `/etc/valkey/valkey.conf`; the container
+   args are just this path (the entrypoint hands it to
+   `valkey-server`). Verified against the image: the entrypoint
+   drops root to the valkey user (uid/gid 999) and chowns `/data`
+   (WORKDIR) to that user, so both the `emptyDir` and the PVC get
+   correct ownership. Persistence: RWO PVC when enabled in `spec`,
+   `emptyDir` otherwise. 9.1.2 has no config-check flag, so the
+   validation gate briefly starts the server and pings it.
 6. **Pin handling:** every engine/test image reference is a Go
    constant (version tag + digest) in one package, consumed by the
    renderers and the e2e suite; a Renovate regex manager updates them.
