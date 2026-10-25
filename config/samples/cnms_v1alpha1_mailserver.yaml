@@ -21,7 +21,7 @@ spec:
     externalTrafficPolicy: Local
   submission:
     enabled: true
-    staticUsers:
+    insecureStaticUsers:
       secretName: sample-static-users
   mailboxes:
     enabled: true

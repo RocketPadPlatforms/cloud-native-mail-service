@@ -80,16 +80,42 @@ spec:
                     maxLength: 253
                     type: string
                   port:
-                    default: 389
-                    description: Server port. Defaults to 389.
+                    description: |-
+                      Server port. Unset means the operator picks 389, or 636 when
+                      tls.mode is LDAPS.
                     format: int32
                     maximum: 65535
                     minimum: 1
                     type: integer
-                  startTls:
-                    default: true
-                    description: Use StartTLS. Defaults to true.
-                    type: boolean
+                  tls:
+                    description: Transport security. Defaults to StartTLS with verification.
+                    properties:
+                      caSecretRef:
+                        description: |-
+                          CASSecretRef references a Secret with the CA bundle (key
+                          "ca.crt") used to verify the server certificate.
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            maxLength: 253
+                            pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      mode:
+                        default: StartTLS
+                        description: |-
+                          Mode of the connection: "StartTLS" upgrades an existing
+                          connection (default), "LDAPS" connects directly over TLS, "None"
+                          disables transport security. With "None", bindDN must not be
+                          set (cleartext bind).
+                        enum:
+                        - StartTLS
+                        - LDAPS
+                        - None
+                        type: string
+                    type: object
                   userFilter:
                     description: |-
                       Search filter for users; %s is replaced with the user's mail
@@ -103,6 +129,10 @@ spec:
                 x-kubernetes-validations:
                 - message: bindSecretRef is required when bindDN is set
                   rule: '!has(self.bindDN) || has(self.bindSecretRef)'
+                - message: bindDN must not be set when tls.mode is None (cleartext
+                    bind)
+                  rule: '!has(self.bindDN) || !has(self.tls) || !has(self.tls.mode)
+                    || self.tls.mode != ''None'''
               sql:
                 description: SQL settings. Required when type is "sql".
                 properties:
@@ -132,6 +162,34 @@ spec:
                     maximum: 65535
                     minimum: 1
                     type: integer
+                  tls:
+                    description: Transport security. Defaults to verify-full.
+                    properties:
+                      caSecretRef:
+                        description: |-
+                          CASSecretRef references a Secret with the CA bundle (key
+                          "ca.crt") used to verify the server certificate.
+                        properties:
+                          name:
+                            description: Name of the Secret.
+                            maxLength: 253
+                            pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      mode:
+                        default: verify-full
+                        description: |-
+                          Mode of the connection: "verify-full" encrypts and verifies the
+                          host name (default), "require" encrypts without host name
+                          verification, "disable" sends cleartext.
+                        enum:
+                        - verify-full
+                        - require
+                        - disable
+                        type: string
+                    type: object
                   username:
                     description: Database user.
                     maxLength: 63

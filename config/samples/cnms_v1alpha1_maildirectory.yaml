@@ -10,7 +10,10 @@ spec:
   ldap:
     host: ldap.example.org
     port: 389
-    startTls: true
+    tls:
+      mode: StartTLS
+      caSecretRef:
+        name: ldap-ca-secret
     baseDN: ou=people,dc=example,dc=org
     bindDN: cn=lookup,ou=services,dc=example,dc=org
     bindSecretRef:

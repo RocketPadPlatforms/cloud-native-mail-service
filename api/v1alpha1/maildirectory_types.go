@@ -56,23 +56,23 @@ type MailDirectorySpec struct {
 // LDAP configures an LDAP user directory.
 //
 // +kubebuilder:validation:XValidation:rule="!has(self.bindDN) || has(self.bindSecretRef)",message="bindSecretRef is required when bindDN is set"
+// +kubebuilder:validation:XValidation:rule="!has(self.bindDN) || !has(self.tls) || !has(self.tls.mode) || self.tls.mode != 'None'",message="bindDN must not be set when tls.mode is None (cleartext bind)"
 type LDAP struct {
 	// Server host.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MaxLength=253
 	Host string `json:"host"`
 
-	// Server port. Defaults to 389.
+	// Server port. Unset means the operator picks 389, or 636 when
+	// tls.mode is LDAPS.
 	// +optional
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=65535
-	// +kubebuilder:default=389
 	Port *int32 `json:"port,omitempty"`
 
-	// Use StartTLS. Defaults to true.
+	// Transport security. Defaults to StartTLS with verification.
 	// +optional
-	// +kubebuilder:default=true
-	StartTLS *bool `json:"startTls,omitempty"`
+	TLS *LDAPTLS `json:"tls,omitempty"`
 
 	// Base DN for user searches.
 	// +kubebuilder:validation:Required
@@ -95,6 +95,39 @@ type LDAP struct {
 	// +optional
 	// +kubebuilder:validation:MaxLength=256
 	UserFilter *string `json:"userFilter,omitempty"`
+}
+
+// LDAPTLS configures transport security for the LDAP connection.
+type LDAPTLS struct {
+	// Mode of the connection: "StartTLS" upgrades an existing
+	// connection (default), "LDAPS" connects directly over TLS, "None"
+	// disables transport security. With "None", bindDN must not be
+	// set (cleartext bind).
+	// +optional
+	// +kubebuilder:validation:Enum=StartTLS;LDAPS;None
+	// +kubebuilder:default=StartTLS
+	Mode *string `json:"mode,omitempty"`
+
+	// CASSecretRef references a Secret with the CA bundle (key
+	// "ca.crt") used to verify the server certificate.
+	// +optional
+	CASSecretRef *SecretReference `json:"caSecretRef,omitempty"`
+}
+
+// SQLTLS configures transport security for the SQL connection.
+type SQLTLS struct {
+	// Mode of the connection: "verify-full" encrypts and verifies the
+	// host name (default), "require" encrypts without host name
+	// verification, "disable" sends cleartext.
+	// +optional
+	// +kubebuilder:validation:Enum=verify-full;require;disable
+	// +kubebuilder:default=verify-full
+	Mode *string `json:"mode,omitempty"`
+
+	// CASSecretRef references a Secret with the CA bundle (key
+	// "ca.crt") used to verify the server certificate.
+	// +optional
+	CASSecretRef *SecretReference `json:"caSecretRef,omitempty"`
 }
 
 // SQL configures a SQL user directory (PostgreSQL).
@@ -124,6 +157,10 @@ type SQL struct {
 	// Secret with the database password (key "password").
 	// +kubebuilder:validation:Required
 	PasswordSecretRef SecretReference `json:"passwordSecretRef"`
+
+	// Transport security. Defaults to verify-full.
+	// +optional
+	TLS *SQLTLS `json:"tls,omitempty"`
 }
 
 // MailDirectoryStatus defines the observed state of a MailDirectory.

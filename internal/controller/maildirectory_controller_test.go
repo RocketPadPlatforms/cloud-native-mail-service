@@ -57,8 +57,8 @@ var _ = Describe("MailDirectory Controller", func() {
 					Spec: cnmsv1alpha1.MailDirectorySpec{
 						Type: cnmsv1alpha1.DirectoryTypeLDAP,
 						LDAP: &cnmsv1alpha1.LDAP{
-							Host:   "ldap.example.org",
-							BaseDN: "ou=people,dc=example,dc=org",
+							Host:   ldapTestHost,
+							BaseDN: ldapTestBaseDN,
 						},
 					},
 				}

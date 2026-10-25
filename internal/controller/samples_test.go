@@ -27,6 +27,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/yaml"
 
 	cnmsv1alpha1 "github.com/RocketPadPlatforms/cloud-native-mail-service/api/v1alpha1"
@@ -41,6 +42,12 @@ import (
 var (
 	sampleNamespace string
 	sampleNSCounter int
+)
+
+// LDAP test fixtures shared by the MailDirectory tests.
+const (
+	ldapTestHost   = "ldap.example.org"
+	ldapTestBaseDN = "ou=people,dc=example,dc=org"
 )
 
 var _ = Describe("CRD samples", func() {
@@ -147,13 +154,70 @@ var _ = Describe("CRD samples", func() {
 				Spec: cnmsv1alpha1.MailDirectorySpec{
 					Type: cnmsv1alpha1.DirectoryTypeLDAP,
 					LDAP: &cnmsv1alpha1.LDAP{
-						Host:   "ldap.example.org",
-						BaseDN: "ou=people,dc=example,dc=org",
+						Host:   ldapTestHost,
+						BaseDN: ldapTestBaseDN,
 						BindDN: &ldap,
 					},
 				},
 			}
 			Expect(k8sClient.Create(ctx, md)).To(MatchError(ContainSubstring("bindSecretRef is required")))
+		})
+
+		It("rejects an LDAP directory with a bind DN and tls mode None", func() {
+			ldap := "cn=lookup,ou=services,dc=example,dc=org"
+			none := "None"
+			md := &cnmsv1alpha1.MailDirectory{
+				ObjectMeta: metav1.ObjectMeta{Name: "cleartext-bind", Namespace: sampleNamespace},
+				Spec: cnmsv1alpha1.MailDirectorySpec{
+					Type: cnmsv1alpha1.DirectoryTypeLDAP,
+					LDAP: &cnmsv1alpha1.LDAP{
+						Host:   ldapTestHost,
+						BaseDN: ldapTestBaseDN,
+						BindDN: &ldap,
+						BindSecretRef: &cnmsv1alpha1.SecretReference{
+							Name: "ldap-bind-secret",
+						},
+						TLS: &cnmsv1alpha1.LDAPTLS{Mode: &none},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, md)).To(MatchError(ContainSubstring("cleartext bind")))
+		})
+
+		It("rejects an LDAP directory with an invalid tls mode", func() {
+			mode := "STARTTLS"
+			md := &cnmsv1alpha1.MailDirectory{
+				ObjectMeta: metav1.ObjectMeta{Name: "bad-tls-mode", Namespace: sampleNamespace},
+				Spec: cnmsv1alpha1.MailDirectorySpec{
+					Type: cnmsv1alpha1.DirectoryTypeLDAP,
+					LDAP: &cnmsv1alpha1.LDAP{
+						Host:   ldapTestHost,
+						BaseDN: ldapTestBaseDN,
+						TLS:    &cnmsv1alpha1.LDAPTLS{Mode: &mode},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, md)).To(MatchError(ContainSubstring("spec.ldap.tls.mode")))
+		})
+
+		It("defaults the LDAP tls mode to StartTLS", func() {
+			// The mode default applies within a present tls object;
+			// a fully absent tls object resolves to the same default
+			// in the operator (Phase 3).
+			md := &cnmsv1alpha1.MailDirectory{
+				ObjectMeta: metav1.ObjectMeta{Name: "tls-default", Namespace: sampleNamespace},
+				Spec: cnmsv1alpha1.MailDirectorySpec{
+					Type: cnmsv1alpha1.DirectoryTypeLDAP,
+					LDAP: &cnmsv1alpha1.LDAP{
+						Host:   ldapTestHost,
+						BaseDN: ldapTestBaseDN,
+						TLS:    &cnmsv1alpha1.LDAPTLS{},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, md)).To(Succeed())
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "tls-default", Namespace: sampleNamespace}, md)).To(Succeed())
+			Expect(md.Spec.LDAP.TLS.Mode).To(HaveValue(Equal("StartTLS")))
 		})
 	})
 })

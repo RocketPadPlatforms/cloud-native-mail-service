@@ -271,11 +271,13 @@ spec:
                     default: true
                     description: Enable submission. Defaults to true.
                     type: boolean
-                  staticUsers:
+                  insecureStaticUsers:
                     description: |-
-                      StaticUsers provides test users from a Secret instead of the
-                      MailDirectory for authentication (Phase 2 test source). The
-                      Secret must contain the key "users.yaml".
+                      InsecureStaticUsers provides test users from a Secret instead
+                      of the MailDirectory for authentication (Phase 2 test source).
+                      The Secret must contain the key "users.yaml" with password
+                      hashes, never plaintext passwords. The operator only accepts it
+                      when started with --enable-insecure-test-features.
                     properties:
                       secretName:
                         description: Name of the Secret in the same namespace.

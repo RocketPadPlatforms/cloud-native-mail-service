@@ -191,6 +191,22 @@ _Appears in:_
 | `externalTrafficPolicy` _string_ | externalTrafficPolicy of the inbound service. Defaults to Local<br />so that client addresses are preserved for postscreen and<br />rate limiting. | Local | Enum: [Local Cluster] <br />Optional: \{\} <br /> |
 
 
+#### InsecureStaticUsers
+
+
+
+InsecureStaticUsers points at a Secret with static test users.
+
+
+
+_Appears in:_
+- [Submission](#submission)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `secretName` _string_ | Name of the Secret in the same namespace. |  | MaxLength: 253 <br />Pattern: `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$` <br />Required: \{\} <br /> |
+
+
 #### IssuerReference
 
 
@@ -222,12 +238,29 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `host` _string_ | Server host. |  | MaxLength: 253 <br />Required: \{\} <br /> |
-| `port` _integer_ | Server port. Defaults to 389. | 389 | Maximum: 65535 <br />Minimum: 1 <br />Optional: \{\} <br /> |
-| `startTls` _boolean_ | Use StartTLS. Defaults to true. | true | Optional: \{\} <br /> |
+| `port` _integer_ | Server port. Unset means the operator picks 389, or 636 when<br />tls.mode is LDAPS. |  | Maximum: 65535 <br />Minimum: 1 <br />Optional: \{\} <br /> |
+| `tls` _[LDAPTLS](#ldaptls)_ | Transport security. Defaults to StartTLS with verification. |  | Optional: \{\} <br /> |
 | `baseDN` _string_ | Base DN for user searches. |  | MaxLength: 256 <br />Required: \{\} <br /> |
 | `bindDN` _string_ | Bind DN used for searches. Empty means an anonymous bind. |  | MaxLength: 256 <br />Optional: \{\} <br /> |
 | `bindSecretRef` _[SecretReference](#secretreference)_ | Secret with the bind password (key "password"). Required when<br />bindDN is set. |  | Optional: \{\} <br /> |
 | `userFilter` _string_ | Search filter for users; %s is replaced with the user's mail<br />address. Defaults to "(mail=%s)". |  | MaxLength: 256 <br />Optional: \{\} <br /> |
+
+
+#### LDAPTLS
+
+
+
+LDAPTLS configures transport security for the LDAP connection.
+
+
+
+_Appears in:_
+- [LDAP](#ldap)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `mode` _string_ | Mode of the connection: "StartTLS" upgrades an existing<br />connection (default), "LDAPS" connects directly over TLS, "None"<br />disables transport security. With "None", bindDN must not be<br />set (cleartext bind). | StartTLS | Enum: [StartTLS LDAPS None] <br />Optional: \{\} <br /> |
+| `caSecretRef` _[SecretReference](#secretreference)_ | CASSecretRef references a Secret with the CA bundle (key<br />"ca.crt") used to verify the server certificate. |  | Optional: \{\} <br /> |
 
 
 #### MTAStS
@@ -667,6 +700,24 @@ _Appears in:_
 | `database` _string_ | Database name. |  | MaxLength: 63 <br />Required: \{\} <br /> |
 | `username` _string_ | Database user. |  | MaxLength: 63 <br />Required: \{\} <br /> |
 | `passwordSecretRef` _[SecretReference](#secretreference)_ | Secret with the database password (key "password"). |  | Required: \{\} <br /> |
+| `tls` _[SQLTLS](#sqltls)_ | Transport security. Defaults to verify-full. |  | Optional: \{\} <br /> |
+
+
+#### SQLTLS
+
+
+
+SQLTLS configures transport security for the SQL connection.
+
+
+
+_Appears in:_
+- [SQL](#sql)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `mode` _string_ | Mode of the connection: "verify-full" encrypts and verifies the<br />host name (default), "require" encrypts without host name<br />verification, "disable" sends cleartext. | verify-full | Enum: [verify-full require disable] <br />Optional: \{\} <br /> |
+| `caSecretRef` _[SecretReference](#secretreference)_ | CASSecretRef references a Secret with the CA bundle (key<br />"ca.crt") used to verify the server certificate. |  | Optional: \{\} <br /> |
 
 
 #### SecretReference
@@ -679,27 +730,13 @@ SecretReference references a Secret in the same namespace.
 
 _Appears in:_
 - [LDAP](#ldap)
+- [LDAPTLS](#ldaptls)
 - [SQL](#sql)
+- [SQLTLS](#sqltls)
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `name` _string_ | Name of the Secret. |  | MaxLength: 253 <br />Pattern: `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$` <br />Required: \{\} <br /> |
-
-
-#### StaticUsers
-
-
-
-StaticUsers points at a Secret with static test users.
-
-
-
-_Appears in:_
-- [Submission](#submission)
-
-| Field | Description | Default | Validation |
-| --- | --- | --- | --- |
-| `secretName` _string_ | Name of the Secret in the same namespace. |  | MaxLength: 253 <br />Pattern: `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$` <br />Required: \{\} <br /> |
 
 
 #### Submission
@@ -716,7 +753,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `enabled` _boolean_ | Enable submission. Defaults to true. | true | Optional: \{\} <br /> |
-| `staticUsers` _[StaticUsers](#staticusers)_ | StaticUsers provides test users from a Secret instead of the<br />MailDirectory for authentication (Phase 2 test source). The<br />Secret must contain the key "users.yaml". |  | Optional: \{\} <br /> |
+| `insecureStaticUsers` _[InsecureStaticUsers](#insecurestaticusers)_ | InsecureStaticUsers provides test users from a Secret instead<br />of the MailDirectory for authentication (Phase 2 test source).<br />The Secret must contain the key "users.yaml" with password<br />hashes, never plaintext passwords. The operator only accepts it<br />when started with --enable-insecure-test-features. |  | Optional: \{\} <br /> |
 
 
 #### TLS

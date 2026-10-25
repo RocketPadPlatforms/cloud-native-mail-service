@@ -175,15 +175,17 @@ type Submission struct {
 	// +kubebuilder:default=true
 	Enabled *bool `json:"enabled,omitempty"`
 
-	// StaticUsers provides test users from a Secret instead of the
-	// MailDirectory for authentication (Phase 2 test source). The
-	// Secret must contain the key "users.yaml".
+	// InsecureStaticUsers provides test users from a Secret instead
+	// of the MailDirectory for authentication (Phase 2 test source).
+	// The Secret must contain the key "users.yaml" with password
+	// hashes, never plaintext passwords. The operator only accepts it
+	// when started with --enable-insecure-test-features.
 	// +optional
-	StaticUsers *StaticUsers `json:"staticUsers,omitempty"`
+	InsecureStaticUsers *InsecureStaticUsers `json:"insecureStaticUsers,omitempty"`
 }
 
-// StaticUsers points at a Secret with static test users.
-type StaticUsers struct {
+// InsecureStaticUsers points at a Secret with static test users.
+type InsecureStaticUsers struct {
 	// Name of the Secret in the same namespace.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MaxLength=253
