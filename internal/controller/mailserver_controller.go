@@ -536,7 +536,7 @@ func (r *MailServerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	certificate.SetGroupVersionKind(certificateGVK)
 	monitor := &unstructured.Unstructured{}
 	monitor.SetGroupVersionKind(serviceMonitorGVK)
-	return ctrl.NewControllerManagedBy(mgr).
+	b := ctrl.NewControllerManagedBy(mgr).
 		For(&cnmsv1alpha1.MailServer{}).
 		Named("mailserver").
 		Owns(&corev1.ConfigMap{}).
@@ -545,14 +545,41 @@ func (r *MailServerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&appsv1.StatefulSet{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&policyv1.PodDisruptionBudget{}).
-		Owns(&networkingv1.NetworkPolicy{}).
-		Owns(certificate).
-		Owns(monitor).
+		Owns(&networkingv1.NetworkPolicy{})
+	// Optional integrations (principle 10): watch the objects of a CRD
+	// only when the CRD is installed; a watch on a GVK whose CRD is
+	// missing fails the cache sync and the manager exits. The watch is
+	// a trigger optimization only; when the CRD is installed later the
+	// reconciler picks the objects up at the next CRD re-check.
+	if crdInstalled(mgr, crdCertificate) {
+		b = b.Owns(certificate)
+	}
+	if crdInstalled(mgr, crdServiceMonitor) {
+		b = b.Owns(monitor)
+	}
+	return b.
 		Watches(&cnmsv1alpha1.MailDomain{}, handler.EnqueueRequestsFromMapFunc(r.mapSameNamespaceServers)).
 		Watches(&cnmsv1alpha1.MailDirectory{}, handler.EnqueueRequestsFromMapFunc(r.mapSameNamespaceServers)).
 		Watches(&cnmsv1alpha1.MailDomainGrant{}, handler.EnqueueRequestsFromMapFunc(r.mapGrantServers)).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.mapSameNamespaceServers)).
 		Complete(r)
+}
+
+// crdInstalled reports whether the CRD with the given name is installed
+// (direct API read; the manager cache has not started yet at setup
+// time). On an error other than NotFound the watch is skipped so that
+// a transient API failure can never crash the operator (principle 10).
+func crdInstalled(mgr ctrl.Manager, name string) bool {
+	crd := &apiextensionsv1.CustomResourceDefinition{}
+	err := mgr.GetAPIReader().Get(context.Background(), client.ObjectKey{Name: name}, crd)
+	if err == nil {
+		return true
+	}
+	if !errors.IsNotFound(err) {
+		log.Log.Info("Could not check the CRD at startup, skipping the optional watch",
+			"crd", name, "error", err.Error())
+	}
+	return false
 }
 
 // mapSameNamespaceServers enqueues every MailServer of the object's
