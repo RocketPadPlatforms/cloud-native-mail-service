@@ -234,6 +234,9 @@ func TestPostfixStatefulSet(t *testing.T) {
 	if !hasMount(main.VolumeMounts, postfixQueueVolume, "/var/spool/postfix") {
 		t.Error("postfix main container misses the queue mount")
 	}
+	if !hasMount(main.VolumeMounts, tlsVolumeName, postfixTLSDir) {
+		t.Error("postfix main container misses the tls mount (smtpd loads the certificate)")
+	}
 	if main.ReadinessProbe == nil || main.ReadinessProbe.TCPSocket == nil || main.ReadinessProbe.TCPSocket.Port.IntVal != render.PortPostfixInbound {
 		t.Error("postfix readiness probe must target port 25")
 	}

@@ -91,10 +91,15 @@ func postfixStatefulSet(server *cnmsv1alpha1.MailServer, r *render.RenderResult)
 						VolumeMounts: configSubPathMounts("main.cf", "master.cf"),
 					}},
 					Containers: []corev1.Container{{
-						Name:         "postfix",
-						Image:        images.Postfix, // default CMD: the entrypoint
-						Ports:        append([]corev1.ContainerPort{{Name: "smtp", ContainerPort: render.PortPostfixInbound}}, submissionPorts...),
-						VolumeMounts: append(configSubPathMounts("main.cf", "master.cf"), queueMount()),
+						Name:  "postfix",
+						Image: images.Postfix, // default CMD: the entrypoint
+						Ports: append([]corev1.ContainerPort{{Name: "smtp", ContainerPort: render.PortPostfixInbound}}, submissionPorts...),
+						VolumeMounts: append(configSubPathMounts("main.cf", "master.cf"),
+							// smtpd loads the certificate from this
+							// path (the sidecar's mount is a
+							// different filesystem).
+							tlsMount(),
+							queueMount()),
 						// The certificate is a plain (non-subPath)
 						// mount: cert-manager updates the Secret in
 						// place, and the cert-reload sidecar reacts
