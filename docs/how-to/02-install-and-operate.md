@@ -31,6 +31,32 @@ internal: each is reachable only from the pods of the same
 `MailServer` (NetworkPolicies,
 [ADR 0006](../decisions/0006-network-policy-and-security-floor.md)).
 
+## Operator flags
+
+| Flag | Default | Effect |
+|------|---------|--------|
+| `--domain-authorization` | `allowlist` | `allowlist` requires a `MailDomainGrant` covering every domain of a `MailServer` and naming its namespace ([domain authorization](../concepts/domain-authorization.md)); `unrestricted` skips the grant requirement for single-tenant clusters (the operator logs a warning at startup). Uniqueness is enforced in both modes. |
+| `--enable-insecure-test-features` | `false` | Accepts `spec.submission.insecureStaticUsers` (Phase 2 test users from a Secret). Without the flag a `MailServer` that sets the field is fail-closed (`Ready=False, reason=InsecureStaticUsersDisabled`). |
+
+## Status conditions
+
+`kubectl get mailserver` shows a `Ready` rollup; the reasons explain
+the first failing sub-condition:
+
+| Condition | True when | Notable False reasons |
+|-----------|-----------|----------------------|
+| `DomainsAuthorized` | every `spec.domains` entry passes the grant check | `NotGranted`, `DuplicateDomain`, `DomainNotFound` |
+| `CertificateReady` | the TLS Secret (`<name>-tls` or `spec.tls.secretName`) carries `tls.crt` and `tls.key` | `SecretNotFound`, `SecretIncomplete` |
+| `WorkloadsReady` | all data-plane workloads have all replicas ready | `WorkloadsNotReady` (message lists which) |
+| `Observability` | the Prometheus Operator integration matches `spec.observability.prometheusOperator` (`auto` is the default) | `CRDsRequired` (setting `enabled` without the ServiceMonitor CRDs) |
+| `Ready` | all of the above | propagated reasons, e.g. `DirectoryNotFound`, `StaticUsersInvalid`, `RelayNotAvailable` (Phase 6), `IpPoolClaimNotAvailable` (Phase 7) |
+
+A not-ready `MailServer` is re-checked every 30 seconds (certificates
+get issued, workloads come up, CRDs get installed). A `MailDomainGrant`
+that points at a missing namespace shows
+`NamespaceExists=False, reason=NamespaceNotFound` (informational; it
+never feeds back into authorization).
+
 ## Dovecot
 
 Dovecot runs as a single-replica StatefulSet on the official

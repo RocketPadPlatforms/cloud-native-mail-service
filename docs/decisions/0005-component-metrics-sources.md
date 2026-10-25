@@ -43,14 +43,14 @@ present. Metric sources per component, verified on 2026-10-25:
    writes a Prometheus text file (queue sizes per queue type
    incoming/active/deferred/hold, oldest message age derived from the
    queue-ID creation timestamp); `busybox httpd` (ISC, installed in
-   the image) serves it on named port `cnms-postfix-metrics` (9150).
+   the image) serves it on named port `postfix-metrics` (9150).
    No new image, no Go binary, license-clean.
    Delivery/deferral/bounce counters from the logs are deferred to
    Phase 9 (full metrics set); this ADR is revisited then — candidates
    are extending the sidecar to parse stdout or adopting a maintained
    exporter at that time.
 2. **Rspamd metrics:** expose the controller worker's `/metrics`
-   (OpenMetrics) on named port `cnms-rspamd-metrics` (11334, the Rspamd
+   (OpenMetrics) on named port `rspamd-metrics` (11334, the Rspamd
    4.x controller worker default; verified against the 4.2.3
    configuration) with a Service. No controller password in v1: each
    `MailServer` has its own Rspamd set, access is restricted by the
@@ -60,7 +60,7 @@ present. Metric sources per component, verified on 2026-10-25:
    this trade-off is documented in the observability docs.
 3. **Valkey metrics:** `oliver006/redis_exporter` v1.96.0 (MIT) as a
    sidecar on the Valkey pod, targeting
-   `redis://127.0.0.1:6379`, on named port `cnms-valkey-metrics`
+   `redis://127.0.0.1:6379`, on named port `valkey-metrics`
    (9121).
 4. **Integration model:** every metrics endpoint gets a Service. The
    operator checks at startup and periodically (API discovery) whether

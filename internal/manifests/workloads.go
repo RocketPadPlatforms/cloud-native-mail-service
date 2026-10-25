@@ -76,7 +76,7 @@ func postfixStatefulSet(server *cnmsv1alpha1.MailServer, r *render.RenderResult)
 					TopologySpreadConstraints: topologySpreadConstraints(server),
 					Volumes: []corev1.Volume{
 						configVolume(name),
-						tlsVolume(tlsSecretName(server)),
+						tlsVolume(TLSSecretName(server)),
 						{
 							Name:         postfixQueueVolume,
 							VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: postfixQueueVolume}},
@@ -124,7 +124,7 @@ func postfixStatefulSet(server *cnmsv1alpha1.MailServer, r *render.RenderResult)
 							RunAsNonRoot: new(true),
 						},
 						Ports: []corev1.ContainerPort{{
-							Name:          "cnms-postfix-metrics",
+							Name:          "postfix-metrics",
 							ContainerPort: render.PortPostfixMetrics,
 						}},
 						// postqueue needs the config (postconf) and
@@ -136,7 +136,7 @@ func postfixStatefulSet(server *cnmsv1alpha1.MailServer, r *render.RenderResult)
 						// reload` when it changes (D5).
 						Name:    "cert-reload",
 						Image:   images.Postfix,
-						Command: certReloadLoop(postfixTLSDir+"/"+tlsCertFile, r.ReloadCommand),
+						Command: certReloadLoop(postfixTLSDir+"/"+TLSCertFile, r.ReloadCommand),
 						VolumeMounts: append(configSubPathMounts("main.cf", "master.cf"),
 							tlsMount(),
 							// `postfix reload` talks to the master
@@ -216,7 +216,7 @@ func dovecotStatefulSet(server *cnmsv1alpha1.MailServer, r *render.RenderResult)
 							Name:         configVolumeName,
 							VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: name}}},
 						},
-						tlsVolume(tlsSecretName(server)),
+						tlsVolume(TLSSecretName(server)),
 						{
 							Name:         "run",
 							VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
@@ -249,7 +249,7 @@ func dovecotStatefulSet(server *cnmsv1alpha1.MailServer, r *render.RenderResult)
 					}, {
 						Name:    "cert-reload",
 						Image:   images.Dovecot,
-						Command: certReloadLoop(dovecotSSLDir()+"/"+tlsCertFile, r.ReloadCommand),
+						Command: certReloadLoop(dovecotSSLDir()+"/"+TLSCertFile, r.ReloadCommand),
 						// doveadm talks to the master over the
 						// shared runtime directory.
 						VolumeMounts: dovecotMounts(false),
@@ -310,7 +310,7 @@ func rspamdDeployment(server *cnmsv1alpha1.MailServer, r *render.RenderResult) *
 					Containers: []corev1.Container{{
 						Name:           "rspamd",
 						Image:          images.Rspamd, // default CMD: rspamd -f
-						Ports:          []corev1.ContainerPort{{Name: "milter", ContainerPort: render.PortRspamdMilter}, {Name: "cnms-rspamd-metrics", ContainerPort: render.PortRspamdController}},
+						Ports:          []corev1.ContainerPort{{Name: "milter", ContainerPort: render.PortRspamdMilter}, {Name: "rspamd-metrics", ContainerPort: render.PortRspamdController}},
 						VolumeMounts:   append(localDMount(), corev1.VolumeMount{Name: stateVolumeName, MountPath: rspamdStateDir}),
 						ReadinessProbe: portProbe(render.PortRspamdController),
 						LivenessProbe:  portProbe(render.PortRspamdController),
@@ -383,7 +383,7 @@ func valkeyDeployment(server *cnmsv1alpha1.MailServer, r *render.RenderResult) *
 							fmt.Sprintf("--redis.address=redis://127.0.0.1:%d", render.PortValkey),
 						},
 						Ports: []corev1.ContainerPort{{
-							Name:          "cnms-valkey-metrics",
+							Name:          "valkey-metrics",
 							ContainerPort: render.PortValkeyMetrics,
 						}},
 					}},

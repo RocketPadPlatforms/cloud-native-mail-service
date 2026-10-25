@@ -65,7 +65,7 @@ func services(server *cnmsv1alpha1.MailServer) []client.Object {
 			Selector: componentSelector(server, render.ComponentRspamd).MatchLabels,
 			Ports: []corev1.ServicePort{
 				{Name: "milter", Port: render.PortRspamdMilter, TargetPort: intstr.FromInt32(render.PortRspamdMilter)},
-				{Name: "cnms-rspamd-metrics", Port: render.PortRspamdController, TargetPort: intstr.FromInt32(render.PortRspamdController)},
+				{Name: "rspamd-metrics", Port: render.PortRspamdController, TargetPort: intstr.FromInt32(render.PortRspamdController)},
 			},
 		},
 	}
@@ -126,8 +126,8 @@ func services(server *cnmsv1alpha1.MailServer) []client.Object {
 		&dovecot,
 		headless(render.ServiceName(server.Name, render.ComponentDovecot)+"-headless", render.ComponentDovecot),
 		&valkey,
-		metricsService(render.ServiceName(server.Name, render.ComponentPostfix)+"-metrics", "cnms-postfix-metrics", render.PortPostfixMetrics, render.ComponentPostfix),
-		metricsService(render.ServiceName(server.Name, render.ComponentValkey)+"-metrics", "cnms-valkey-metrics", render.PortValkeyMetrics, render.ComponentValkey),
+		metricsService(render.ServiceName(server.Name, render.ComponentPostfix)+"-metrics", "postfix-metrics", render.PortPostfixMetrics, render.ComponentPostfix),
+		metricsService(render.ServiceName(server.Name, render.ComponentValkey)+"-metrics", "valkey-metrics", render.PortValkeyMetrics, render.ComponentValkey),
 	}
 }
 
@@ -261,10 +261,12 @@ func networkPolicies(server *cnmsv1alpha1.MailServer) []client.Object {
 			},
 			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
 			Egress: []networkingv1.NetworkPolicyEgressRule{{
+				// Ranges are Port + EndPort; NetworkPolicyPort.Port
+				// itself only accepts an integer or a named port.
 				Ports: []networkingv1.NetworkPolicyPort{
-					{Protocol: new(corev1.ProtocolTCP), Port: new(intstr.Parse("1-24"))},
-					{Protocol: new(corev1.ProtocolTCP), Port: new(intstr.Parse("26-65535"))},
-					{Protocol: new(corev1.ProtocolUDP), Port: new(intstr.Parse("1-65535"))},
+					{Protocol: new(corev1.ProtocolTCP), Port: new(intstr.FromInt32(1)), EndPort: new(int32(24))},
+					{Protocol: new(corev1.ProtocolTCP), Port: new(intstr.FromInt32(26)), EndPort: new(int32(65535))},
+					{Protocol: new(corev1.ProtocolUDP), Port: new(intstr.FromInt32(1)), EndPort: new(int32(65535))},
 				},
 			}},
 		},
@@ -306,7 +308,7 @@ func certificate(req *render.RenderRequest) *unstructured.Unstructured {
 				"kind": server.Spec.TLS.IssuerRef.Kind,
 				"name": server.Spec.TLS.IssuerRef.Name,
 			},
-			"secretName": tlsSecretName(server),
+			"secretName": TLSSecretName(server),
 			"commonName": primary,
 			"dnsNames":   domainsToAny(domains),
 			"usages":     []any{"server auth", "client auth"},

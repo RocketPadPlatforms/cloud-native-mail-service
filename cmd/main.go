@@ -25,6 +25,7 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -47,7 +48,7 @@ var (
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
-
+	utilruntime.Must(apiextensionsv1.AddToScheme(scheme))
 	utilruntime.Must(cnmsv1alpha1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
@@ -62,6 +63,8 @@ func main() {
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
+	var domainAuthorization string
+	var enableInsecureTestFeatures bool
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -82,6 +85,14 @@ func main() {
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+	flag.StringVar(&domainAuthorization, "domain-authorization", "allowlist",
+		"Domain authorization mode (ADR 0003): 'allowlist' requires a "+
+			"MailDomainGrant covering each domain for the MailServer's namespace; "+
+			"'unrestricted' skips the grant requirement for single-tenant clusters. "+
+			"Uniqueness is enforced in both modes.")
+	flag.BoolVar(&enableInsecureTestFeatures, "enable-insecure-test-features", false,
+		"Accept MailServer.spec.submission.insecureStaticUsers (Phase 2 test "+
+			"users from a Secret with crypt(3) password hashes).")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -89,6 +100,15 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	authMode, err := controller.ParseDomainAuthorization(domainAuthorization)
+	if err != nil {
+		setupLog.Error(err, "Invalid --domain-authorization value")
+		os.Exit(1)
+	}
+	if authMode == controller.AuthorizationUnrestricted {
+		setupLog.Info("Domain authorization is unrestricted: any namespace may claim any domain")
+	}
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
@@ -183,8 +203,11 @@ func main() {
 	}
 
 	if err := (&controller.MailServerReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:                     mgr.GetClient(),
+		Scheme:                     mgr.GetScheme(),
+		Recorder:                   mgr.GetEventRecorder("mailserver-controller"),
+		DomainAuthorization:        authMode,
+		EnableInsecureTestFeatures: enableInsecureTestFeatures,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "mailserver")
 		os.Exit(1)
@@ -204,8 +227,9 @@ func main() {
 		os.Exit(1)
 	}
 	if err := (&controller.MailDomainGrantReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorder("maildomaingrant-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "maildomaingrant")
 		os.Exit(1)

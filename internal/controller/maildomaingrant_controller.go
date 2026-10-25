@@ -18,39 +18,77 @@ package controller
 
 import (
 	"context"
+	"fmt"
 
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/recorder"
 
 	cnmsv1alpha1 "github.com/RocketPadPlatforms/cloud-native-mail-service/api/v1alpha1"
 )
 
-// MailDomainGrantReconciler reconciles a MailDomainGrant object
+// MailDomainGrant condition types (ADR 0003).
+const (
+	// ConditionNamespaceExists is true when the namespace a grant
+	// points at exists. The condition is informational only and never
+	// feeds back into authorization.
+	ConditionNamespaceExists = "NamespaceExists"
+)
+
+// MailDomainGrantReconciler reconciles a MailDomainGrant object.
 type MailDomainGrantReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+	// Recorder emits a Warning Event when the grant points at a
+	// missing namespace (nil in tests).
+	Recorder recorder.EventRecorder
 }
 
-// +kubebuilder:rbac:groups=cnms.rpp.gmbh,resources=maildomaingrants,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=cnms.rpp.gmbh,resources=maildomaingrants,verbs=get;list;watch
 // +kubebuilder:rbac:groups=cnms.rpp.gmbh,resources=maildomaingrants/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=cnms.rpp.gmbh,resources=maildomaingrants/finalizers,verbs=update
+// +kubebuilder:rbac:groups=core,resources=namespaces,verbs=get;list;watch
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
-// Reconcile is part of the main kubernetes reconciliation loop which aims to
-// move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the MailDomainGrant object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.25.0/pkg/reconcile
+// Reconcile warns when a grant points at a namespace that does not
+// exist (ADR 0003); authorization itself is evaluated by the
+// MailServer controller from the current grants.
 func (r *MailDomainGrantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = logf.FromContext(ctx)
-
-	// TODO(user): your logic here
-
+	log := logf.FromContext(ctx)
+	grant := &cnmsv1alpha1.MailDomainGrant{}
+	if err := r.Get(ctx, req.NamespacedName, grant); err != nil {
+		if errors.IsNotFound(err) {
+			return ctrl.Result{}, nil
+		}
+		return ctrl.Result{}, err
+	}
+	ns := &corev1.Namespace{}
+	err := r.Get(ctx, types.NamespacedName{Name: grant.Spec.Namespace}, ns)
+	status, reason, message := metav1.ConditionTrue, "NamespaceExists",
+		"the granted namespace exists"
+	if errors.IsNotFound(err) {
+		status, reason, message = metav1.ConditionFalse, "NamespaceNotFound",
+			fmt.Sprintf("namespace %q does not exist", grant.Spec.Namespace)
+		if r.Recorder != nil {
+			r.Recorder.Eventf(grant, nil, corev1.EventTypeWarning, reason,
+				"NamespaceNotFound", message)
+		}
+	} else if err != nil {
+		return ctrl.Result{}, err
+	}
+	setCondition(&grant.Status.Conditions, grant.Generation,
+		ConditionNamespaceExists, status, reason, message)
+	grant.Status.ObservedGeneration = grant.Generation
+	if err := r.Status().Update(ctx, grant); err != nil {
+		return ctrl.Result{}, err
+	}
+	log.V(1).Info("Reconciled MailDomainGrant",
+		"namespace", grant.Spec.Namespace, "exists", status == metav1.ConditionTrue)
 	return ctrl.Result{}, nil
 }
 

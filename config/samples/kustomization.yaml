@@ -4,4 +4,5 @@ resources:
 - cnms_v1alpha1_maildomain.yaml
 - cnms_v1alpha1_maildirectory.yaml
 - cnms_v1alpha1_maildomaingrant.yaml
+- cnms_v1alpha1_sample-static-users.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

@@ -10,8 +10,14 @@ jobs:
   test:
     permissions:
       contents: read
-    name: Unit and envtest tests
+    name: Unit and envtest tests (prometheus CRDs: ${{ matrix.prometheus-crds }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # PROMETHEUS_CRDS=1 installs a minimal ServiceMonitor CRD so
+        # the optional Prometheus Operator integration is exercised.
+        prometheus-crds: ["0", "1"]
     steps:
       - name: Clone the code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -24,6 +30,8 @@ jobs:
           go-version-file: go.mod
 
       - name: Running Tests
+        env:
+          PROMETHEUS_CRDS: ${{ matrix.prometheus-crds }}
         run: |
           go mod tidy
           make test

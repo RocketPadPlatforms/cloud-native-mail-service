@@ -1,0 +1,18 @@
+# Test users for the Phase 2 static-user source (Phase 2 test source;
+# see docs/how-to/02-install-and-operate.md). The Secret holds crypt(3)
+# password hashes, never plaintext passwords.
+apiVersion: v1
+kind: Secret
+metadata:
+  labels:
+    app.kubernetes.io/name: cloud-native-mail-service
+    app.kubernetes.io/managed-by: kustomize
+  name: sample-static-users
+  namespace: mail-sample
+type: Opaque
+stringData:
+  users.yaml: |
+    users:
+      - username: testuser
+        passwordHash: '$6$cnmsamplesalt$1J78sPZnakgEEUQSuB.sREgwYv3CA/gw7LT8ncmeEe7/tpdNEiCAYxdMyYOIVB788Iws9QXMDc8LmiW7G6RzB1'
+        mailbox: testuser@example.org

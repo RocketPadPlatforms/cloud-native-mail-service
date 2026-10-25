@@ -84,9 +84,9 @@ func TestRenderConfigFiles(t *testing.T) {
 		golden string
 		key    string
 	}{
-		{golden: "default.worker-controller.inc", key: "local.d/worker-controller.inc"},
-		{golden: "default.worker-normal.inc", key: "local.d/worker-normal.inc"},
-		{golden: "default.redis.conf", key: "local.d/redis.conf"},
+		{golden: "default.worker-controller.inc", key: "worker-controller.inc"},
+		{golden: "default.worker-normal.inc", key: "worker-normal.inc"},
+		{golden: "default.redis.conf", key: "redis.conf"},
 	}
 	res, err := New().Render(testRequest(t, nil))
 	if err != nil {
@@ -144,15 +144,15 @@ func TestRenderResultCommands(t *testing.T) {
 		t.Errorf("unexpected reload command: %v", res.ReloadCommand)
 	}
 	for _, key := range []string{
-		"local.d/worker-controller.inc",
-		"local.d/worker-normal.inc",
-		"local.d/redis.conf",
+		"worker-controller.inc",
+		"worker-normal.inc",
+		"redis.conf",
 	} {
 		if _, ok := res.ConfigData[key]; !ok {
 			t.Errorf("missing %s in config data", key)
 		}
 	}
-	if want := "mail-valkey.tenant1.svc.cluster.local:6379"; !strings.Contains(res.ConfigData["local.d/redis.conf"], want) {
+	if want := "mail-valkey.tenant1.svc.cluster.local:6379"; !strings.Contains(res.ConfigData["redis.conf"], want) {
 		t.Errorf("redis.conf does not target %s", want)
 	}
 }

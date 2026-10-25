@@ -60,8 +60,8 @@ const (
 
 	// appLabel marks the app family of the rendered resources.
 	appLabel = "app.kubernetes.io/name"
-	// instanceLabel carries the MailServer name.
-	instanceLabel = "app.kubernetes.io/instance"
+	// InstanceLabelKey carries the MailServer name.
+	InstanceLabelKey = "app.kubernetes.io/instance"
 	// componentLabel carries the data-plane component.
 	componentLabel = "app.kubernetes.io/component"
 	// managedByAppLabel is the standard "managed by" app label.
@@ -75,9 +75,9 @@ const (
 	// serverLabel carries the MailServer name on pods and policies.
 	serverLabel = "cnms.rpp.gmbh/mailserver"
 
-	// tlsCertFile and tlsKeyFile are the cert-manager standard keys.
-	tlsCertFile = "tls.crt"
-	tlsKeyFile  = "tls.key"
+	// TLSCertFile and TLSKeyFile are the cert-manager standard keys.
+	TLSCertFile = "tls.crt"
+	TLSKeyFile  = "tls.key"
 
 	// postfixQueueVolume is the StatefulSet volumeClaimTemplate name
 	// of the per-replica queue volume.
@@ -201,11 +201,11 @@ func ServiceMonitors(server *cnmsv1alpha1.MailServer) []client.Object {
 	}
 	return []client.Object{
 		mk(render.ServiceName(server.Name, render.ComponentPostfix)+"-metrics",
-			render.ComponentPostfix, "cnms-postfix-metrics"),
+			render.ComponentPostfix, "postfix-metrics"),
 		mk(render.ServiceName(server.Name, render.ComponentRspamd),
-			render.ComponentRspamd, "cnms-rspamd-metrics"),
+			render.ComponentRspamd, "rspamd-metrics"),
 		mk(render.ServiceName(server.Name, render.ComponentValkey)+"-metrics",
-			render.ComponentValkey, "cnms-valkey-metrics"),
+			render.ComponentValkey, "valkey-metrics"),
 	}
 }
 
@@ -213,10 +213,16 @@ func ServiceMonitors(server *cnmsv1alpha1.MailServer) []client.Object {
 // spec) for API groups the operator integrates with optionally
 // (cert-manager, Prometheus Operator).
 func unstructuredObj(apiVersion, kind, name, namespace string, l map[string]string, spec map[string]any) *unstructured.Unstructured {
+	// Labels must be map[string]any inside an unstructured object:
+	// DeepCopy panics on map[string]string values.
+	labels := make(map[string]any, len(l))
+	for k, v := range l {
+		labels[k] = v
+	}
 	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": apiVersion,
 		"kind":       kind,
-		"metadata":   map[string]any{"name": name, "namespace": namespace, "labels": l},
+		"metadata":   map[string]any{"name": name, "namespace": namespace, "labels": labels},
 		"spec":       spec,
 	}}
 }
@@ -239,7 +245,7 @@ func configMap(server *cnmsv1alpha1.MailServer, c render.Component, r *render.Re
 func objectLabels(server *cnmsv1alpha1.MailServer, c render.Component) map[string]string {
 	l := map[string]string{
 		appLabel:          appValue,
-		instanceLabel:     server.Name,
+		InstanceLabelKey:  server.Name,
 		managedByAppLabel: managedByValue,
 		ManagedByLabel:    managedByValue,
 		serverLabel:       server.Name,
@@ -288,9 +294,9 @@ func podAnnotations(r *render.RenderResult) map[string]string {
 	return map[string]string{ConfigHashAnnotation: configHash(r)}
 }
 
-// tlsSecretName is the name of the TLS certificate Secret
+// TLSSecretName is the name of the TLS certificate Secret
 // (spec.tls.secretName or "<name>-tls").
-func tlsSecretName(server *cnmsv1alpha1.MailServer) string {
+func TLSSecretName(server *cnmsv1alpha1.MailServer) string {
 	if server.Spec.TLS.SecretName != nil && *server.Spec.TLS.SecretName != "" {
 		return *server.Spec.TLS.SecretName
 	}

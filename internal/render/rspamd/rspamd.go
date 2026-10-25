@@ -50,10 +50,14 @@ func (r *Renderer) Render(req *render.RenderRequest) (*render.RenderResult, erro
 		return nil, errors.New("no authorized domains")
 	}
 	return &render.RenderResult{
+		// Flat file names: the ConfigMap volume is mounted at
+		// /etc/rspamd/local.d (internal/manifests), where ConfigMap
+		// data keys become the files. ConfigMap keys may not contain
+		// slashes, so the target directory is not part of the key.
 		ConfigData: map[string]string{
-			"local.d/worker-controller.inc": renderWorkerController(req),
-			"local.d/worker-normal.inc":     renderWorkerNormal(req),
-			"local.d/redis.conf":            renderRedis(req),
+			"worker-controller.inc": renderWorkerController(req),
+			"worker-normal.inc":     renderWorkerNormal(req),
+			"redis.conf":            renderRedis(req),
 		},
 		// `rspamadm configtest` validates the rendered configuration
 		// before rollout (D4: a bad config must never replace a

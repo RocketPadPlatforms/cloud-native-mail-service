@@ -84,7 +84,11 @@ var _ = Describe("CRD samples", func() {
 
 				obj := &unstructured.Unstructured{}
 				Expect(yaml.Unmarshal(data, &obj.Object)).To(Succeed(), "parsing %s", file)
-				Expect(obj.GetAPIVersion()).To(Equal("cnms.rpp.gmbh/v1alpha1"), "apiVersion in %s", file)
+				// The static-users sample is a corev1 Secret; every
+				// other sample is a CNMS CR.
+				if obj.GetKind() != "Secret" {
+					Expect(obj.GetAPIVersion()).To(Equal("cnms.rpp.gmbh/v1alpha1"), "apiVersion in %s", file)
+				}
 				if obj.GetKind() == "MailDomainGrant" {
 					// Cluster-scoped: no namespace.
 					clusterScoped = append(clusterScoped, obj.GetName())

@@ -451,7 +451,11 @@ func TestNetworkPolicies(t *testing.T) {
 	var tcpRanges []string
 	for _, p := range ports {
 		if p.Protocol == nil || *p.Protocol == corev1.ProtocolTCP {
-			tcpRanges = append(tcpRanges, p.Port.String())
+			r := p.Port.String()
+			if p.EndPort != nil {
+				r += fmt.Sprintf("-%d", *p.EndPort)
+			}
+			tcpRanges = append(tcpRanges, r)
 		}
 	}
 	if !slices.Contains(tcpRanges, "1-24") || !slices.Contains(tcpRanges, "26-65535") {
@@ -513,9 +517,9 @@ func TestServiceMonitors(t *testing.T) {
 		t.Fatalf("monitors = %d, want 3", len(mons))
 	}
 	for _, want := range []struct{ name, port string }{
-		{testName + "-postfix-metrics", "cnms-postfix-metrics"},
-		{testName + "-rspamd", "cnms-rspamd-metrics"},
-		{testName + "-valkey-metrics", "cnms-valkey-metrics"},
+		{testName + "-postfix-metrics", "postfix-metrics"},
+		{testName + "-rspamd", "rspamd-metrics"},
+		{testName + "-valkey-metrics", "valkey-metrics"},
 	} {
 		var found bool
 		for _, m := range mons {
