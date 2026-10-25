@@ -8,8 +8,8 @@ Status as of 2026-10-25:
 
 | Phase | Scope | Status |
 |---|---|---|
-| 0 | Scaffold: repo, kubebuilder init, CI, lint, license check, docs site, ADRs | In progress |
-| 1 | API (core subset): `MailServer`, `MailDomain`, `MailDirectory` CRDs with defaults, CEL validation, generated CRDs and API reference, samples | Planned |
+| 0 | Scaffold: repo, kubebuilder init, CI, lint, license check, docs site, ADRs | Done |
+| 1 | API (core subset): `MailServer`, `MailDomain`, `MailDirectory` CRDs with defaults, CEL validation, generated CRDs and API reference, samples | Done |
 | 2 | `MailServer` core: Postfix + Rspamd + Valkey rendering, workloads, config validation, golden-file tests, metrics, swaks e2e | Planned |
 | 3 | `MailDirectory`: LDAP and SQL maps for Postfix and Dovecot auth | Planned |
 | 4 | Mailboxes (Dovecot): IMAP, LMTP delivery, mail storage, quota, backup hooks | Planned |

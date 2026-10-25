@@ -1,6 +1,6 @@
 # Reference
 
-- API reference (generated from the Go types, Phase 1)
+- [API reference](api.md) (generated from the Go types by `make api-ref`)
 - Helm values reference (Phase 10)
 - Metrics and alerts reference (Phase 9)
 - Compatibility matrix (engine and Kubernetes versions, Phase 10)

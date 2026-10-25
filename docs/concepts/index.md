@@ -2,6 +2,7 @@
 
 Background on how CNMS works:
 
+- [Resource model](resource-model.md) (current v1alpha1 resources)
 - Architecture
 - Control plane vs data plane
 - Reputation isolation between mail servers

@@ -50,6 +50,13 @@
       "depName": "github.com/google/go-licenses/v2",
       "datasource": "go",
       "versioning": "semver"
+    },
+    {
+      "fileMatch": ["^Makefile$"],
+      "matchStrings": ["CRD_REF_DOCS_VERSION\\s*=\\s*\\K(?<currentValue>\\S+)"],
+      "depName": "github.com/elastic/crd-ref-docs",
+      "datasource": "go",
+      "versioning": "semver"
     }
   ]
 }
