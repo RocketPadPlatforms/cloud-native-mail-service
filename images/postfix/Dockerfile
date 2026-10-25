@@ -10,9 +10,11 @@
 #
 # Runtime contract (used by the CNMS operator):
 #   - main container:  runs as root; /usr/local/bin/cnms-postfix-entrypoint.sh
-#     runs the mail system (master daemonized, polled every 1s) and stops it
-#     on SIGTERM. postfix(1) is superuser-only; the master drops privileges
-#     to the postfix user (mail_owner) for all daemons (master.cf unpriv).
+#     runs the master with `postfix start-fg` (-s keeps stdout open so
+#     postlogd writes the daemon logs to the pod stdout), polls it every
+#     1s and stops it on SIGTERM. postfix(1) is superuser-only; the master
+#     drops privileges to the postfix user (mail_owner) for all daemons
+#     (master.cf unpriv).
 #   - config:          /etc/postfix is a read-only mount point (ConfigMap).
 #   - queue:           /var/spool/postfix (queue_directory) is a volume
 #     mount; the pod fsGroup must match the postfix group UID (5001) so the

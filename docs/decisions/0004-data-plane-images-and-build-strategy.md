@@ -30,13 +30,18 @@ container image with a known user, writable paths, and a log path
    digest). Configure flags: `--with-tls --with-sasl --with-lmdb
    --with-ldap --with-sqlite` (SASL for the Dovecot auth backend on the
    submission listener; LDAP and SQLite for the Phase 3 directory
-   lookups; LMDB as the default map store). The image runs as the
-   non-root `postfix` user, keeps the root FS read-only with the spool
-   on an `emptyDir`, and logs via postlog with
-   `maillog_file = /dev/stdout` (the master process inherits the pod's
-   stdout; e2e asserts logs are visible via `kubectl logs`). The same
-   image is reused for the config-validation init container and the
-   Phase 9 queue-rescue job.
+   lookups; LMDB as the default map store). The entrypoint runs the
+   master as root; the master drops privileges to the `postfix` user
+   for all daemons, and the queue lives on a per-replica volume (the
+   root FS is a documented exception to read-only for the master's
+   runtime files). Logging goes through postlog with
+   `maillog_file = /dev/stdout`; the master must run with `-s`
+   (`postfix start-fg`) to keep stdout open — a plain `postfix start`
+   runs `master -w`, which discards the master's stdout to `/dev/null`
+   and the daemon logs would be lost. The e2e suite asserts daemon
+   logs are visible via `kubectl logs`. The same image is reused for
+   the config-validation init container and the Phase 9 queue-rescue
+   job.
 2. **Submission architecture:** Postfix serves port 587
    (`smtpd_sasl_type = dovecot`); Dovecot is the SASL backend,
    consistent with "auth-only Dovecot for submission" and with the
