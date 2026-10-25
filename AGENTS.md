@@ -115,6 +115,15 @@ Namespaced (tenant):
   in status). Status lists every required DNS record and whether lookup verifies.
 - `MailRelay`: smarthost, port, TLS, auth Secret, fallback relay.
 - `MailDirectory`: `ldap` | `sql` (later `oidc`), credentials via Secret refs.
+- `MailUser`: operator-managed account for environments without a directory
+  service (login name, operator-generated or provided password, status,
+  quota); the same `MailServer` has either a directory or these users, not
+  both (ADR 0008).
+- `MailServiceAccount`: application sending credential bound to a
+  `MailServer`; lives in the application's namespace and may reference the
+  server cross-namespace. The operator creates the SMTP credential Secret
+  (and a submission-egress NetworkPolicy) in the account's namespace
+  (ADR 0008).
 - `MailPolicy`: rate limits, TLS enforcement per destination, auto-suspend
   thresholds (bounce rate; complaint rate only once a data source exists, see
   open question 2).
@@ -292,11 +301,18 @@ the docs site builds without broken links, and the license check passes.
   e2e on kind with Mailpit as a sink (send with `swaks`).
   *Done when:* the swaks e2e test passes in CI and a deliberately broken config
   does not replace a working one.
-- **Phase 3 - MailDirectory:** LDAP and SQL maps for Postfix (recipient
-  validation, tempfail on lookup errors) and Dovecot auth; e2e with an LDAP
-  test container.
+- **Phase 3 - User sources and service accounts:** `MailDirectory`
+  (LDAP and SQL maps for Postfix recipient validation — tempfail on lookup
+  errors — and Dovecot auth), operator-managed `MailUser` accounts for
+  environments without a directory service, and `MailServiceAccount`
+  credentials for applications (cross-namespace reference, operator-provided
+  SMTP credential Secret including the CA chain, sender binding, NetworkPolicy
+  in the app's namespace); design in ADR 0008. E2e with an LDAP test
+  container, a `MailUser` login, and a second-namespace app sending via its
+  service account.
   *Done when:* e2e shows valid/invalid recipients and tempfail when the
-  directory is down.
+  directory is down, a `MailUser` logs in, and the app sends with the
+  operator-provided credential from its own namespace.
 - **Phase 4 - Mailboxes (Dovecot):** IMAP, LMTP delivery from Postfix, mail
   storage PVC, mailbox format ADR, quota basics, Dovecot metrics, backup hooks
   (section 8).

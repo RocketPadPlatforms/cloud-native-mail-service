@@ -49,6 +49,7 @@ module.exports = {
         'decisions/component-metrics-sources',
         'decisions/network-policy-and-security-floor',
         'decisions/deployment-annotation-merge',
+        'decisions/user-sources-and-service-accounts',
       ],
     },
     { type: 'doc', id: 'roadmap' },

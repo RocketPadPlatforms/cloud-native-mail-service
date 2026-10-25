@@ -28,4 +28,5 @@ See [TEMPLATE.md](TEMPLATE.md).
 | [0005](0005-component-metrics-sources.md) | Component metrics sources | Accepted |
 | [0006](0006-network-policy-and-security-floor.md) | NetworkPolicy floor and security floor | Accepted |
 | [0007](0007-deployment-annotation-merge.md) | Merging operator-owned annotations and skipping no-op writes | Accepted |
+| [0008](0008-user-sources-and-service-accounts.md) | Operator-managed users and service accounts | Accepted |
 
