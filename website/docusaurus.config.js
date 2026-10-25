@@ -14,6 +14,7 @@ const config = {
   baseUrl: '/cloud-native-mail-service/',
   onBrokenLinks: 'throw',
   onBrokenMarkdownLinks: 'throw',
+  themes: ['@docusaurus/theme-mermaid'],
   presets: [
     [
       'classic',

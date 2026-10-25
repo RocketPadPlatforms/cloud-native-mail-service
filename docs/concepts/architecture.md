@@ -7,6 +7,30 @@ its lifecycle. This page explains how the parts fit together; the
 [control plane vs data plane](control-vs-data-plane.md) and
 [failure modes](failure-modes.md) cover the operational consequences.
 
+The diagram below shows the control plane / data plane split for one
+`MailServer`; the sections below explain each part.
+
+import Mermaid from '@theme/Mermaid';
+
+<Mermaid
+  value={`flowchart LR
+    CR["MailServer CR"] --> OP
+    subgraph cp ["Control plane"]
+        OP["CNMS operator<br/>(leader-elected, no message path)"]
+    end
+    OP -->|"renders engine config into<br/>ConfigMaps / Secrets (content-hash)"| CFG[["rendered config"]]
+    subgraph dp ["Data plane (one isolated set per MailServer)"]
+        LB["Service (LoadBalancer)<br/>25 inbound, 587 submission"] --> PF["Postfix (StatefulSet)<br/>SMTP in, submission, outbound"]
+        PF -->|"LMTP"| DC["Dovecot<br/>IMAP, LMTP, SASL auth"]
+        PF -->|"milter (inet:) + tempfail"| RP["Rspamd (Deployment)<br/>filtering, DKIM signing, rate limits"]
+        RP --- VK["Valkey<br/>(rate limits, reputation, Bayes)"]
+    end
+    CFG --> PF
+    CFG --> RP
+    CFG --> DC
+    PF -.->|"SMTP (direct or relay)"| NET(["Internet / smart host"])`}
+/>
+
 ## Control plane
 
 The operator is a standard controller-runtime manager with leader
