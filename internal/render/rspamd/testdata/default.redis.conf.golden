@@ -1,0 +1,7 @@
+# CNMS-rendered Rspamd local.d/redis.conf -- do not edit.
+# Source: MailServer tenant1/mail (ADR 0004)
+
+# One dedicated Valkey instance per MailServer (principle 6):
+# rate-limit, reputation and Bayes state are never shared
+# between servers.
+servers = "mail-valkey.tenant1.svc.cluster.local:6379";

@@ -1,0 +1,7 @@
+# CNMS-rendered Rspamd local.d/worker-normal.inc -- do not edit.
+# Source: MailServer tenant1/mail (ADR 0004)
+
+# CNMS never submits messages via File/Path/Shm inputs;
+# disabling them (the shipped default is true) keeps such
+# inputs from being accepted.
+allow_file_and_shm_inputs = false;

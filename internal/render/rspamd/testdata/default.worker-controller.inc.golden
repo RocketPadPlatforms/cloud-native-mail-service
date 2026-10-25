@@ -1,0 +1,14 @@
+# CNMS-rendered Rspamd local.d/worker-controller.inc -- do not edit.
+# Source: MailServer tenant1/mail (ADR 0004)
+
+# The controller worker serves the HTTP API (GET /metrics,
+# ADR 0005) without a password. `null` (not an empty string)
+# yields unauthenticated read-only access; an empty string
+# would require an empty password. Each MailServer has its
+# own Rspamd set and access is restricted by the
+# NetworkPolicies of ADR 0006.
+password = null;
+# CNMS never submits messages via File/Path/Shm inputs;
+# disabling them (the shipped default is true) keeps such
+# inputs from being accepted.
+allow_file_and_shm_inputs = false;
