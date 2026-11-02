@@ -31,6 +31,29 @@ scoped; nothing here is committed.
 - Operator-driven PVC resize for the Postfix queue and the mail
   volume (expand the PVCs, then allow `queueStorage`/`storage` edits);
   today the sizes are immutable and resized manually (ADR 0010).
+- Rspamd `/metrics` for Prometheus (ADR 0005 correction): the controller
+  refuses every non-loopback client. Options: (a) a per-server Secret
+  with a read-only controller `password` (and a discarded
+  `enable_password`); Prometheus can only send it as the `Password`
+  header or the `?password=` query argument, and a ServiceMonitor only
+  takes static `params`, so the password would sit in the
+  ServiceMonitor in plain text; (b) a metrics sidecar that reads
+  `127.0.0.1:11334/metrics` (secure_ip) and serves it on its own port,
+  like the Postfix queue-metrics sidecar, which also lets the NetworkPolicy
+  drop port 11334; needs an image with an HTTP client. Not an option:
+  removing `secure_ip` (exposes history and statistics to every pod).
+- Phase 5 (`MailDomain`, DKIM): a "never unsigned" guard in Rspamd, a
+  postfilter Lua rule that calls `task:set_pre_result('soft reject', ...)`
+  for authenticated or local mail without `DKIM_SIGNED`. Exempt the
+  empty-sender mail Postfix generates itself (bounces, notifications):
+  the Postfix MILTER_README says `non_smtpd_milters` must not reject or
+  tempfail it. Also decide `internal_mail_filter_classes = bounce, notify`
+  (whether locally generated bounces are signed) with the same caveats;
+  not set today. Check key presence before rollout.
+- Phase 3 (users, ADR 0008 amendment): bind the submission login to the
+  sender address (`smtpd_sender_login_maps` plus
+  `reject_sender_login_mismatch` on port 587). Not rendered today, so any
+  authenticated user can use any sender address.
 - Tracing.
 - Webmail/UI, billing, multi-cluster federation.
 - IMAP horizontal scaling.

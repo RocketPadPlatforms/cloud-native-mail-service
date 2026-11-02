@@ -62,12 +62,9 @@ present. Metric sources per component, verified on 2026-10-25:
 2. **Rspamd metrics:** expose the controller worker's `/metrics`
    (OpenMetrics) on named port `rspamd-metrics` (11334, the Rspamd
    4.x controller worker default; verified against the 4.2.3
-   configuration) with a Service. No controller password in v1: each
-   `MailServer` has its own Rspamd set, access is restricted by the
-   NetworkPolicies of ADR-0006, and the metrics path is the only one
-   the operator needs.
-   The write endpoints of the controller are reachable in-cluster;
-   this trade-off is documented in the observability docs.
+   configuration) with a Service. The original assumption (a
+   controller without a password serves `/metrics` to everyone) did
+   not hold, see the correction in the consequences.
 3. **Valkey metrics:** `oliver006/redis_exporter` v1.96.0 (MIT) as a
    sidecar on the Valkey pod, targeting
    `redis://127.0.0.1:6379`, on named port `valkey-metrics`
@@ -85,10 +82,19 @@ present. Metric sources per component, verified on 2026-10-25:
 
 - Postfix queue metrics have a 30s sampling granularity; bursty queue
   spikes between samples are not visible (documented).
-- The Rspamd controller endpoint is unauthenticated in-cluster; the
-  NetworkPolicies are the only access control. A per-MailServer
-  controller password or a dedicated metrics-only listener can be
-  added later (additive).
+- Correction (verified against Rspamd 4.2.3, `src/controller.c` and a
+  running 4.2.3 container): `password = null` does not give remote
+  clients read-only access. The shipped `secure_ip` (127.0.0.1, ::1)
+  stays in effect, and every other client gets 401 on all endpoints
+  including `/metrics` (only `/ping` answers). The learn, fuzzy and
+  map endpoints are therefore closed to other pods, but the Rspamd
+  `/metrics` cannot be scraped from another pod yet, so the Rspamd
+  ServiceMonitor target is down. Serving it safely needs a decision
+  (password in a per-server Secret, or a metrics sidecar on
+  loopback); the options are in `docs/backlog.md`. Dropping
+  `secure_ip` to make `/metrics` public would also expose the
+  read-only endpoints (history, statistics) of every tenant to any
+  pod and is not an option.
 - The `redis_exporter` license (MIT) was checked at the pinned
   version; Renovate PRs must re-check it on major updates (section 9).
 - Queue metrics are per replica; a scrape of the headless Service

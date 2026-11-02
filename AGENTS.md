@@ -38,9 +38,12 @@ Put this file in the repo as `AGENTS.md` (or your tool's equivalent) so it persi
    **Postfix** (SMTP in/out, relay), **Rspamd** (+ **Valkey**; spam, DKIM
    signing, SPF/DMARC checks, rate limits), and **Dovecot 2.4** (IMAP, LMTP,
    SASL auth).
-2. **Users are managed outside the operator.** No Mailbox/User CRDs. Accounts
-   come from an external directory (`MailDirectory`: LDAP and SQL first,
-   OIDC later). The operator only configures Postfix/Dovecot to query it.
+2. **Users are managed outside the operator by default.** Accounts come from
+   an external directory (`MailDirectory`: LDAP and SQL first, OIDC later);
+   the operator only configures Postfix/Dovecot to query it. The one
+   documented exception (ADR 0008) is `MailUser`, operator-managed accounts
+   for environments without a directory service, only when explicitly
+   created. No per-mailbox CRDs beyond that.
 3. **Engine-neutral API, replaceable renderer.** CRDs must not leak Postfix
    syntax. Put config rendering behind a Go interface so another engine could be
    added later.

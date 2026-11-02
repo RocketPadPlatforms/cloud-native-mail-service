@@ -517,6 +517,25 @@ var _ = Describe("MailServer controller", func() {
 			Expect(podTemplateHash(getStatefulSetG(ns, "mail-dovecot"))).ToNot(Equal(dovecotFirst))
 		})
 
+		It("warns about hidden client addresses without failing Ready", func() {
+			reconcile("mail", func(s *cnmsv1alpha1.MailServer) {
+				s.Spec.Inbound = &cnmsv1alpha1.Inbound{ExternalTrafficPolicy: new("Cluster")}
+			})
+			status, reason, _ := serverConditionG(ns, "mail", ConditionClientIPPreserved)
+			Expect(status).To(Equal(metav1.ConditionFalse))
+			Expect(reason).To(Equal("ClusterTrafficPolicy"))
+			// The warning is not part of the Ready roll-up.
+			_, readyReason, _ := serverConditionG(ns, "mail", conditionReady)
+			Expect(readyReason).ToNot(Equal("ClusterTrafficPolicy"))
+
+			mutateServerG(ns, func(s *cnmsv1alpha1.MailServer) {
+				s.Spec.Inbound.ExternalTrafficPolicy = new("Local")
+			})
+			reconcileServerG(newReconcilerG(AuthorizationAllowlist, true), ns, "mail")
+			status, _, _ = serverConditionG(ns, "mail", ConditionClientIPPreserved)
+			Expect(status).To(Equal(metav1.ConditionTrue))
+		})
+
 		It("reports the observed generation", func() {
 			reconcile("mail", nil)
 			server := &cnmsv1alpha1.MailServer{}

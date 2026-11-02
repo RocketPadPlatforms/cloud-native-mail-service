@@ -86,6 +86,7 @@ func TestRenderConfigFiles(t *testing.T) {
 	}{
 		{golden: "default.worker-controller.inc", key: "worker-controller.inc"},
 		{golden: "default.worker-normal.inc", key: "worker-normal.inc"},
+		{golden: "default.worker-proxy.inc", key: "worker-proxy.inc"},
 		{golden: "default.redis.conf", key: "redis.conf"},
 	}
 	res, err := New().Render(testRequest(t, nil))
@@ -146,6 +147,7 @@ func TestRenderResultCommands(t *testing.T) {
 	for _, key := range []string{
 		"worker-controller.inc",
 		"worker-normal.inc",
+		"worker-proxy.inc",
 		"redis.conf",
 	} {
 		if _, ok := res.ConfigData[key]; !ok {

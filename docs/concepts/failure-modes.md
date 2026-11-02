@@ -3,7 +3,14 @@
 The design rule for every component failure is the same: **mail must
 never be lost because a component is down.** Outages produce
 temporary failures (4xx responses and queueing), never permanent
-rejections, never lost messages, and never unsigned outgoing mail.
+rejections, and never lost messages. Outgoing mail must never leave
+unsigned once DKIM signing exists.
+
+:::danger
+**DKIM signing is not implemented yet** (Phase 5): outbound mail
+currently leaves unsigned. The "nothing unsigned is sent" statements
+below describe the target behaviour and do not hold until then.
+:::
 
 This page describes the intended behaviour; the chaos e2e suite
 (kill a Postfix pod, kill Rspamd, stop the operator, ...) proves it
@@ -14,8 +21,8 @@ from the hardening phase on.
 | Failure | Behaviour |
 |---|---|
 | Operator down | Mail keeps flowing; rollouts, rotation and status updates pause |
-| Rspamd down (all replicas) | Mail tempfails into the Postfix queues (4xx to remote senders); nothing unsigned is sent |
-| Valkey down | Rspamd degrades (rate limits and learned state unavailable); mail still flows and is signed |
+| Rspamd down (all replicas) | Mail tempfails into the Postfix queues (4xx to remote senders); nothing unsigned is sent (once DKIM signing exists) |
+| Valkey down | Rspamd degrades (rate limits and learned state unavailable); mail still flows (and is signed once DKIM signing exists) |
 | User directory down | Unknown-recipient lookups tempfail (4xx, not 5xx); Dovecot authentication fails so submission is deferred by the sender |
 | Postfix replica lost | Queued mail survives on the per-replica queue PVC; remaining replicas keep serving; the lost replica is replaced |
 | Scale-down of Postfix | Not supported yet: the queue move is not implemented, so decreasing `postfix.replicas` is rejected |
@@ -48,9 +55,10 @@ queue the message and answer 4xx to remote senders, who retry —
 the mail is not accepted unsigned and not rejected. Locally
 generated mail (for example bounces) is filtered through
 `non_smtpd_milters`, so it is held the same way instead of skipping
-the filter. While Rspamd is up, a missing DKIM key must also result
-in a tempfail for authenticated senders, so an up-but-broken filter
-cannot release unsigned mail.
+the filter. Once DKIM signing exists (Phase 5), a missing signature
+must also result in a tempfail for authenticated senders, so an
+up-but-broken filter cannot release unsigned mail; that guard is not
+implemented yet.
 
 ### Valkey down
 

@@ -7,6 +7,11 @@ deployment manifests live in `config/` (Kustomize); the Helm chart
 arrives with the release (Phase 10).
 :::
 
+:::danger
+**DKIM signing is not implemented yet** (Phase 5): outbound mail leaves
+unsigned. Do not send production mail from a CNMS server before then.
+:::
+
 ## Install
 
 Prerequisites in the cluster: cert-manager (certificate issuing for
@@ -50,7 +55,8 @@ the first failing sub-condition:
 | `ConfigValidated` | the rendered configuration of every component passed its validation Job (or already runs); `Unknown` while the Jobs run | `ConfigRejected` (message names the failed Job; delete the Job to retry), `ValidatingConfig` (Unknown) |
 | `WorkloadsReady` | every data-plane workload finished its rollout (latest spec observed, all replicas on the desired template and ready) | `Progressing` while converging, `RolloutStalled` after a Deployment exceeds its progress deadline or the workloads stay not ready for 10 minutes (the message lists which) |
 | `Observability` | the Prometheus Operator integration matches `spec.observability.prometheusOperator` (`auto` is the default) | `CRDsRequired` (setting `enabled` without the ServiceMonitor CRDs) |
-| `Ready` | all of the above | propagated reasons, e.g. `DirectoryNotFound`, `StaticUsersInvalid`, `RelayNotAvailable` (Phase 6), `IpPoolClaimNotAvailable` (Phase 7) |
+| `ClientIPPreserved` | Postfix sees the real client address (postscreen and the per-client rate limits depend on it); informational, never part of `Ready` | `ClusterTrafficPolicy` (`inbound.externalTrafficPolicy: Cluster` on a LoadBalancer Service source-NATs clients, so the rate limits count all senders together; use `Local`) |
+| `Ready` | all of the above (except `ClientIPPreserved`) | propagated reasons, e.g. `DirectoryNotFound`, `StaticUsersInvalid`, `RelayNotAvailable` (Phase 6), `IpPoolClaimNotAvailable` (Phase 7) |
 
 A not-ready `MailServer` is re-checked every 30 seconds (certificates
 get issued, workloads come up, CRDs get installed). A `MailDomainGrant`
@@ -118,6 +124,13 @@ users:
     passwordHash: '{SHA512-CRYPT}...' # crypt(3) hash; never plaintext
     mailbox: testuser@example.com     # full address
 ```
+
+The mailbox addresses also form Postfix's recipient table
+(`virtual_mailbox_maps`): with mailboxes enabled, port 25 rejects an
+unknown recipient of the server's domains at SMTP time (`550 5.1.1`)
+instead of accepting it and bouncing later, and a server without
+users rejects every recipient. Phase 3 replaces the table with the
+directory lookup.
 
 Each user is usable with **both** the full address
 (`testuser@example.com`) and the bare username (`testuser`) for IMAP

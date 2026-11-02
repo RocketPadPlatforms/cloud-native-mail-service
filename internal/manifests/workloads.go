@@ -89,7 +89,7 @@ func postfixStatefulSet(server *cnmsv1alpha1.MailServer, r *render.RenderResult)
 						Name:  "postfix",
 						Image: images.Postfix, // default CMD: the entrypoint
 						Ports: append([]corev1.ContainerPort{{Name: "smtp", ContainerPort: render.PortPostfixInbound}}, submissionPorts...),
-						VolumeMounts: append(configSubPathMounts("main.cf", "master.cf"),
+						VolumeMounts: append(configSubPathMounts(),
 							// smtpd loads the certificate from this
 							// path (the sidecar's mount is a
 							// different filesystem).
@@ -134,7 +134,7 @@ func postfixStatefulSet(server *cnmsv1alpha1.MailServer, r *render.RenderResult)
 						// postqueue needs the config (postconf) and
 						// the queue (read-only: it only talks to the
 						// showq socket); the certificate is not used.
-						VolumeMounts: append(configSubPathMounts("main.cf", "master.cf"),
+						VolumeMounts: append(configSubPathMounts(),
 							readOnlyMount(queueMount())),
 					}, {
 						// Certificate reload sidecar: polls the
@@ -143,7 +143,7 @@ func postfixStatefulSet(server *cnmsv1alpha1.MailServer, r *render.RenderResult)
 						Name:    "cert-reload",
 						Image:   images.Postfix,
 						Command: certReloadLoop(postfixTLSDir+"/"+TLSCertFile, r.ReloadCommand),
-						VolumeMounts: append(configSubPathMounts("main.cf", "master.cf"),
+						VolumeMounts: append(configSubPathMounts(),
 							tlsMount(),
 							// `postfix reload` talks to the master
 							// via the queue-directory sockets.
@@ -470,7 +470,10 @@ func tlsVolume(secretName string) corev1.Volume {
 // (meta_directory) stays visible to `postfix check` and the master.
 // subPath staleness is fine: config changes always change the
 // pod-template hash and recreate the pods.
-func configSubPathMounts(files ...string) []corev1.VolumeMount {
+func configSubPathMounts() []corev1.VolumeMount {
+	// The files of the Postfix render (the recipient table is always
+	// rendered, possibly empty).
+	files := []string{"main.cf", "master.cf", "vmailbox"}
 	mounts := make([]corev1.VolumeMount, 0, len(files))
 	for _, f := range files {
 		mounts = append(mounts, corev1.VolumeMount{

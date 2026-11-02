@@ -57,6 +57,7 @@ func (r *Renderer) Render(req *render.RenderRequest) (*render.RenderResult, erro
 		ConfigData: map[string]string{
 			"worker-controller.inc": renderWorkerController(req),
 			"worker-normal.inc":     renderWorkerNormal(req),
+			"worker-proxy.inc":      renderWorkerProxy(req),
 			"redis.conf":            renderRedis(req),
 		},
 		// `rspamadm configtest` validates the rendered configuration
@@ -89,17 +90,14 @@ func sourceHeader(req *render.RenderRequest, file string) string {
 func renderWorkerController(req *render.RenderRequest) string {
 	var b strings.Builder
 	b.WriteString(sourceHeader(req, "local.d/worker-controller.inc"))
-	b.WriteString("# The controller worker serves the HTTP API (GET /metrics,\n")
-	b.WriteString("# ADR 0005) without a password. `null` (not an empty string)\n")
-	b.WriteString("# yields unauthenticated read-only access; an empty string\n")
-	b.WriteString("# would require an empty password. Each MailServer has its\n")
-	b.WriteString("# own Rspamd set and access is restricted by the\n")
-	b.WriteString("# NetworkPolicies of ADR 0006.\n")
+	b.WriteString("# The controller worker serves the HTTP API. The shipped\n")
+	b.WriteString("# secure_ip (127.0.0.1 and ::1) is kept: those clients need no\n")
+	b.WriteString("# password. Every other client is refused (401) on all\n")
+	b.WriteString("# endpoints, including /metrics, because no password is\n")
+	b.WriteString("# configured: `null` (not an empty string) removes the shipped\n")
+	b.WriteString("# default password \"q1\", so remote access stays closed.\n")
 	b.WriteString("password = null;\n")
-	b.WriteString("# CNMS never submits messages via File/Path/Shm inputs;\n")
-	b.WriteString("# disabling them (the shipped default is true) keeps such\n")
-	b.WriteString("# inputs from being accepted.\n")
-	b.WriteString("allow_file_and_shm_inputs = false;\n")
+	b.WriteString(disableFileInputs)
 	return b.String()
 }
 
@@ -107,12 +105,27 @@ func renderWorkerController(req *render.RenderRequest) string {
 func renderWorkerNormal(req *render.RenderRequest) string {
 	var b strings.Builder
 	b.WriteString(sourceHeader(req, "local.d/worker-normal.inc"))
-	b.WriteString("# CNMS never submits messages via File/Path/Shm inputs;\n")
-	b.WriteString("# disabling them (the shipped default is true) keeps such\n")
-	b.WriteString("# inputs from being accepted.\n")
-	b.WriteString("allow_file_and_shm_inputs = false;\n")
+	b.WriteString(disableFileInputs)
 	return b.String()
 }
+
+// renderWorkerProxy renders local.d/worker-proxy.inc. The proxy
+// worker (milter on 11332) is the scanning entry point reachable from
+// the Postfix pods.
+func renderWorkerProxy(req *render.RenderRequest) string {
+	var b strings.Builder
+	b.WriteString(sourceHeader(req, "local.d/worker-proxy.inc"))
+	b.WriteString(disableFileInputs)
+	return b.String()
+}
+
+// disableFileInputs turns off the client-named message sources of a
+// worker (verified against the 4.2.3 shipped worker configuration).
+const disableFileInputs = `# CNMS never submits messages via File/Path/Shm inputs;
+# disabling them (the shipped default is true) keeps such
+# inputs from being accepted.
+allow_file_and_shm_inputs = false;
+`
 
 // renderRedis renders local.d/redis.conf.
 func renderRedis(req *render.RenderRequest) string {

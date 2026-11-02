@@ -80,8 +80,9 @@ func (r *Renderer) Render(req *render.RenderRequest) (*render.RenderResult, erro
 	mainCF := renderMainCF(req)
 	return &render.RenderResult{
 		ConfigData: map[string]string{
-			"main.cf":   mainCF,
-			"master.cf": renderMasterCF(req),
+			"main.cf":    mainCF,
+			"master.cf":  renderMasterCF(req),
+			vmailboxFile: renderVMailbox(req),
 		},
 		// `postfix check` validates the rendered configuration before
 		// rollout (D4: a bad config must never replace a working one).
