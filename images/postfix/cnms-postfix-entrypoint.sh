@@ -8,21 +8,20 @@
 # (maillog_file=/dev/stdout); plain `postfix start` (master -w) would
 # discard the master's stdout to /dev/null and the daemon logs would be
 # lost. The master never forks, so this shell (PID 1) runs it in the
-# background and polls it in a short sleep loop. The loop exists because
-# dash defers signal traps until the current foreground command finishes,
-# so a long blocking foreground wait would swallow SIGTERM; the 1s loop
-# bounds the signal latency, and the liveness check exits non-zero
-# (k8s restart) if the master dies on its own.
+# background and blocks in `wait`. A trapped signal interrupts `wait`
+# immediately (POSIX), so SIGTERM is handled without polling. If the
+# master dies on its own the script exits non-zero (k8s restart).
 set -eu
 
-trap 'postfix stop -q 2>/dev/null || true; exit 0' TERM INT
-
 postfix start-fg &
+pid=$!
 
-while :; do
-    sleep 1
-    # master -t: non-zero exit = lock held = the master is running.
-    /usr/libexec/postfix/master -t >/dev/null 2>&1 || continue
-    echo 'master stopped; exiting for restart' >&2
-    exit 1
-done
+# `postfix stop` signals the master and returns; wait for it to finish
+# its shutdown. The master's own exit status is irrelevant after a
+# requested stop, so `wait` must not fail the handler.
+trap 'postfix stop; wait "$pid" || :; exit 0' TERM INT
+
+# Same here: the status of `wait` is not interesting, the master is gone.
+wait "$pid" || :
+echo 'master stopped; exiting for restart' >&2
+exit 1

@@ -19,6 +19,7 @@ package manifests
 import (
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -222,6 +223,9 @@ func TestPostfixStatefulSet(t *testing.T) {
 	if len(pod.InitContainers) != 1 || slices.Equal(pod.InitContainers[0].Command, []string{"postfix", "check"}) != true {
 		t.Errorf("init container = %v", pod.InitContainers)
 	}
+	if pod.ShareProcessNamespace == nil || !*pod.ShareProcessNamespace {
+		t.Error("postfix pod must share the process namespace for the cert-reload sidecar")
+	}
 	main := pod.Containers[0]
 	if main.Image != images.Postfix {
 		t.Errorf("postfix image = %q", main.Image)
@@ -239,6 +243,9 @@ func TestPostfixStatefulSet(t *testing.T) {
 	}
 	if main.ReadinessProbe == nil || main.ReadinessProbe.TCPSocket == nil || main.ReadinessProbe.TCPSocket.Port.IntVal != render.PortPostfixInbound {
 		t.Error("postfix readiness probe must target port 25")
+	}
+	if main.StartupProbe == nil || main.StartupProbe.TCPSocket == nil || main.StartupProbe.TCPSocket.Port.IntVal != render.PortPostfixInbound {
+		t.Error("postfix needs a startup probe on port 25")
 	}
 	assertPostfixSidecars(t, pod)
 }
@@ -265,6 +272,14 @@ func assertPostfixSidecars(t *testing.T, pod corev1.PodSpec) {
 	if len(metrics.Env) != 1 || metrics.Env[0].Name != "CNMS_QUEUE_METRICS_PORT" || metrics.Env[0].Value != "9150" {
 		t.Errorf("queue-metrics env = %v", metrics.Env)
 	}
+	for _, m := range metrics.VolumeMounts {
+		if m.Name == postfixQueueVolume && !m.ReadOnly {
+			t.Error("queue-metrics must mount the queue volume read-only")
+		}
+	}
+	if !hasMount(metrics.VolumeMounts, postfixQueueVolume, "/var/spool/postfix") {
+		t.Error("queue-metrics misses the queue mount")
+	}
 	if reload == nil {
 		t.Fatal("cert-reload sidecar missing")
 	}
@@ -282,6 +297,9 @@ func TestDovecotStatefulSet(t *testing.T) {
 	}
 	if g := sts.Spec.Template.Spec.SecurityContext.FSGroup; g == nil || *g != dovecotVmailID {
 		t.Errorf("fsGroup = %v, want %d", g, dovecotVmailID)
+	}
+	if p := sts.Spec.Template.Spec.ShareProcessNamespace; p == nil || !*p {
+		t.Error("dovecot pod must share the process namespace for the cert-reload sidecar")
 	}
 	main := sts.Spec.Template.Spec.Containers[0]
 	if main.SecurityContext == nil || main.SecurityContext.Capabilities == nil ||
@@ -575,6 +593,15 @@ func TestConfigHashIsDeterministicAndConfigBound(t *testing.T) {
 	hash3 := mustFind[*appsv1.StatefulSet](t, find(t, objs3, kindStatefulSet, "other-postfix"), "sts").Spec.Template.Annotations[ConfigHashAnnotation]
 	if hash1 == hash3 {
 		t.Error("different MailServer must yield a different config hash")
+	}
+}
+
+func TestCertReloadLoopBaselinesBeforeLoop(t *testing.T) {
+	script := certReloadLoop("/tls/tls.crt", []string{"postfix", "reload"})[2]
+	baseline := strings.Index(script, "last=$(sum)")
+	loop := strings.Index(script, "while :")
+	if baseline < 0 || loop < 0 || baseline > loop {
+		t.Errorf("the baseline hash must be taken before the loop:\n%s", script)
 	}
 }
 

@@ -11,8 +11,8 @@
 # Runtime contract (used by the CNMS operator):
 #   - main container:  runs as root; /usr/local/bin/cnms-postfix-entrypoint.sh
 #     runs the master with `postfix start-fg` (-s keeps stdout open so
-#     postlogd writes the daemon logs to the pod stdout), polls it every
-#     1s and stops it on SIGTERM. postfix(1) is superuser-only; the master
+#     postlogd writes the daemon logs to the pod stdout), waits for it and
+#     stops it on SIGTERM. postfix(1) is superuser-only; the master
 #     drops privileges to the postfix user (mail_owner) for all daemons
 #     (master.cf unpriv).
 #   - config:          /etc/postfix is a read-only mount point (ConfigMap).
@@ -20,7 +20,7 @@
 #     mount; the pod fsGroup must match the postfix group UID (5001) so the
 #     daemon processes (user postfix) can write the queue.
 #   - validation:      `postfix check` (run as root against the mounted
-#     config) is the config gate (init container).
+#     config) is part of the config gate (validation Job, ADR 0009).
 #   - queue metrics:   /usr/local/bin/cnms-postfix-queue-metrics.sh serves
 #     Prometheus text on 9150 (ADR 0005).
 
@@ -158,7 +158,9 @@ RUN groupadd -g 5001 postfix \
     -s /usr/sbin/nologin postfix \
  && mkdir -p /etc/postfix /var/spool/postfix /var/lib/postfix /var/mail \
  && chown postfix:postfix /var/lib/postfix /var/mail \
- && chmod 755 /etc/postfix /var/spool/postfix
+ && chmod 755 /etc/postfix /var/spool/postfix \
+ && chgrp postdrop /usr/sbin/postqueue /usr/sbin/postdrop \
+ && chmod 2755 /usr/sbin/postqueue /usr/sbin/postdrop
 
 EXPOSE 25 587 9150
 CMD ["/usr/local/bin/cnms-postfix-entrypoint.sh"]

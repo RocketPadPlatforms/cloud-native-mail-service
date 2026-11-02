@@ -44,6 +44,16 @@ present. Metric sources per component, verified on 2026-10-25:
    incoming/active/deferred/hold, oldest message age derived from the
    queue-ID creation timestamp); `busybox httpd` (ISC, installed in
    the image) serves it on named port `postfix-metrics` (9150).
+   The sidecar mounts the queue volume read-only (postqueue only talks
+   to the showq socket). `postqueue` runs on its own, not in a pipe:
+   a failed sample sets `cnms_postfix_queue_up 0` and keeps the last
+   good values instead of reporting an empty queue; a successful one
+   sets `cnms_postfix_queue_up 1`. The file is replaced atomically
+   and served with `Content-Type: text/plain` (Prometheus 3 rejects a
+   missing type). busybox httpd derives the type from the file
+   extension, so the file is `/metrics/index.txt` and a scrape of
+   `/metrics` follows a redirect to `/metrics/`; the scrape path
+   stays the default `/metrics`.
    No new image, no Go binary, license-clean.
    Delivery/deferral/bounce counters from the logs are deferred to
    Phase 9 (full metrics set); this ADR is revisited then — candidates
