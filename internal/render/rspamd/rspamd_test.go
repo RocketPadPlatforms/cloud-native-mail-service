@@ -137,7 +137,7 @@ func TestRenderResultCommands(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.EqualFold(strings.Join(res.ValidateCommand, " "), "rspamadm configtest") {
+	if !strings.HasPrefix(strings.Join(res.ValidateCommand, " "), "rspamadm configtest -c ") {
 		t.Errorf("unexpected validate command: %v", res.ValidateCommand)
 	}
 	if !strings.EqualFold(strings.Join(res.ReloadCommand, " "), "rspamadm control reload") {

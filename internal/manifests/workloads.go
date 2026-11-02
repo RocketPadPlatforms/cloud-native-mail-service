@@ -63,7 +63,7 @@ func postfixStatefulSet(server *cnmsv1alpha1.MailServer, r *render.RenderResult)
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels:      objectLabels(server, render.ComponentPostfix),
-					Annotations: podAnnotations(r),
+					Annotations: podAnnotations(render.ComponentPostfix, r),
 				},
 				Spec: corev1.PodSpec{
 					// The cert-reload sidecar signals the master
@@ -78,21 +78,13 @@ func postfixStatefulSet(server *cnmsv1alpha1.MailServer, r *render.RenderResult)
 					},
 					TopologySpreadConstraints: topologySpreadConstraints(server),
 					Volumes: []corev1.Volume{
-						configVolume(name),
+						configVolume(configMapName(server, render.ComponentPostfix, r)),
 						tlsVolume(TLSSecretName(server)),
 						{
 							Name:         postfixQueueVolume,
 							VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: postfixQueueVolume}},
 						},
 					},
-					InitContainers: []corev1.Container{{
-						// The rendered configuration gate: a bad
-						// config never replaces a working one (D4).
-						Name:         validateContainerName,
-						Image:        images.Postfix,
-						Command:      r.ValidateCommand,
-						VolumeMounts: configSubPathMounts("main.cf", "master.cf"),
-					}},
 					Containers: []corev1.Container{{
 						Name:  "postfix",
 						Image: images.Postfix, // default CMD: the entrypoint
@@ -215,7 +207,7 @@ func dovecotStatefulSet(server *cnmsv1alpha1.MailServer, r *render.RenderResult)
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels:      objectLabels(server, render.ComponentDovecot),
-					Annotations: podAnnotations(r),
+					Annotations: podAnnotations(render.ComponentDovecot, r),
 				},
 				Spec: corev1.PodSpec{
 					// The cert-reload sidecar signals the Dovecot
@@ -231,24 +223,14 @@ func dovecotStatefulSet(server *cnmsv1alpha1.MailServer, r *render.RenderResult)
 					},
 					TopologySpreadConstraints: topologySpreadConstraints(server),
 					Volumes: []corev1.Volume{
-						{
-							Name:         configVolumeName,
-							VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: name}}},
-						},
+						configVolume(configMapName(server, render.ComponentDovecot, r)),
+						usersVolume(secretName(server, render.ComponentDovecot, r)),
 						tlsVolume(TLSSecretName(server)),
 						{
 							Name:         "run",
 							VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
 						},
 					},
-					InitContainers: []corev1.Container{{
-						// doveconf -n is strict: unknown settings
-						// are fatal, so a bad render never starts.
-						Name:         validateContainerName,
-						Image:        images.Dovecot,
-						Command:      r.ValidateCommand,
-						VolumeMounts: dovecotMounts(false),
-					}},
 					Containers: []corev1.Container{{
 						Name:         "dovecot",
 						Image:        images.Dovecot, // default CMD: tini + dovecot -F
@@ -278,7 +260,12 @@ func dovecotStatefulSet(server *cnmsv1alpha1.MailServer, r *render.RenderResult)
 						SecurityContext: &corev1.SecurityContext{RunAsUser: new(dovecotVmailID)},
 						Command: certReloadLoop(dovecotSSLDir()+"/"+TLSCertFile,
 							[]string{"kill", "-HUP", "$(cat " + dovecotRunDir + "/master.pid)"}),
-						VolumeMounts: dovecotMounts(false),
+						// Only the certificate and the pidfile; the
+						// sidecar needs no users file or config.
+						VolumeMounts: []corev1.VolumeMount{
+							{Name: tlsVolumeName, MountPath: dovecotSSLDir(), ReadOnly: true},
+							{Name: runVolumeName, MountPath: dovecotRunDir},
+						},
 					}},
 				},
 			},
@@ -310,7 +297,7 @@ func rspamdDeployment(server *cnmsv1alpha1.MailServer, r *render.RenderResult) *
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels:      objectLabels(server, render.ComponentRspamd),
-					Annotations: podAnnotations(r),
+					Annotations: podAnnotations(render.ComponentRspamd, r),
 				},
 				Spec: corev1.PodSpec{
 					SecurityContext: &corev1.PodSecurityContext{
@@ -318,7 +305,7 @@ func rspamdDeployment(server *cnmsv1alpha1.MailServer, r *render.RenderResult) *
 					},
 					TopologySpreadConstraints: topologySpreadConstraints(server),
 					Volumes: []corev1.Volume{
-						configVolume(name),
+						configVolume(configMapName(server, render.ComponentRspamd, r)),
 						{
 							// On-disk module state only (ADR 0004);
 							// shared state lives in the per-MailServer
@@ -327,12 +314,6 @@ func rspamdDeployment(server *cnmsv1alpha1.MailServer, r *render.RenderResult) *
 							VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
 						},
 					},
-					InitContainers: []corev1.Container{{
-						Name:         validateContainerName,
-						Image:        images.Rspamd,
-						Command:      r.ValidateCommand,
-						VolumeMounts: localDMount(),
-					}},
 					Containers: []corev1.Container{{
 						Name:           "rspamd",
 						Image:          images.Rspamd, // default CMD: rspamd -f
@@ -376,23 +357,14 @@ func valkeyDeployment(server *cnmsv1alpha1.MailServer, r *render.RenderResult) *
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels:      objectLabels(server, render.ComponentValkey),
-					Annotations: podAnnotations(r),
+					Annotations: podAnnotations(render.ComponentValkey, r),
 				},
 				Spec: corev1.PodSpec{
 					TopologySpreadConstraints: topologySpreadConstraints(server),
 					Volumes: []corev1.Volume{
-						configVolume(name),
+						configVolume(configMapName(server, render.ComponentValkey, r)),
 						dataVolume,
 					},
-					InitContainers: []corev1.Container{{
-						// 9.1.2 has no config-check flag, so the
-						// gate briefly starts the server and pings
-						// it (render.ValidateCommand).
-						Name:         validateContainerName,
-						Image:        images.Valkey,
-						Command:      r.ValidateCommand,
-						VolumeMounts: []corev1.VolumeMount{{Name: configVolumeName, MountPath: "/etc/valkey", ReadOnly: true}},
-					}},
 					Containers: []corev1.Container{{
 						Name:           "valkey",
 						Image:          images.Valkey, // default entrypoint; the conf path is the arg
@@ -453,8 +425,20 @@ func selectorMeta(sel *metav1.LabelSelector) *metav1.LabelSelector {
 	return sel
 }
 
-// configVolume is the ConfigMap volume of a component (named
-// "<server>-<component>").
+// usersVolume is the Secret volume of the Dovecot users file (password
+// hashes). Mode 0440: the owner is root, and the pod fsGroup
+// (dovecotVmailID, the vmail group) grants the read.
+func usersVolume(secretName string) corev1.Volume {
+	return corev1.Volume{
+		Name: usersVolumeName,
+		VolumeSource: corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{SecretName: secretName, DefaultMode: new(int32(0o440))},
+		},
+	}
+}
+
+// configVolume is the volume of the immutable, hash-named ConfigMap
+// of a component.
 func configVolume(name string) corev1.Volume {
 	return corev1.Volume{
 		Name: configVolumeName,
@@ -521,6 +505,7 @@ func tlsMount() corev1.VolumeMount {
 func dovecotMounts(withMailVolume bool) []corev1.VolumeMount {
 	mounts := []corev1.VolumeMount{
 		{Name: configVolumeName, MountPath: "/etc/dovecot", ReadOnly: true},
+		{Name: usersVolumeName, MountPath: render.DovecotUsersDir, ReadOnly: true},
 		{Name: tlsVolumeName, MountPath: dovecotSSLDir(), ReadOnly: true},
 		{Name: runVolumeName, MountPath: dovecotRunDir},
 	}

@@ -17,6 +17,14 @@ scoped; nothing here is committed.
 - Operator-managed k8up `Schedule` resources and repository credentials
   (user-created, documented examples for now).
 - DANE/DNSSEC automation.
+- Show the validator output in the `ConfigRejected` message (needs
+  `pods/log` access for the operator) and retry a failed validation
+  Job after a backoff instead of waiting for its TTL (ADR 0009).
+- Roll out a validated component while another is still validating
+  (ADR 0009 applies all components together).
+- Restart the `RolloutStalled` clock on any template change (for
+  example an engine image bump by an operator upgrade); today only a
+  spec change restarts it (ADR 0009).
 - Tracing.
 - Webmail/UI, billing, multi-cluster federation.
 - IMAP horizontal scaling.

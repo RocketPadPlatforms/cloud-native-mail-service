@@ -51,7 +51,10 @@ func (r *Renderer) Render(req *render.RenderRequest) (*render.RenderResult, erro
 	return &render.RenderResult{
 		ConfigData: map[string]string{
 			"dovecot.conf": renderDovecotConf(req),
-			"users":        renderUsers(req),
+		},
+		// The password hashes go to a Secret, not a ConfigMap.
+		SecretData: map[string]string{
+			"users": renderUsers(req),
 		},
 		// `doveconf -n` validates the rendered configuration before
 		// rollout (D4: a bad config must never replace a working

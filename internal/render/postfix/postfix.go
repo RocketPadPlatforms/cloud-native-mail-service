@@ -45,6 +45,17 @@ const (
 	messageSizeLimit = 10485760 // 10 MiB
 )
 
+// validateScript is the Postfix config gate: `postfix check` must
+// pass and `postconf -n` must not warn (stdout is the parameter dump
+// and is discarded; only the warnings on stderr are inspected).
+const validateScript = `set -eu
+postfix check
+warnings=$(postconf -n 2>&1 >/dev/null)
+if [ -n "$warnings" ]; then
+  echo "$warnings" >&2
+  case "$warnings" in *warning:*) exit 1;; esac
+fi`
+
 // Renderer renders the Postfix configuration.
 type Renderer struct{}
 
@@ -74,7 +85,10 @@ func (r *Renderer) Render(req *render.RenderRequest) (*render.RenderResult, erro
 		},
 		// `postfix check` validates the rendered configuration before
 		// rollout (D4: a bad config must never replace a working one).
-		ValidateCommand: []string{"postfix", "check"},
+		// It only warns (exit 0) about unknown main.cf parameters,
+		// and so does `postconf -n` ("unused parameter" on stderr),
+		// so any warning there fails the gate as well.
+		ValidateCommand: []string{"sh", "-c", validateScript},
 		// Certificate renewals trigger a reload, not a rollout (D5).
 		ReloadCommand: []string{"postfix", "reload"},
 	}, nil

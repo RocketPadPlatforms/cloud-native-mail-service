@@ -26,6 +26,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	policyv1 "k8s.io/api/policy/v1"
@@ -60,6 +61,12 @@ const postfixObjectName = "mail-postfix"
 
 // usersSecretName is the Phase 2 static-users Secret name.
 const usersSecretName = "users"
+
+// testServerName is the MailServer name of the gate and rollout specs.
+const testServerName = "mail"
+
+// tlsCertKey is the certificate key of the TLS Secret.
+const tlsCertKey = "tls.crt"
 
 func uniqueNamespace() string {
 	b := make([]byte, 4)
@@ -122,6 +129,11 @@ func createGrantG(domain, ns string, includeSubdomains bool) {
 // createServerG creates a MailServer for the given domain; mutate
 // applies spec overrides before creation.
 func createServerG(ns, name, domain string, mutate func(*cnmsv1alpha1.MailServer)) {
+	Expect(k8sClient.Create(ctx, newServerG(ns, name, domain, mutate))).To(Succeed())
+}
+
+// newServerG builds the MailServer createServerG creates.
+func newServerG(ns, name, domain string, mutate func(*cnmsv1alpha1.MailServer)) *cnmsv1alpha1.MailServer {
 	s := &cnmsv1alpha1.MailServer{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 		Spec: cnmsv1alpha1.MailServerSpec{
@@ -136,12 +148,12 @@ func createServerG(ns, name, domain string, mutate func(*cnmsv1alpha1.MailServer
 	if mutate != nil {
 		mutate(s)
 	}
-	Expect(k8sClient.Create(ctx, s)).To(Succeed())
+	return s
 }
 
-func mutateServerG(ns, name string, fn func(*cnmsv1alpha1.MailServer)) {
+func mutateServerG(ns string, fn func(*cnmsv1alpha1.MailServer)) {
 	server := &cnmsv1alpha1.MailServer{}
-	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: ns}, server)).To(Succeed())
+	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testServerName, Namespace: ns}, server)).To(Succeed())
 	fn(server)
 	Expect(k8sClient.Update(ctx, server)).To(Succeed())
 }
@@ -158,6 +170,7 @@ func newReconcilerG(mode domainAuthorizationMode, insecure bool) *MailServerReco
 	return &MailServerReconciler{
 		Client:                     k8sClient,
 		Scheme:                     scheme.Scheme,
+		APIReader:                  k8sClient,
 		DomainAuthorization:        mode,
 		EnableInsecureTestFeatures: insecure,
 	}
@@ -192,10 +205,80 @@ func getDeploymentG(ns, name string) {
 	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: ns}, dep)).To(Succeed())
 }
 
-func getConfigMapG(ns, name string) *corev1.ConfigMap {
-	cm := &corev1.ConfigMap{}
-	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: ns}, cm)).To(Succeed())
-	return cm
+// componentLabelsG selects the objects of one component of a server.
+func componentLabelsG(server, component string) client.MatchingLabels {
+	return client.MatchingLabels{
+		manifests.InstanceLabelKey:    server,
+		"app.kubernetes.io/component": component,
+	}
+}
+
+// configMapsG lists the immutable ConfigMaps of a component.
+func configMapsG(ns, component string) []corev1.ConfigMap {
+	list := &corev1.ConfigMapList{}
+	Expect(k8sClient.List(ctx, list, client.InNamespace(ns), componentLabelsG(testServerName, component))).To(Succeed())
+	return list.Items
+}
+
+// secretsG lists the immutable Secrets of a component.
+func secretsG(ns, component string) []corev1.Secret {
+	list := &corev1.SecretList{}
+	Expect(k8sClient.List(ctx, list, client.InNamespace(ns), componentLabelsG(testServerName, component))).To(Succeed())
+	return list.Items
+}
+
+// jobsG lists the validation Jobs of a server (all components, or
+// one when component is set).
+func jobsG(ns, server, component string) []batchv1.Job {
+	labels := client.MatchingLabels{manifests.InstanceLabelKey: server}
+	if component != "" {
+		labels = componentLabelsG(server, component)
+	}
+	list := &batchv1.JobList{}
+	Expect(k8sClient.List(ctx, list, client.InNamespace(ns), labels)).To(Succeed())
+	return list.Items
+}
+
+// finishJobG sets the terminal status of a Job (envtest runs no Job
+// controller).
+func finishJobG(job *batchv1.Job, success bool) {
+	now := metav1.Now()
+	job.Status.StartTime = &now
+	if success {
+		job.Status.CompletionTime = &now
+		job.Status.Succeeded = 1
+		job.Status.Conditions = []batchv1.JobCondition{
+			{Type: batchv1.JobSuccessCriteriaMet, Status: corev1.ConditionTrue, LastTransitionTime: now},
+			{Type: batchv1.JobComplete, Status: corev1.ConditionTrue, LastTransitionTime: now},
+		}
+	} else {
+		job.Status.Failed = 1
+		job.Status.Conditions = []batchv1.JobCondition{
+			{Type: batchv1.JobFailureTarget, Status: corev1.ConditionTrue, Reason: "BackoffLimitExceeded", LastTransitionTime: now},
+			{Type: batchv1.JobFailed, Status: corev1.ConditionTrue, Reason: "BackoffLimitExceeded",
+				Message: "Job has reached the specified backoff limit", LastTransitionTime: now},
+		}
+	}
+	Expect(k8sClient.Status().Update(ctx, job)).To(Succeed())
+}
+
+// finishJobsG finishes every validation Job of the server that has
+// no result yet.
+func finishJobsG(ns, server string, success bool) {
+	jobs := jobsG(ns, server, "")
+	for i := range jobs {
+		if len(jobs[i].Status.Conditions) == 0 {
+			finishJobG(&jobs[i], success)
+		}
+	}
+}
+
+// deployG reconciles a server, lets all its validation Jobs succeed
+// and reconciles again, so the workloads exist.
+func deployG(r *MailServerReconciler, ns, name string) {
+	reconcileServerG(r, ns, name)
+	finishJobsG(ns, name, true)
+	reconcileServerG(r, ns, name)
 }
 
 func getNetworkPoliciesG(ns string) []networkingv1.NetworkPolicy {
@@ -263,7 +346,7 @@ var _ = Describe("MailServer controller", func() {
 		It("deploys the data plane for a granted domain", func() {
 			createGrantG(domain, ns, false)
 			createServerG(ns, "mail-b", domain, nil)
-			reconcileServerG(newReconcilerG(AuthorizationAllowlist, true), ns, "mail-b")
+			deployG(newReconcilerG(AuthorizationAllowlist, true), ns, "mail-b")
 
 			status, reason, _ := serverConditionG(ns, "mail-b", ConditionDomainsAuthorized)
 			Expect(status).To(Equal(metav1.ConditionTrue))
@@ -315,7 +398,7 @@ var _ = Describe("MailServer controller", func() {
 
 		It("authorizes without grants in unrestricted mode", func() {
 			createServerG(ns, "mail-f", domain, nil)
-			reconcileServerG(newReconcilerG(AuthorizationUnrestricted, true), ns, "mail-f")
+			deployG(newReconcilerG(AuthorizationUnrestricted, true), ns, "mail-f")
 
 			status, reason, _ := serverConditionG(ns, "mail-f", ConditionDomainsAuthorized)
 			Expect(status).To(Equal(metav1.ConditionTrue))
@@ -331,7 +414,7 @@ var _ = Describe("MailServer controller", func() {
 		})
 		reconcile := func(name string, mutate func(*cnmsv1alpha1.MailServer)) {
 			createServerG(ns, name, domain, mutate)
-			reconcileServerG(newReconcilerG(AuthorizationAllowlist, true), ns, name)
+			deployG(newReconcilerG(AuthorizationAllowlist, true), ns, name)
 		}
 
 		It("creates the workloads, services, policies and the budget", func() {
@@ -341,8 +424,12 @@ var _ = Describe("MailServer controller", func() {
 			getStatefulSetG(ns, "mail-dovecot")
 			getDeploymentG(ns, "mail-rspamd")
 			getDeploymentG(ns, "mail-valkey")
-			for _, cm := range []string{postfixObjectName, "mail-rspamd", "mail-dovecot", "mail-valkey"} {
-				getConfigMapG(ns, cm)
+			for _, c := range []string{"postfix", "rspamd", "dovecot", "valkey"} {
+				cms := configMapsG(ns, c)
+				Expect(cms).To(HaveLen(1))
+				Expect(*cms[0].Immutable).To(BeTrue())
+				Expect(cms[0].Name).To(MatchRegexp("^mail-" + c + "-[0-9a-f]{8}$"))
+				Expect(cms[0].OwnerReferences).To(HaveLen(1))
 			}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: postfixObjectName, Namespace: ns},
 				&corev1.Service{})).To(Succeed())
@@ -363,7 +450,7 @@ var _ = Describe("MailServer controller", func() {
 			cert := &unstructured.Unstructured{}
 			cert.SetGroupVersionKind(schema.GroupVersionKind{
 				Group: "cert-manager.io", Version: "v1", Kind: "Certificate"})
-			err := k8sClient.Get(ctx, types.NamespacedName{Name: "mail", Namespace: ns}, cert)
+			err := k8sClient.Get(ctx, types.NamespacedName{Name: testServerName, Namespace: ns}, cert)
 			Expect(err).To(HaveOccurred())
 		})
 
@@ -423,17 +510,17 @@ var _ = Describe("MailServer controller", func() {
 			Expect(podTemplateHash(getStatefulSetG(ns, postfixObjectName))).To(Equal(first))
 
 			// A config change changes the hash.
-			mutateServerG(ns, "mail", func(s *cnmsv1alpha1.MailServer) {
+			mutateServerG(ns, func(s *cnmsv1alpha1.MailServer) {
 				s.Spec.Mailboxes = &cnmsv1alpha1.Mailboxes{Enabled: new(true)}
 			})
-			reconcileServerG(newReconcilerG(AuthorizationAllowlist, true), ns, "mail")
+			deployG(newReconcilerG(AuthorizationAllowlist, true), ns, "mail")
 			Expect(podTemplateHash(getStatefulSetG(ns, "mail-dovecot"))).ToNot(Equal(dovecotFirst))
 		})
 
 		It("reports the observed generation", func() {
 			reconcile("mail", nil)
 			server := &cnmsv1alpha1.MailServer{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "mail", Namespace: ns}, server)).To(Succeed())
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testServerName, Namespace: ns}, server)).To(Succeed())
 			Expect(server.Status.ObservedGeneration).To(Equal(server.Generation))
 		})
 	})
@@ -454,8 +541,8 @@ var _ = Describe("MailServer controller", func() {
 			secret := &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{Name: "mail-tls", Namespace: ns},
 				Data: map[string][]byte{
-					"tls.crt": []byte("crt"),
-					"tls.key": []byte("key"),
+					tlsCertKey: []byte("crt"),
+					"tls.key":  []byte("key"),
 				},
 			}
 			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
@@ -469,7 +556,7 @@ var _ = Describe("MailServer controller", func() {
 			createServerG(ns, "mail", domain, nil)
 			secret := &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{Name: "mail-tls", Namespace: ns},
-				Data:       map[string][]byte{"tls.crt": []byte("crt")},
+				Data:       map[string][]byte{tlsCertKey: []byte("crt")},
 			}
 			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
 			reconcileServerG(newReconcilerG(AuthorizationAllowlist, true), ns, "mail")
@@ -503,8 +590,15 @@ var _ = Describe("MailServer controller", func() {
 			_, readyReason, _ := serverConditionG(ns, "mail", conditionReady)
 			Expect(readyReason).ToNot(Equal(ReasonStaticUsersInvalid))
 			Expect(readyReason).ToNot(Equal(ReasonInsecureStaticUsersDisabled))
-			users := getConfigMapG(ns, "mail-dovecot").Data["users"]
-			Expect(users).To(ContainSubstring("testuser"))
+			// The password hashes live in an immutable Secret, not in
+			// the ConfigMap.
+			secrets := secretsG(ns, "dovecot")
+			Expect(secrets).To(HaveLen(1))
+			Expect(*secrets[0].Immutable).To(BeTrue())
+			Expect(string(secrets[0].Data["users"])).To(ContainSubstring("testuser"))
+			for _, cm := range configMapsG(ns, "dovecot") {
+				Expect(cm.Data).ToNot(HaveKey("users"))
+			}
 		})
 
 		It("fails closed for an invalid password hash", func() {
@@ -598,7 +692,7 @@ var _ = Describe("MailServer controller", func() {
 			Expect(listServiceMonitorsG(ns)).To(HaveLen(3))
 
 			disabled := "disabled"
-			mutateServerG(ns, "mail", func(s *cnmsv1alpha1.MailServer) {
+			mutateServerG(ns, func(s *cnmsv1alpha1.MailServer) {
 				s.Spec.Observability = &cnmsv1alpha1.Observability{PrometheusOperator: &disabled}
 			})
 			reconcileServerG(newReconcilerG(AuthorizationAllowlist, true), ns, "mail")

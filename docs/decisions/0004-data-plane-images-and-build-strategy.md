@@ -40,7 +40,7 @@ container image with a known user, writable paths, and a log path
    runs `master -w`, which discards the master's stdout to `/dev/null`
    and the daemon logs would be lost. The e2e suite asserts daemon
    logs are visible via `kubectl logs`. The same image is reused for
-   the config-validation init container and the Phase 9 queue-rescue
+   the config-validation Job (ADR 0009) and the Phase 9 queue-rescue
    job.
 2. **Submission architecture:** Postfix serves port 587
    (`smtpd_sasl_type = dovecot`); Dovecot is the SASL backend,

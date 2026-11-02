@@ -69,10 +69,16 @@ type RenderResult struct {
 	// is mounted read-only into the component containers.
 	ConfigData map[string]string
 
-	// ValidateCommand runs in an init container with the rendered
-	// configuration mounted (and the queue volume attached). It must
-	// exit non-zero for an invalid configuration, so a bad render
-	// never replaces a working one (D4 of the Phase 2 plan).
+	// SecretData holds rendered files that must not live in a
+	// ConfigMap (the Dovecot users with their password hashes). The
+	// controller places them in an immutable Secret that is mounted
+	// next to the ConfigMap. Empty for most components.
+	SecretData map[string]string
+
+	// ValidateCommand runs in a validation Job with the new
+	// configuration mounted. It must exit non-zero for an invalid
+	// configuration, so a bad render never replaces a working one
+	// (ADR 0009).
 	ValidateCommand []string
 
 	// ReloadCommand reloads the running engine without a restart.

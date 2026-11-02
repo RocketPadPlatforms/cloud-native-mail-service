@@ -67,18 +67,29 @@ named port with a Service (sources and caveats: ADR 0005).
 ## Rendering and rollout
 
 Configuration is rendered by engine-neutral Go renderers and stored
-in ConfigMaps and Secrets; the workloads mount them. A content hash
-of the rendered configuration is set as a pod-template annotation,
-so a change triggers a rollout — while the certificate Secret is
-kept **out** of the hash, so a certificate renewal triggers a reload
-(`postfix reload`, Rspamd reload, `doveadm reload`) instead.
+in **immutable ConfigMaps and Secrets named by their content hash**
+(`<server>-<component>-<hash8>`; the Dovecot users file with its
+password hashes is a Secret); the workloads mount them. A content
+hash of the rendered configuration is set as a pod-template
+annotation, so a change triggers a rollout — while the certificate
+Secret is kept **out** of the hash, so a certificate renewal
+triggers a reload (`postfix reload`, Rspamd reload, `doveadm reload`)
+instead. A new configuration is a new object: pods of the old
+revision keep reading theirs, and superseded objects are removed
+once the rollout finished.
 
-Before a new configuration replaces a working one, a validation gate
-(init container) checks it with the engine's own tooling:
-`postfix check`, `rspamadm configtest`, `doveconf -n`, and a
-brief start-and-ping for Valkey (9.x has no config-check flag). A
-bad configuration fails the rollout; it never replaces a working
-one.
+Before a new configuration replaces a working one, a **validation
+gate** runs one Job per changed component with the component image
+against the new objects: `postfix check` (plus a check that
+`postconf -n` does not warn), `rspamadm configtest`, `doveconf -n`,
+and a brief start-and-ping for Valkey (9.x has no config-check
+flag). The operator applies the new pod templates only after every
+Job succeeded. A bad configuration is reported as
+`Ready=False, reason=ConfigRejected`, and the running pod templates
+stay untouched; it never replaces a working one
+([ADR 0009](../decisions/0009-config-validation-gate.md)).
+`Ready` means the rollout finished: the controller observed the
+latest spec and all replicas run the new template and are ready.
 
 Engine and test images are pinned by version **and** digest in one
 Go package consumed by renderers and the e2e suite, kept current by
@@ -110,4 +121,5 @@ ADRs: [0002 (API design)](../decisions/0002-v1alpha1-api-design.md),
 [0003 (security defaults)](../decisions/0003-security-defaults-and-domain-ownership.md),
 [0004 (images and build strategy)](../decisions/0004-data-plane-images-and-build-strategy.md),
 [0005 (metrics sources)](../decisions/0005-component-metrics-sources.md),
-[0006 (network and security floor)](../decisions/0006-network-policy-and-security-floor.md).
+[0006 (network and security floor)](../decisions/0006-network-policy-and-security-floor.md),
+[0009 (config validation gate)](../decisions/0009-config-validation-gate.md).

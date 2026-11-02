@@ -336,6 +336,21 @@ subjects:
 			}
 		})
 
+		It("should serve the Postfix queue metrics as text/plain (ADR 0005)", func() {
+			verifyMetrics := func(g Gomega) {
+				// -L: busybox httpd redirects /metrics to /metrics/.
+				out, err := e2eClientExec("curl", "-sL", postfixMetricsURL)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(out).To(ContainSubstring("cnms_postfix_queue_up 1"),
+					"the queue sample must succeed: %s", out)
+			}
+			Eventually(verifyMetrics).Should(Succeed())
+			ctype, err := e2eClientExec("curl", "-sL", "-o", "/dev/null",
+				"-w", "%{content_type}", postfixMetricsURL)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ctype).To(HavePrefix("text/plain"), "Prometheus 3 rejects a scrape without a content type")
+		})
+
 		It("should log the Postfix daemons to the pod stdout (ADR 0004)", func() {
 			// postscreen logs every readiness-probe connection to the
 			// maillog; its presence on stdout proves the daemons' log
@@ -484,6 +499,118 @@ subjects:
 			Eventually(func() (string, error) {
 				return mailServerCondition("Ready")
 			}, 2*time.Minute).Should(Equal("True"), "the MailServer did not recover after the restore")
+		})
+
+		It("should not replace a working data plane with a config that fails validation", func() {
+			// A rendered configuration is valid by construction, so
+			// the failure is simulated: a pods quota keeps the
+			// validation Job from starting a Pod, and the Job is then
+			// marked failed through its status.
+			hash, err := podTemplateConfigHash()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(hash).NotTo(BeEmpty())
+			currentJob := "job.batch/mail-postfix-v-" + hash[:8]
+
+			restore := func() {
+				_, _ = kubectl("delete", "resourcequota", "block-new-pods", "-n", e2eNamespace, "--ignore-not-found")
+				_, _ = kubectl("patch", "mailserver", "mail", "-n", e2eNamespace,
+					"--type", "merge", "-p", `{"spec":{"submission":{"enabled":true}}}`)
+			}
+			DeferCleanup(restore)
+
+			By("blocking new Pods in the data plane namespace")
+			pods, err := activePodCount()
+			Expect(err).NotTo(HaveOccurred())
+			out, err := kubectl("create", "resourcequota", "block-new-pods", "-n", e2eNamespace,
+				fmt.Sprintf("--hard=pods=%d", pods))
+			Expect(err).NotTo(HaveOccurred(), "quota output: %s", out)
+
+			By("changing the configuration (submission off changes the Postfix config)")
+			out, err = kubectl("patch", "mailserver", "mail", "-n", e2eNamespace,
+				"--type", "merge", "-p", `{"spec":{"submission":{"enabled":false}}}`)
+			Expect(err).NotTo(HaveOccurred(), "patch output: %s", out)
+
+			By("the new configuration waits for its validation Job")
+			var newJob string
+			verifyJob := func(g Gomega) {
+				jobs, err := postfixValidationJobs()
+				g.Expect(err).NotTo(HaveOccurred())
+				for _, j := range jobs {
+					if j != currentJob {
+						newJob = j
+					}
+				}
+				g.Expect(newJob).NotTo(BeEmpty(), "no validation Job for the new configuration yet")
+			}
+			Eventually(verifyJob).Should(Succeed())
+			status, err := mailServerCondition("ConfigValidated")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(status).To(Equal("Unknown"))
+
+			By("failing the validation Job")
+			now := time.Now().UTC().Format(time.RFC3339)
+			failed := fmt.Sprintf(`{"status":{"startTime":%q,"failed":1,"conditions":[`+
+				`{"type":"FailureTarget","status":"True","reason":"BackoffLimitExceeded","lastTransitionTime":%q},`+
+				`{"type":"Failed","status":"True","reason":"BackoffLimitExceeded","message":"simulated validation failure","lastTransitionTime":%q}]}}`,
+				now, now, now)
+			out, err = kubectl("patch", newJob, "-n", e2eNamespace,
+				"--subresource=status", "--type", "merge", "-p", failed)
+			Expect(err).NotTo(HaveOccurred(), "patch output: %s", out)
+
+			By("the MailServer reports the rejected configuration")
+			verifyRejected := func(g Gomega) {
+				reason, err := mailServerConditionReason("Ready")
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(reason).To(Equal("ConfigRejected"))
+				message, err := mailServerConditionMessage("Ready")
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(message).To(ContainSubstring("mail-postfix-v-"))
+			}
+			Eventually(verifyRejected, 2*time.Minute).Should(Succeed())
+
+			By("the working data plane is unchanged")
+			Expect(workloadReady("statefulset", "mail-postfix")).NotTo(HaveOccurred())
+			unchanged, err := podTemplateConfigHash()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(unchanged).To(Equal(hash), "the pod template changed although the validation failed")
+
+			By("restoring the spec: the running configuration needs no validation")
+			restore()
+			Eventually(func() (string, error) {
+				return mailServerCondition("Ready")
+			}, 3*time.Minute).Should(Equal("True"))
+		})
+
+		It("should serve a renewed certificate without restarting Postfix", func() {
+			// cert-manager re-issues a deleted certificate Secret; the
+			// kubelet updates the mounted files and the cert-reload
+			// sidecar reloads Postfix (renewal => reload, not rollout).
+			before, err := servedCertFingerprint()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(before).To(ContainSubstring("Fingerprint"))
+			uid, err := kubectl("get", "pod", "mail-postfix-0", "-n", e2eNamespace,
+				"-o", "jsonpath={.metadata.uid}")
+			Expect(err).NotTo(HaveOccurred())
+
+			out, err := kubectl("delete", "secret", "mail-tls", "-n", e2eNamespace)
+			Expect(err).NotTo(HaveOccurred(), "delete output: %s", out)
+
+			verifyRenewed := func(g Gomega) {
+				after, err := servedCertFingerprint()
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(after).To(ContainSubstring("Fingerprint"))
+				g.Expect(after).NotTo(Equal(before), "Postfix still serves the old certificate")
+			}
+			// Secret propagation (kubelet sync) plus the 30s poll.
+			Eventually(verifyRenewed, 8*time.Minute, 10*time.Second).Should(Succeed())
+
+			sameUID, err := kubectl("get", "pod", "mail-postfix-0", "-n", e2eNamespace,
+				"-o", "jsonpath={.metadata.uid}")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(sameUID).To(Equal(uid), "the certificate renewal restarted the Postfix pod")
+			Eventually(func() (string, error) {
+				return mailServerCondition("Ready")
+			}, 3*time.Minute).Should(Equal("True"))
 		})
 	})
 })

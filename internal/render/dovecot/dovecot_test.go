@@ -113,9 +113,9 @@ func TestRenderUsers(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		got, ok := res.ConfigData["users"]
+		got, ok := res.SecretData["users"]
 		if !ok {
-			t.Fatal("missing users in config data")
+			t.Fatal("missing users in secret data")
 		}
 		checkGolden(t, "default.users", got)
 	})
@@ -130,7 +130,7 @@ func TestRenderUsers(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		checkGolden(t, "multi-user.users", res.ConfigData["users"])
+		checkGolden(t, "multi-user.users", res.SecretData["users"])
 	})
 }
 
@@ -174,9 +174,13 @@ func TestRenderResultCommands(t *testing.T) {
 	if !strings.EqualFold(strings.Join(res.ReloadCommand, " "), "doveadm reload") {
 		t.Errorf("unexpected reload command: %v", res.ReloadCommand)
 	}
-	for _, key := range []string{"dovecot.conf", "users"} {
-		if _, ok := res.ConfigData[key]; !ok {
-			t.Errorf("missing %s in config data", key)
-		}
+	if _, ok := res.ConfigData["dovecot.conf"]; !ok {
+		t.Error("missing dovecot.conf in config data")
+	}
+	if _, ok := res.ConfigData["users"]; ok {
+		t.Error("the users file (password hashes) must not be in the ConfigMap data")
+	}
+	if _, ok := res.SecretData["users"]; !ok {
+		t.Error("missing users in secret data")
 	}
 }
