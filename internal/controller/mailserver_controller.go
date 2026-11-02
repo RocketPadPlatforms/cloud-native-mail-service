@@ -615,21 +615,25 @@ func applyObject(ctx context.Context, c client.Client, scheme *runtime.Scheme, o
 	if err != nil {
 		return err
 	}
-	// spec.volumeClaimTemplates is immutable on update (k8s 1.37),
-	// so a changed template set requires recreating the StatefulSet.
-	// The per-replica PVCs are not deleted with the StatefulSet
-	// (default deletePolicy Keep) and the new StatefulSet reuses
-	// them, so mailbox data survives the toggle.
+	// spec.volumeClaimTemplates is immutable on update (k8s 1.37).
+	// The API makes the storage sizes immutable (ADR 0010), so the
+	// template set only changes by name: the Dovecot mail volume
+	// appears or disappears when mailboxes are toggled. That needs a
+	// recreate; the Postfix template never changes its name, so its
+	// StatefulSet is never deleted here. The per-replica PVCs are not
+	// deleted with the StatefulSet (default deletePolicy Keep) and
+	// the new StatefulSet reuses them, so mailbox data survives the
+	// toggle. Dovecot has a single replica, so a background delete
+	// (which also removes the pod) bypasses no disruption budget.
 	if d, ok := desired.(*appsv1.StatefulSet); ok {
-		if e, ok := existing.(*appsv1.StatefulSet); ok &&
-			!volumeClaimTemplatesEqual(e.Spec.VolumeClaimTemplates, d.Spec.VolumeClaimTemplates) {
-			if err := c.Delete(ctx, e); err != nil && !errors.IsNotFound(err) {
-				return err
+		if e, ok := existing.(*appsv1.StatefulSet); ok {
+			if !volumeClaimTemplateNamesEqual(e.Spec.VolumeClaimTemplates, d.Spec.VolumeClaimTemplates) {
+				return recreateStatefulSet(ctx, c, scheme, owner, e, d)
 			}
-			if err := controllerutil.SetControllerReference(owner, desired, scheme); err != nil {
-				return err
-			}
-			return c.Create(ctx, desired)
+			// Keep the existing templates so a size difference
+			// (a server created before the sizes became immutable,
+			// or an absent block set later) does not fail the update.
+			d.Spec.VolumeClaimTemplates = e.Spec.VolumeClaimTemplates
 		}
 	}
 	// Skip the write when the owned fields already match, so a
@@ -640,22 +644,31 @@ func applyObject(ctx context.Context, c client.Client, scheme *runtime.Scheme, o
 	return c.Update(ctx, existing)
 }
 
-// volumeClaimTemplatesEqual reports whether two template lists are
-// equivalent (names and storage requests in order).
-func volumeClaimTemplatesEqual(a, b []corev1.PersistentVolumeClaim) bool {
-	if len(a) != len(b) {
-		return false
+// recreateStatefulSet replaces a StatefulSet whose volume claim
+// template names changed. The delete uses background propagation and
+// leaves the PVCs in place. A Create that meets the object still
+// being deleted (AlreadyExists) is not an error: the StatefulSet
+// watch triggers the next reconcile, which creates it.
+func recreateStatefulSet(ctx context.Context, c client.Client, scheme *runtime.Scheme, owner client.Object, existing, desired *appsv1.StatefulSet) error {
+	if err := c.Delete(ctx, existing, client.PropagationPolicy(metav1.DeletePropagationBackground)); err != nil && !errors.IsNotFound(err) {
+		return err
 	}
-	for i := range a {
-		if a[i].Name != b[i].Name {
-			return false
-		}
-		if !a[i].Spec.Resources.Requests[corev1.ResourceStorage].
-			Equal(b[i].Spec.Resources.Requests[corev1.ResourceStorage]) {
-			return false
-		}
+	if err := controllerutil.SetControllerReference(owner, desired, scheme); err != nil {
+		return err
 	}
-	return true
+	if err := c.Create(ctx, desired); err != nil && !errors.IsAlreadyExists(err) {
+		return err
+	}
+	return nil
+}
+
+// volumeClaimTemplateNamesEqual reports whether two template lists
+// carry the same claim names in order. Sizes are not compared: they
+// are immutable in the API and an existing StatefulSet keeps its own.
+func volumeClaimTemplateNamesEqual(a, b []corev1.PersistentVolumeClaim) bool {
+	return slices.EqualFunc(a, b, func(x, y corev1.PersistentVolumeClaim) bool {
+		return x.Name == y.Name
+	})
 }
 
 // mergeOwnedFields copies the controller-owned fields (labels,

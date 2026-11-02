@@ -573,7 +573,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `enabled` _boolean_ | Enable mail storage (IMAP access, LMTP delivery). Defaults to<br />false. | false | Optional: \{\} <br /> |
-| `storage` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#quantity-resource-api)_ | Size of the mail storage volume. Defaults to 10Gi. | 10Gi | Optional: \{\} <br /> |
+| `storage` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#quantity-resource-api)_ | Size of the mail storage volume. Defaults to 10Gi. Immutable<br />once set: the volume claim template of a StatefulSet cannot<br />change, and existing volumes are resized manually (ADR 0010). | 10Gi | Optional: \{\} <br /> |
 | `quota` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#quantity-resource-api)_ | Per-user quota. Unset means no quota. |  | Optional: \{\} <br /> |
 
 
@@ -647,7 +647,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `replicas` _integer_ | Number of replicas. Each replica runs with its own queue<br />volume. Defaults to 2. | 2 | Maximum: 10 <br />Minimum: 1 <br />Optional: \{\} <br /> |
-| `queueStorage` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#quantity-resource-api)_ | Size of the per-replica queue volume. Defaults to 1Gi. | 1Gi | Optional: \{\} <br /> |
+| `queueStorage` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#quantity-resource-api)_ | Size of the per-replica queue volume. Defaults to 1Gi. Immutable<br />once set: the volume claim template of a StatefulSet cannot<br />change, and existing volumes are resized manually (ADR 0010). | 1Gi | Optional: \{\} <br /> |
 
 
 #### RelayOutbound

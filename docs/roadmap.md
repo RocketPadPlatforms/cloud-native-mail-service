@@ -17,5 +17,5 @@ Status as of 2026-10-25:
 | 6 | Relay mode: `MailRelay`, per-domain routing, fallback relay | Planned |
 | 7 | IP management: `MailIPPoolClass`/`MailIPPool`/`MailIPPoolClaim`, binding, quarantine, egress policies, manual rDNS | Planned |
 | 8 | `InboundRoute`: webhook and LMTP delivery with retry/dead-letter | Planned |
-| 9 | Hardening: `MailPolicy`, full metrics, alerts, backup/restore and chaos e2e | Planned |
+| 9 | Hardening: `MailPolicy`, full metrics, alerts, backup/restore and chaos e2e; plus the Postfix queue move for scale-down, queue-rescue and PVC resize (ADR 0010) | Planned |
 | 10 | Docs and release: complete user docs, Helm chart, release automation | Planned |

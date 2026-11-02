@@ -25,6 +25,12 @@ scoped; nothing here is committed.
 - Restart the `RolloutStalled` clock on any template change (for
   example an engine image bump by an operator upgrade); today only a
   spec change restarts it (ADR 0009).
+- Postfix scale-down: move a removed replica's queue to the remaining
+  replicas (or retain the PVC until empty), then lift the CEL rule
+  that rejects decreasing `postfix.replicas` (ADR 0010).
+- Operator-driven PVC resize for the Postfix queue and the mail
+  volume (expand the PVCs, then allow `queueStorage`/`storage` edits);
+  today the sizes are immutable and resized manually (ADR 0010).
 - Tracing.
 - Webmail/UI, billing, multi-cluster federation.
 - IMAP horizontal scaling.
