@@ -61,11 +61,13 @@ func (r *Renderer) Render(req *render.RenderRequest) (*render.RenderResult, erro
 		},
 		// `rspamadm configtest` validates the rendered configuration
 		// before rollout (D4: a bad config must never replace a
-		// working one). Verified against the running 4.2.3 image:
-		// rspamadm is at /usr/bin/rspamadm, the config test reads
-		// /etc/rspamd (LOCAL_CONFDIR), and the Valkey FQDN need not
-		// resolve (name resolution is deferred at config time).
-		ValidateCommand: []string{"rspamadm", "configtest"},
+		// working one). Verified against the 4.2.3 image: the main
+		// file is /usr/share/rspamd/config/rspamd.conf (it includes
+		// the local.d overrides under /etc/rspamd), syntax errors
+		// exit 1, and an unresolvable Valkey FQDN is only logged
+		// (name resolution is deferred at config time). --strict is
+		// not used: it counts those resolution logs as errors.
+		ValidateCommand: []string{"rspamadm", "configtest", "-c", "/usr/share/rspamd/config/rspamd.conf"},
 		// `rspamadm control reload` reloads the workers' dynamic
 		// data via the master unix socket (verified against the
 		// 4.2.3 source, src/rspamadm/control.c). Certificate

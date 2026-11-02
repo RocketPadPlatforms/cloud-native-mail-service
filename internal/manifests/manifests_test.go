@@ -18,6 +18,7 @@ package manifests
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -62,13 +63,24 @@ func testServer(t *testing.T, mutate func(*cnmsv1alpha1.MailServer)) *cnmsv1alph
 	return server
 }
 
-// build renders all four components and builds the object set.
+// build renders all four components and returns every object of the
+// data plane except the validation Jobs.
 func build(t *testing.T, mutate func(*cnmsv1alpha1.MailServer)) []client.Object {
+	t.Helper()
+	dp := buildPlane(t, mutate, nil)
+	objs := slices.Concat(dp.Configs, dp.Base, dp.Workloads)
+	return objs
+}
+
+// buildPlane renders all four components and builds the staged
+// object set.
+func buildPlane(t *testing.T, mutate func(*cnmsv1alpha1.MailServer), users []render.StaticUser) *DataPlane {
 	t.Helper()
 	server := testServer(t, mutate)
 	req := &render.RenderRequest{
 		Server:            server,
 		AuthorizedDomains: []string{domainB, domainA}, // unsorted on purpose
+		StaticUsers:       users,
 	}
 	renders := map[render.Component]*render.RenderResult{}
 	for _, r := range []render.EngineRenderer{
@@ -80,11 +92,11 @@ func build(t *testing.T, mutate func(*cnmsv1alpha1.MailServer)) []client.Object 
 		}
 		renders[r.Component()] = res
 	}
-	built, err := Build(req, renders)
+	dp, err := Build(req, renders)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	return built
+	return dp
 }
 
 // find returns the first object with the given kind and name.
@@ -103,6 +115,7 @@ func find(t *testing.T, objs []client.Object, kind, name string) client.Object {
 // TypeMeta (typed objects carry an empty TypeMeta).
 const (
 	kindConfigMap             = "ConfigMap"
+	kindSecret                = "Secret"
 	kindService               = "Service"
 	kindPersistentVolumeClaim = "PersistentVolumeClaim"
 	kindStatefulSet           = "StatefulSet"
@@ -116,6 +129,8 @@ func kindOf(o client.Object) string {
 	switch v := o.(type) {
 	case *corev1.ConfigMap:
 		return kindConfigMap
+	case *corev1.Secret:
+		return kindSecret
 	case *corev1.Service:
 		return kindService
 	case *corev1.PersistentVolumeClaim:
@@ -147,10 +162,6 @@ func TestBuildObjectSet(t *testing.T) {
 	objs := build(t, nil)
 	n := testName
 	want := []struct{ kind, name string }{
-		{kindConfigMap, n + "-postfix"},
-		{kindConfigMap, n + "-rspamd"},
-		{kindConfigMap, n + "-dovecot"},
-		{kindConfigMap, n + "-valkey"},
 		{kindService, n + "-postfix"},
 		{kindService, n + "-postfix-headless"},
 		{kindService, n + "-rspamd"},
@@ -175,8 +186,21 @@ func TestBuildObjectSet(t *testing.T) {
 			t.Errorf("missing %s %q", wk.kind, wk.name)
 		}
 	}
-	if len(objs) != len(want) {
-		t.Errorf("object count = %d, want %d", len(objs), len(want))
+	// Four hash-named ConfigMaps and the Dovecot users Secret.
+	configs := 0
+	for _, o := range objs {
+		if k := kindOf(o); k == kindConfigMap || k == kindSecret {
+			configs++
+			if !configNameRE.MatchString(o.GetName()) {
+				t.Errorf("%s %q is not named <server>-<component>-<hash8>", k, o.GetName())
+			}
+		}
+	}
+	if configs != 5 {
+		t.Errorf("config objects = %d, want 5", configs)
+	}
+	if len(objs) != len(want)+configs {
+		t.Errorf("object count = %d, want %d", len(objs), len(want)+configs)
 	}
 	// No Valkey PVC without persistence.
 	if exists(objs, kindPersistentVolumeClaim, n+"-valkey-valkey-data") {
@@ -220,9 +244,10 @@ func TestPostfixStatefulSet(t *testing.T) {
 		t.Error("config-hash annotation missing")
 	}
 	pod := sts.Spec.Template.Spec
-	if len(pod.InitContainers) != 1 || slices.Equal(pod.InitContainers[0].Command, []string{"postfix", "check"}) != true {
-		t.Errorf("init container = %v", pod.InitContainers)
+	if len(pod.InitContainers) != 0 {
+		t.Errorf("validation runs in a Job, not an init container: %v", pod.InitContainers)
 	}
+	assertConfigVolumeExists(t, objs, pod, "postfix")
 	if pod.ShareProcessNamespace == nil || !*pod.ShareProcessNamespace {
 		t.Error("postfix pod must share the process namespace for the cert-reload sidecar")
 	}
@@ -593,6 +618,240 @@ func TestConfigHashIsDeterministicAndConfigBound(t *testing.T) {
 	hash3 := mustFind[*appsv1.StatefulSet](t, find(t, objs3, kindStatefulSet, "other-postfix"), "sts").Spec.Template.Annotations[ConfigHashAnnotation]
 	if hash1 == hash3 {
 		t.Error("different MailServer must yield a different config hash")
+	}
+}
+
+// configNameRE matches "<server>-<component>-<hash8>".
+var configNameRE = regexp.MustCompile(`^` + testName + `-(postfix|rspamd|dovecot|valkey)-[0-9a-f]{8}$`)
+
+// assertConfigVolumeExists checks that the config volume of a pod
+// references an immutable ConfigMap of the object set whose name has
+// the component prefix and the hash suffix.
+func assertConfigVolumeExists(t *testing.T, objs []client.Object, pod corev1.PodSpec, component string) {
+	t.Helper()
+	for _, v := range pod.Volumes {
+		if v.Name != configVolumeName {
+			continue
+		}
+		if v.ConfigMap == nil {
+			t.Fatalf("%s config volume is not a ConfigMap", component)
+		}
+		name := v.ConfigMap.Name
+		if !strings.HasPrefix(name, testName+"-"+component+"-") || !configNameRE.MatchString(name) {
+			t.Errorf("%s config volume %q is not hash-named", component, name)
+		}
+		cm := mustFind[*corev1.ConfigMap](t, find(t, objs, kindConfigMap, name), name)
+		if cm.Immutable == nil || !*cm.Immutable {
+			t.Errorf("ConfigMap %s must be immutable", name)
+		}
+		return
+	}
+	t.Fatalf("%s pod has no config volume", component)
+}
+
+func TestConfigObjectsAreContentNamed(t *testing.T) {
+	name := func(mutate func(*cnmsv1alpha1.MailServer)) string {
+		objs := build(t, mutate)
+		sts := mustFind[*appsv1.StatefulSet](t, find(t, objs, kindStatefulSet, testName+"-dovecot"), "sts")
+		for _, v := range sts.Spec.Template.Spec.Volumes {
+			if v.ConfigMap != nil {
+				return v.ConfigMap.Name
+			}
+		}
+		t.Fatal("no ConfigMap volume")
+		return ""
+	}
+	a, b := name(nil), name(nil)
+	if a != b {
+		t.Errorf("same config must give the same name: %s vs %s", a, b)
+	}
+	c := name(func(s *cnmsv1alpha1.MailServer) {
+		s.Spec.Mailboxes = &cnmsv1alpha1.Mailboxes{Enabled: new(true)}
+	})
+	if a == c {
+		t.Error("a config change must give a new ConfigMap name")
+	}
+}
+
+func TestDovecotUsersLiveInAnImmutableSecret(t *testing.T) {
+	user := render.StaticUser{Username: "u", PasswordHash: "{SHA512-CRYPT}x", Mailbox: "u@" + domainA}
+	dp := buildPlane(t, nil, []render.StaticUser{user})
+	var sec *corev1.Secret
+	for _, o := range dp.Configs {
+		if s, ok := o.(*corev1.Secret); ok {
+			sec = s
+		}
+		if cm, ok := o.(*corev1.ConfigMap); ok {
+			if _, leaked := cm.Data["users"]; leaked {
+				t.Errorf("ConfigMap %s carries the users file", cm.Name)
+			}
+		}
+	}
+	if sec == nil {
+		t.Fatal("no users Secret")
+	}
+	if sec.Immutable == nil || !*sec.Immutable || !configNameRE.MatchString(sec.Name) {
+		t.Errorf("users Secret %q must be immutable and hash-named", sec.Name)
+	}
+	if !strings.Contains(string(sec.Data["users"]), "{SHA512-CRYPT}x") {
+		t.Error("users Secret misses the users file")
+	}
+
+	sts := mustFind[*appsv1.StatefulSet](t, find(t, dp.Workloads, kindStatefulSet, testName+"-dovecot"), "sts")
+	pod := sts.Spec.Template.Spec
+	var usersVol *corev1.Volume
+	for i := range pod.Volumes {
+		if pod.Volumes[i].Name == usersVolumeName {
+			usersVol = &pod.Volumes[i]
+		}
+	}
+	if usersVol == nil || usersVol.Secret == nil || usersVol.Secret.SecretName != sec.Name {
+		t.Fatalf("dovecot pod must mount the users Secret %q: %v", sec.Name, usersVol)
+	}
+	if !hasMount(pod.Containers[0].VolumeMounts, usersVolumeName, render.DovecotUsersDir) {
+		t.Error("dovecot container misses the users mount")
+	}
+	if m := usersVol.Secret.DefaultMode; m == nil || *m != 0o440 {
+		t.Errorf("users Secret mode = %v, want 0440", m)
+	}
+	// The cert-reload sidecar gets the certificate and the runtime
+	// directory only, not the password hashes.
+	for _, c := range pod.Containers[1:] {
+		if c.Name != certReloadContainerName {
+			continue
+		}
+		for _, m := range c.VolumeMounts {
+			if m.Name != tlsVolumeName && m.Name != runVolumeName {
+				t.Errorf("cert-reload mounts %q; only tls and run are needed", m.Name)
+			}
+		}
+	}
+
+	// A user change changes the Secret name and the pod-template hash,
+	// but not the ConfigMap name.
+	other := buildPlane(t, nil, []render.StaticUser{{Username: "v", PasswordHash: "{SHA512-CRYPT}y", Mailbox: "v@" + domainA}})
+	osts := mustFind[*appsv1.StatefulSet](t, find(t, other.Workloads, kindStatefulSet, testName+"-dovecot"), "sts")
+	if osts.Spec.Template.Annotations[ConfigHashAnnotation] == sts.Spec.Template.Annotations[ConfigHashAnnotation] {
+		t.Error("a user change must change the pod-template hash")
+	}
+	var otherSecret *corev1.Secret
+	for _, o := range other.Configs {
+		if s, ok := o.(*corev1.Secret); ok {
+			otherSecret = s
+		}
+	}
+	if otherSecret.Name == sec.Name {
+		t.Error("a user change must give a new Secret name")
+	}
+}
+
+func TestValidationJobs(t *testing.T) {
+	dp := buildPlane(t, nil, nil)
+	if len(dp.Validations) != 4 {
+		t.Fatalf("validations = %d, want one per component", len(dp.Validations))
+	}
+	for _, v := range dp.Validations {
+		job := v.Job
+		suffix := validationNameInfix + hashSuffix(v.Hash)
+		if want := testName + "-" + string(v.Component) + suffix; job.Name != want {
+			t.Errorf("job name = %q, want %q", job.Name, want)
+		}
+		if job.Annotations[ConfigHashAnnotation] != v.Hash {
+			t.Errorf("%s job misses the config hash annotation", v.Component)
+		}
+		if job.Spec.BackoffLimit == nil || *job.Spec.BackoffLimit != 0 {
+			t.Errorf("%s job must not retry", v.Component)
+		}
+		if job.Spec.TTLSecondsAfterFinished == nil || job.Spec.ActiveDeadlineSeconds == nil {
+			t.Errorf("%s job needs a TTL and a deadline", v.Component)
+		}
+		pod := job.Spec.Template.Spec
+		if pod.RestartPolicy != corev1.RestartPolicyNever || len(pod.Containers) != 1 {
+			t.Errorf("%s job pod = %+v", v.Component, pod)
+		}
+		if pod.Containers[0].Image != componentImage(v.Component) || len(pod.Containers[0].Command) == 0 {
+			t.Errorf("%s job runs %q %v", v.Component, pod.Containers[0].Image, pod.Containers[0].Command)
+		}
+		if _, ok := job.Spec.Template.Labels[componentLabel]; ok {
+			t.Errorf("%s validation pods must not match Services or the PDB", v.Component)
+		}
+		// The Job mounts the config of the workload's pod template.
+		var cm string
+		for _, vol := range pod.Volumes {
+			if vol.ConfigMap != nil {
+				cm = vol.ConfigMap.Name
+			}
+		}
+		if !configNameRE.MatchString(cm) {
+			t.Errorf("%s job mounts %q", v.Component, cm)
+		}
+		for _, vol := range pod.Volumes {
+			if vol.Secret != nil {
+				t.Errorf("%s job mounts Secret %q; no validator reads one", v.Component, vol.Secret.SecretName)
+			}
+		}
+	}
+	// Postfix: no PVC, an emptyDir queue.
+	for _, v := range dp.Validations {
+		if v.Component != render.ComponentPostfix {
+			continue
+		}
+		for _, vol := range v.Job.Spec.Template.Spec.Volumes {
+			if vol.PersistentVolumeClaim != nil {
+				t.Error("the postfix validation must not need the queue PVC")
+			}
+		}
+	}
+}
+
+func TestConfigHashCoversImage(t *testing.T) {
+	r := &render.RenderResult{ConfigData: map[string]string{"f": "x"}}
+	first := configHash(render.ComponentPostfix, r)
+	if again := configHash(render.ComponentPostfix, r); first != again {
+		t.Error("the same component and render must give the same hash")
+	}
+	// The same files under another engine image: the validation must
+	// run again.
+	if first == configHash(render.ComponentRspamd, r) {
+		t.Error("a different image must give a different hash")
+	}
+}
+
+// longestName is the length of the longest object name generated for
+// a MailServer with the given name (every optional object enabled).
+func longestName(t *testing.T, serverName string) int {
+	t.Helper()
+	dp := buildPlane(t, func(s *cnmsv1alpha1.MailServer) {
+		s.Name = serverName
+		s.Spec.Mailboxes = &cnmsv1alpha1.Mailboxes{Enabled: new(true)}
+		s.Spec.Valkey = &cnmsv1alpha1.Valkey{Persistence: new(true)}
+	}, []render.StaticUser{{Username: "u", PasswordHash: "{SHA512-CRYPT}x", Mailbox: "u@" + domainA}})
+	longest := 0
+	for _, o := range slices.Concat(dp.Configs, dp.Base, dp.Workloads) {
+		longest = max(longest, len(o.GetName()))
+	}
+	for _, v := range dp.Validations {
+		longest = max(longest, len(v.Job.Name))
+	}
+	// ServiceMonitor names (suffix "-metrics").
+	for _, o := range ServiceMonitors(testServer(t, func(s *cnmsv1alpha1.MailServer) { s.Name = serverName })) {
+		longest = max(longest, len(o.GetName()))
+	}
+	return longest
+}
+
+// maxServerNameLength is the longest MailServer name that keeps every
+// generated object name within the 63-character DNS label limit. The
+// CEL rule on MailServer metadata.name uses the same number.
+const maxServerNameLength = 44
+
+func TestGeneratedNamesFitLimit(t *testing.T) {
+	if n := longestName(t, strings.Repeat("a", maxServerNameLength)); n > 63 {
+		t.Errorf("a %d-character server name generates a %d-character object name", maxServerNameLength, n)
+	}
+	// The limit is tight: one more character overflows.
+	if n := longestName(t, strings.Repeat("a", maxServerNameLength+1)); n <= 63 {
+		t.Errorf("maxServerNameLength is too low: %d characters still fit (%d)", maxServerNameLength+1, n)
 	}
 }
 

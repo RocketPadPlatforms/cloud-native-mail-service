@@ -7,8 +7,11 @@
 # its stdout open, so postlogd(8) writes the daemon logs to the pod stdout
 # (maillog_file=/dev/stdout); plain `postfix start` (master -w) would
 # discard the master's stdout to /dev/null and the daemon logs would be
-# lost. The master never forks, so this shell (PID 1) runs it in the
-# background and blocks in `wait`. A trapped signal interrupts `wait`
+# lost. The master never forks, so this shell runs it in the background
+# and blocks in `wait`. (In the pod the shell is not PID 1: the pod
+# shares one process namespace, so the pause container is. The runtime
+# still delivers the termination signal to this shell, the container's
+# main process.) A trapped signal interrupts `wait`
 # immediately (POSIX), so SIGTERM is handled without polling. If the
 # master dies on its own the script exits non-zero (k8s restart).
 set -eu

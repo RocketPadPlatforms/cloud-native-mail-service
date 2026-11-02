@@ -21,8 +21,24 @@ from the hardening phase on.
 | Scale-down of Postfix | Operator-orchestrated: the replica's queue is moved to the remaining replicas before its PVC is released |
 | Dovecot down | IMAP/LMTP unavailable until the pod reschedules onto a node that can attach the mail volume; mail is queued in Postfix meanwhile |
 | Certificate renewed | Reload, not rollout — the cert Secret is excluded from the pod-template content hash |
+| Bad configuration | The validation Job fails: `Ready=False, reason=ConfigRejected`; the running pod templates and their (immutable) configuration stay untouched |
+| Rollout does not converge | `WorkloadsReady=False, reason=RolloutStalled` (Deployment past its progress deadline, or not ready for ten minutes); `Ready` stays false |
 
 ## Details
+
+### Bad configuration
+
+Every new rendered configuration is checked by a validation Job with
+the engine's own tooling before any pod template changes
+([ADR 0009](../decisions/0009-config-validation-gate.md)).
+While the Jobs run, `ConfigValidated` is `Unknown`; if one fails,
+`ConfigValidated` and `Ready` are `False` with reason
+`ConfigRejected`, the message names the failed Job, and a Warning
+Event is emitted. The existing workloads keep running the previous
+configuration, which cannot change under them because the
+ConfigMaps and Secrets are immutable. Reverting the spec clears the
+state; deleting the failed Job retries the same configuration. The
+validator's output is in the Job's pod log.
 
 ### Rspamd down
 

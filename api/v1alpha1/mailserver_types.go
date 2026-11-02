@@ -320,6 +320,11 @@ type MailServerStatus struct {
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Ready",type="string",JSONPath=".status.conditions[?(@.type=='Ready')].status"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
+// The longest generated object name is "<name>-<component>-v-<hash8>"
+// (a validation Job, 19 characters of suffix); it must stay within the
+// 63-character DNS label limit. Keep this number in sync with
+// maxServerNameLength in internal/manifests.
+// +kubebuilder:validation:XValidation:rule="size(self.metadata.name) <= 44",message="the MailServer name must be at most 44 characters so that the generated object names stay within 63 characters"
 
 // MailServer is the Schema for the cnms mail servers.
 type MailServer struct {

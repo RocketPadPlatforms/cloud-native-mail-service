@@ -205,6 +205,7 @@ func main() {
 	if err := (&controller.MailServerReconciler{
 		Client:                     mgr.GetClient(),
 		Scheme:                     mgr.GetScheme(),
+		APIReader:                  mgr.GetAPIReader(),
 		Recorder:                   mgr.GetEventRecorder("mailserver-controller"),
 		DomainAuthorization:        authMode,
 		EnableInsecureTestFeatures: enableInsecureTestFeatures,

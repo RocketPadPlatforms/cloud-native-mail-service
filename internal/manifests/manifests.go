@@ -34,6 +34,7 @@ import (
 	"slices"
 	"strings"
 
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -98,6 +99,7 @@ const (
 	queueMetricsContainerName = "queue-metrics"
 	certReloadContainerName   = "cert-reload"
 	configVolumeName          = "config"
+	usersVolumeName           = "users"
 	tlsVolumeName             = "tls"
 	stateVolumeName           = "state"
 	runVolumeName             = "run"
@@ -126,12 +128,39 @@ const (
 	rspamdGroupID int64 = 11333
 )
 
+// Validation is the config validation Job of one component for one
+// rendered configuration.
+type Validation struct {
+	Component render.Component
+	// Workload is the name of the workload the configuration is for.
+	Workload string
+	// Hash is the config hash (the pod template annotation value).
+	Hash string
+	Job  *batchv1.Job
+}
+
+// DataPlane is the object set of one MailServer, split by rollout
+// stage (ADR 0009): the immutable configuration is created first,
+// the Jobs validate it, and the workloads that reference it are
+// applied only after validation passed.
+type DataPlane struct {
+	// Configs are the immutable, hash-named ConfigMaps and Secrets.
+	Configs []client.Object
+	// Validations are the validation Jobs, one per component.
+	Validations []Validation
+	// Base are the objects that do not depend on a validated
+	// configuration: Services, the Valkey PVC, the Certificate,
+	// NetworkPolicies and the PodDisruptionBudget.
+	Base []client.Object
+	// Workloads are the StatefulSets and Deployments.
+	Workloads []client.Object
+}
+
 // Build produces every object of the data plane of one MailServer.
 // req must carry at least one authorized domain; renders must
-// contain a result for every data-plane component. The returned
-// list is deterministic: Services, the Valkey PVC and the
-// Certificate come before the workloads that reference them.
-func Build(req *render.RenderRequest, renders map[render.Component]*render.RenderResult) ([]client.Object, error) {
+// contain a result for every data-plane component. The output is
+// deterministic.
+func Build(req *render.RenderRequest, renders map[render.Component]*render.RenderResult) (*DataPlane, error) {
 	server := req.Server
 	if server == nil {
 		return nil, errors.New("render request without MailServer")
@@ -149,29 +178,32 @@ func Build(req *render.RenderRequest, renders map[render.Component]*render.Rende
 		return nil, fmt.Errorf("missing render results: %v", missing)
 	}
 
-	var objs []client.Object
-	// ConfigMaps.
+	dp := &DataPlane{}
 	for _, c := range render.AllComponents() {
-		objs = append(objs, configMap(server, c, renders[c]))
+		dp.Configs = append(dp.Configs, configMap(server, c, renders[c]))
+		if s := secret(server, c, renders[c]); s != nil {
+			dp.Configs = append(dp.Configs, s)
+		}
+		dp.Validations = append(dp.Validations, validation(server, c, renders[c]))
 	}
 	// Services (incl. headless) before the workloads that use them.
-	objs = append(objs, services(server)...)
+	dp.Base = append(dp.Base, services(server)...)
 	if valkeyPersistence(server) {
-		objs = append(objs, valkeyPersistentVolumeClaim(server))
+		dp.Base = append(dp.Base, valkeyPersistentVolumeClaim(server))
 	}
 	// Certificate (cert-manager; the certificate Secret is the
 	// source for the in-place-reloaded TLS mounts).
-	objs = append(objs, certificate(req))
-	// Workloads.
-	objs = append(objs,
+	dp.Base = append(dp.Base, certificate(req))
+	// Network policies and the disruption budget (ADR 0006).
+	dp.Base = append(dp.Base, networkPolicies(server)...)
+	dp.Base = append(dp.Base, postfixPodDisruptionBudget(server))
+	dp.Workloads = []client.Object{
 		postfixStatefulSet(server, renders[render.ComponentPostfix]),
 		dovecotStatefulSet(server, renders[render.ComponentDovecot]),
 		rspamdDeployment(server, renders[render.ComponentRspamd]),
-		valkeyDeployment(server, renders[render.ComponentValkey]))
-	// Network policies and the disruption budget (ADR 0006).
-	objs = append(objs, networkPolicies(server)...)
-	objs = append(objs, postfixPodDisruptionBudget(server))
-	return objs, nil
+		valkeyDeployment(server, renders[render.ComponentValkey]),
+	}
+	return dp, nil
 }
 
 // ServiceMonitors returns the monitoring.coreos.com/v1
@@ -227,17 +259,40 @@ func unstructuredObj(apiVersion, kind, name, namespace string, l map[string]stri
 	}}
 }
 
-// configMap places the rendered configuration of a component in a
-// ConfigMap named "<server>-<component>".
+// configMap places the rendered configuration of a component in an
+// immutable ConfigMap named by the content hash. A config change
+// creates a new object; the pods of the old revision keep theirs.
 func configMap(server *cnmsv1alpha1.MailServer, c render.Component, r *render.RenderResult) *corev1.ConfigMap {
 	return &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:            render.ServiceName(server.Name, c),
-			Namespace:       server.Namespace,
-			Labels:          objectLabels(server, c),
-			OwnerReferences: nil, // set by the controller
+			Name:      configMapName(server, c, r),
+			Namespace: server.Namespace,
+			Labels:    objectLabels(server, c),
+			// The owner reference is set by the controller.
 		},
-		Data: r.ConfigData,
+		Immutable: new(true),
+		Data:      r.ConfigData,
+	}
+}
+
+// secret places the rendered secret files of a component (nil when
+// there are none) in an immutable Secret named by the content hash.
+func secret(server *cnmsv1alpha1.MailServer, c render.Component, r *render.RenderResult) *corev1.Secret {
+	if len(r.SecretData) == 0 {
+		return nil
+	}
+	data := make(map[string][]byte, len(r.SecretData))
+	for k, v := range r.SecretData {
+		data[k] = []byte(v)
+	}
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName(server, c, r),
+			Namespace: server.Namespace,
+			Labels:    objectLabels(server, c),
+		},
+		Immutable: new(true),
+		Data:      data,
 	}
 }
 
@@ -274,24 +329,51 @@ func componentSelector(server *cnmsv1alpha1.MailServer, c render.Component) *met
 	return sel
 }
 
-// configHash is the deterministic SHA-256 of a rendered
-// configuration (canonical key order). The certificate is not part
-// of the render, so renewals do not change the hash (D5).
-func configHash(r *render.RenderResult) string {
+// dataHash is the deterministic SHA-256 of rendered files (canonical
+// key order).
+func dataHash(data map[string]string) string {
 	var b strings.Builder
-	for _, k := range slices.Sorted(maps.Keys(r.ConfigData)) {
+	for _, k := range slices.Sorted(maps.Keys(data)) {
 		b.WriteString(k)
 		b.WriteByte(0)
-		b.WriteString(r.ConfigData[k])
+		b.WriteString(data[k])
 		b.WriteByte(0)
 	}
 	sum := sha256.Sum256([]byte(b.String()))
 	return hex.EncodeToString(sum[:])
 }
 
+// configHash is the hash of a whole rendered component: its engine
+// image, its ConfigMap files and, if any, its Secret files. It is the
+// pod template annotation and names the validation Job, so an image
+// bump is validated again with the new image. The certificate is not
+// part of the render, so renewals do not change the hash (D5).
+func configHash(c render.Component, r *render.RenderResult) string {
+	sum := sha256.Sum256([]byte(componentImage(c) + "\x00" +
+		dataHash(r.ConfigData) + dataHash(r.SecretData)))
+	return hex.EncodeToString(sum[:])
+}
+
+// hashSuffix is the short hash in the names of immutable objects.
+func hashSuffix(hash string) string {
+	return hash[:8]
+}
+
+// configMapName is the name of the immutable ConfigMap of a rendered
+// component: "<server>-<component>-<hash8>" over the ConfigData.
+func configMapName(server *cnmsv1alpha1.MailServer, c render.Component, r *render.RenderResult) string {
+	return render.ServiceName(server.Name, c) + "-" + hashSuffix(dataHash(r.ConfigData))
+}
+
+// secretName is the name of the immutable Secret of a rendered
+// component: "<server>-<component>-<hash8>" over the SecretData.
+func secretName(server *cnmsv1alpha1.MailServer, c render.Component, r *render.RenderResult) string {
+	return render.ServiceName(server.Name, c) + "-" + hashSuffix(dataHash(r.SecretData))
+}
+
 // podAnnotations adds the config-hash annotation to a pod template.
-func podAnnotations(r *render.RenderResult) map[string]string {
-	return map[string]string{ConfigHashAnnotation: configHash(r)}
+func podAnnotations(c render.Component, r *render.RenderResult) map[string]string {
+	return map[string]string{ConfigHashAnnotation: configHash(c, r)}
 }
 
 // TLSSecretName is the name of the TLS certificate Secret

@@ -291,3 +291,39 @@ func workloadReady(kind, name string) error {
 	}
 	return nil
 }
+
+// e2eClientExec runs a command in the e2e client Pod.
+func e2eClientExec(args ...string) (string, error) {
+	return kubectl(append([]string{"exec", "-n", e2eNamespace, "e2e-client", "--"}, args...)...)
+}
+
+// postfixMetricsURL is the queue-metrics endpoint of the Postfix Service.
+const postfixMetricsURL = "http://mail-postfix-metrics." + e2eNamespace + ".svc.cluster.local:9150/metrics"
+
+// servedCertFingerprint returns the SHA-256 fingerprint of the
+// certificate Postfix presents on the submission port (STARTTLS).
+func servedCertFingerprint() (string, error) {
+	out, err := e2eClientExec("sh", "-c",
+		"openssl s_client -starttls smtp -connect "+e2ePostfixSVC+":587 </dev/null 2>/dev/null"+
+			" | openssl x509 -noout -fingerprint -sha256")
+	return strings.TrimSpace(out), err
+}
+
+// activePodCount returns the number of non-terminal Pods of the data
+// plane namespace (what a pods ResourceQuota counts).
+func activePodCount() (int, error) {
+	out, err := kubectl("get", "pods", "-n", e2eNamespace, "-o", "name",
+		"--field-selector=status.phase!=Succeeded,status.phase!=Failed")
+	if err != nil {
+		return 0, err
+	}
+	return len(strings.Fields(out)), nil
+}
+
+// postfixValidationJobs returns the names of the Postfix validation
+// Jobs ("job.batch/<name>").
+func postfixValidationJobs() ([]string, error) {
+	out, err := kubectl("get", "jobs", "-n", e2eNamespace, "-o", "name",
+		"-l", "cnms.rpp.gmbh/mailserver=mail,app.kubernetes.io/component=postfix")
+	return strings.Fields(out), err
+}

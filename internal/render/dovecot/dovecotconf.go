@@ -30,7 +30,7 @@ import (
 // and vmailGID are the vmail account of the official 2.4.5 image.
 const (
 	tlsMountPath = "/etc/dovecot/ssl"
-	usersPath    = "/etc/dovecot/users"
+	usersPath    = render.DovecotUsersDir + "/users"
 	mailRoot     = "/srv/mail"
 	vmailUID     = 1000
 	vmailGID     = 1000

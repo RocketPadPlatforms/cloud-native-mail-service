@@ -27,9 +27,10 @@ with `swaks` from the e2e client Pod.
 Assertions (Phase 2):
 
 - the `MailServer` reaches `Ready=True` with all four workloads
-  ready (the per-component config validation init containers have
-  passed: `postfix check`, `rspamadm configtest`, `doveconf -n`,
-  Valkey ping);
+  ready (the per-component config validation Jobs have passed:
+  `postfix check`, `rspamadm configtest`, `doveconf -n`, Valkey ping;
+  ADR 0009);
+- the Postfix queue metrics are served as `text/plain` (ADR 0005);
 - Postfix logs to the pod stdout (`maillog_file=/dev/stdout`);
 - unauthenticated mail for the server's own domain is accepted on
   port 25 (postscreen) and delivered to the Dovecot maildir via
@@ -46,7 +47,13 @@ Assertions (Phase 2):
 - a broken spec (missing `MailDirectory`) makes the `MailServer`
   `Ready=False` with `DirectoryNotFound` **without rolling the data
   plane** (the rendered-config hash of the pod template is unchanged
-  and all workloads stay ready).
+  and all workloads stay ready);
+- a changed configuration waits for its validation Job before the
+  pod template changes; a failing Job makes the `MailServer`
+  `Ready=False` with `ConfigRejected`, the running pods and template
+  stay unchanged, and restoring the spec needs no new validation;
+- a renewed TLS certificate is served by Postfix without a pod
+  restart (the cert-reload sidecar reloads in place).
 
 The suite never sends real mail and never touches real DNS or
 provider APIs (testing rule); the `example.*` domain and

@@ -45,6 +45,11 @@ const (
 	PortValkeyMetrics int32 = 9121 // redis_exporter sidecar (ADR-0005)
 )
 
+// DovecotUsersDir is where the Secret with the Dovecot users file is
+// mounted. It is a separate directory because a file mounted inside
+// the read-only ConfigMap mount at /etc/dovecot cannot be created.
+const DovecotUsersDir = "/etc/dovecot-users"
+
 // AllComponents lists the data-plane components in a fixed order.
 func AllComponents() []Component {
 	return []Component{ComponentPostfix, ComponentRspamd, ComponentDovecot, ComponentValkey}

@@ -164,7 +164,7 @@ func TestRenderResultCommands(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.EqualFold(strings.Join(res.ValidateCommand, " "), "postfix check") {
+	if v := strings.Join(res.ValidateCommand, " "); !strings.Contains(v, "postfix check") || !strings.Contains(v, "postconf -n") || !strings.Contains(v, "warning:") {
 		t.Errorf("unexpected validate command: %v", res.ValidateCommand)
 	}
 	if !strings.EqualFold(strings.Join(res.ReloadCommand, " "), "postfix reload") {

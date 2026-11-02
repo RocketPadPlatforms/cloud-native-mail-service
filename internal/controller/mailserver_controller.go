@@ -21,11 +21,11 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	policyv1 "k8s.io/api/policy/v1"
@@ -49,10 +49,6 @@ import (
 	cnmsv1alpha1 "github.com/RocketPadPlatforms/cloud-native-mail-service/api/v1alpha1"
 	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/manifests"
 	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/render"
-	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/render/dovecot"
-	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/render/postfix"
-	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/render/rspamd"
-	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/render/valkey"
 )
 
 // MailServer status conditions (see the Phase 2 plan and ADR 0005).
@@ -131,6 +127,11 @@ type MailServerReconciler struct {
 	// spec.submission.insecureStaticUsers (Phase 2 test users).
 	EnableInsecureTestFeatures bool
 
+	// APIReader reads without the cache (mgr.GetAPIReader()); the
+	// stale-object cleanup uses it so a lagging cache cannot hide
+	// what a workload still references.
+	APIReader client.Reader
+
 	// Recorder emits Kubernetes Events on Ready transitions
 	// (nil in tests).
 	Recorder recorder.EventRecorder
@@ -144,9 +145,10 @@ type MailServerReconciler struct {
 // +kubebuilder:rbac:groups=cnms.rpp.gmbh,resources=maildomains,verbs=get;list;watch
 // +kubebuilder:rbac:groups=cnms.rpp.gmbh,resources=maildirectories,verbs=get;list;watch
 // +kubebuilder:rbac:groups=cnms.rpp.gmbh,resources=maildomaingrants,verbs=get;list;watch
-// +kubebuilder:rbac:groups=core,resources=configmaps;services,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch
-// +kubebuilder:rbac:groups=core,resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core,resources=services;persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
+// ConfigMaps and Secrets of the data plane are immutable: created and deleted, never updated.
+// +kubebuilder:rbac:groups=core,resources=configmaps;secrets,verbs=get;list;watch;create;delete
+// +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;delete
 // +kubebuilder:rbac:groups=apps,resources=statefulsets;deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
@@ -228,28 +230,71 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	if err := r.applyDataPlane(ctx, server, authorized, users, certCRDs); err != nil {
+	prevValidated := meta.FindStatusCondition(*conds, ConditionConfigValidated)
+	prevValidated = prevValidated.DeepCopy()
+	g, err := r.applyDataPlane(ctx, server, authorized, users, certCRDs)
+	if err != nil {
 		log.FromContext(ctx).Error(err, "Could not apply data plane")
 		return block(ReasonApplyFailed, err.Error())
 	}
+	r.setValidationCondition(server, g, prevValidated)
 
 	// Readiness of the rendered objects.
 	certStatus, certReason, certMessage := r.certificateReady(ctx, server)
 	setCondition(conds, generation, ConditionCertificateReady, certStatus, certReason, certMessage)
-	workloadsOK, workloadsMessage := r.workloadsReady(ctx, server)
+	// A spec change starts a new rollout: the stall clock restarts, so
+	// the not-ready time of an earlier rollout does not count.
+	// shortcut: only a generation change restarts it, not an image bump
+	// by an operator upgrade; track the config hash if that matters.
+	prevRollout := meta.FindStatusCondition(*conds, ConditionWorkloadsReady)
+	newRollout := prevRollout != nil && prevRollout.ObservedGeneration != generation
+	if newRollout {
+		prevRollout = nil
+	}
+	rollout := r.workloadsReady(ctx, server, g.want, prevRollout)
 	setCondition(conds, generation, ConditionWorkloadsReady,
-		conditionStatus(workloadsOK),
-		conditionReason(workloadsOK, "AllWorkloadsReady", "WorkloadsNotReady"), workloadsMessage)
+		conditionStatus(rollout.ready), rollout.reason(), rollout.message)
+	if newRollout && !rollout.ready {
+		meta.FindStatusCondition(*conds, ConditionWorkloadsReady).LastTransitionTime = metav1.Now()
+	}
 	obsStatus, obsReason, obsMessage := r.reconcileObservability(ctx, server)
 	setCondition(conds, generation, ConditionObservability, obsStatus, obsReason, obsMessage)
+	if g.want != nil && rollout.ready {
+		// This pass applied the workloads and their rollout finished:
+		// nothing runs the superseded configuration anymore. While a
+		// validation runs or was rejected the workloads were not
+		// applied, so a "ready" result describes an older revision.
+		if err := r.cleanupStale(ctx, server, g.plane, g.want); err != nil {
+			log.FromContext(ctx).Error(err, "Could not remove stale configuration objects")
+		}
+	}
 
 	reason, message := readyReason(*conds, []string{
 		ConditionDomainsAuthorized, ConditionCertificateReady,
-		ConditionWorkloadsReady, ConditionObservability,
+		ConditionConfigValidated, ConditionWorkloadsReady, ConditionObservability,
 	})
 	setCondition(conds, generation, conditionReady,
 		conditionStatus(reason == "Ready"), reason, message)
 	return r.finish(ctx, server, prevReady)
+}
+
+// setValidationCondition records the validation gate state and emits
+// a Warning Event when a configuration is newly rejected.
+func (r *MailServerReconciler) setValidationCondition(server *cnmsv1alpha1.MailServer, g *gate, prev *metav1.Condition) {
+	status, reason := metav1.ConditionTrue, ReasonConfigValidated
+	switch g.state {
+	case validationRunning:
+		status, reason = metav1.ConditionUnknown, ReasonValidatingConfig
+	case validationRejected:
+		status, reason = metav1.ConditionFalse, ReasonConfigRejected
+	case validationPassed:
+	}
+	setCondition(&server.Status.Conditions, server.Generation, ConditionConfigValidated, status, reason, g.message)
+	if status == metav1.ConditionFalse && r.Recorder != nil &&
+		(prev == nil || prev.Status != status || prev.Message != g.message) {
+		r.Recorder.Eventf(server, nil, corev1.EventTypeWarning,
+			ReasonConfigRejected, "ValidateConfig", g.message)
+	}
 }
 
 // finish persists the status, emits a Ready transition event and
@@ -334,39 +379,19 @@ func (r *MailServerReconciler) staticUsers(ctx context.Context, server *cnmsv1al
 	return users, "", "", true
 }
 
-// applyDataPlane renders every component and creates or updates the
-// data plane objects of the MailServer.
-func (r *MailServerReconciler) applyDataPlane(ctx context.Context, server *cnmsv1alpha1.MailServer, authorized []string, users []render.StaticUser, certCRDs bool) error {
-	req := &render.RenderRequest{
-		Server:            server,
-		AuthorizedDomains: authorized,
-		StaticUsers:       users,
-	}
-	renders := make(map[render.Component]*render.RenderResult, len(render.AllComponents()))
-	for _, renderer := range []render.EngineRenderer{
-		postfix.New(), rspamd.New(), dovecot.New(), valkey.New(),
-	} {
-		result, err := renderer.Render(req)
-		if err != nil {
-			return fmt.Errorf("render %s: %w", renderer.Component(), err)
-		}
-		renders[renderer.Component()] = result
-	}
-	objs, err := manifests.Build(req, renders)
-	if err != nil {
-		return err
-	}
+// workloadHashes maps each workload name to the config hash of its
+// desired pod template.
+func workloadHashes(objs []client.Object) map[string]string {
+	want := map[string]string{}
 	for _, obj := range objs {
-		// Without the cert-manager CRDs the Certificate is not
-		// created; a pre-created Secret still satisfies TLS.
-		if !certCRDs && isUnstructuredKind(obj, certificateGVK.Kind) {
-			continue
-		}
-		if err := applyObject(ctx, r.Client, r.Scheme, server, obj); err != nil {
-			return fmt.Errorf("apply %T %s: %w", obj, obj.GetName(), err)
+		switch w := obj.(type) {
+		case *appsv1.StatefulSet:
+			want[w.Name] = w.Spec.Template.Annotations[manifests.ConfigHashAnnotation]
+		case *appsv1.Deployment:
+			want[w.Name] = w.Spec.Template.Annotations[manifests.ConfigHashAnnotation]
 		}
 	}
-	return nil
+	return want
 }
 
 // certificateReady reports whether the TLS certificate Secret carries
@@ -390,50 +415,6 @@ func (r *MailServerReconciler) certificateReady(ctx context.Context, server *cnm
 		}
 	}
 	return metav1.ConditionTrue, "Issued", "the TLS certificate is available"
-}
-
-// workloadsReady reports whether all four data plane workloads have
-// all their replicas ready.
-func (r *MailServerReconciler) workloadsReady(ctx context.Context, server *cnmsv1alpha1.MailServer) (bool, string) {
-	var notReady []string
-	var getErr error
-	check := func(name string, obj client.Object, ready func(o client.Object) (int32, int32)) {
-		if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: server.Namespace}, obj); err != nil {
-			if errors.IsNotFound(err) {
-				notReady = append(notReady, name+" (missing)")
-				return
-			}
-			getErr = err
-			return
-		}
-		got, want := ready(obj)
-		if got < want {
-			notReady = append(notReady, fmt.Sprintf("%s (%d/%d)", name, got, want))
-		}
-	}
-	sts := &appsv1.StatefulSet{}
-	dep := &appsv1.Deployment{}
-	replicas := func(o client.Object) (int32, int32) {
-		s := o.(*appsv1.StatefulSet)
-		return s.Status.ReadyReplicas, *s.Spec.Replicas
-	}
-	depReplicas := func(o client.Object) (int32, int32) {
-		d := o.(*appsv1.Deployment)
-		return d.Status.ReadyReplicas, *d.Spec.Replicas
-	}
-	for _, c := range []render.Component{render.ComponentPostfix, render.ComponentDovecot} {
-		check(render.ServiceName(server.Name, c), sts, replicas)
-	}
-	for _, c := range []render.Component{render.ComponentRspamd, render.ComponentValkey} {
-		check(render.ServiceName(server.Name, c), dep, depReplicas)
-	}
-	if getErr != nil {
-		return false, getErr.Error()
-	}
-	if len(notReady) == 0 {
-		return true, "all workloads are ready"
-	}
-	return false, strings.Join(notReady, ", ") + " not ready"
 }
 
 // reconcileObservability manages the Prometheus Operator
@@ -542,6 +523,7 @@ func (r *MailServerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&cnmsv1alpha1.MailServer{}).
 		Named("mailserver").
 		Owns(&corev1.ConfigMap{}).
+		Owns(&batchv1.Job{}).
 		Owns(&corev1.Service{}).
 		Owns(&corev1.PersistentVolumeClaim{}).
 		Owns(&appsv1.StatefulSet{}).
@@ -823,14 +805,6 @@ func conditionStatus(ok bool) metav1.ConditionStatus {
 		return metav1.ConditionTrue
 	}
 	return metav1.ConditionFalse
-}
-
-// conditionReason picks the reason of a simple true/false condition.
-func conditionReason(ok bool, trueReason, falseReason string) string {
-	if ok {
-		return trueReason
-	}
-	return falseReason
 }
 
 // readyReason reports the reason and message of the first condition

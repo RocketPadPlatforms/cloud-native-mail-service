@@ -66,8 +66,8 @@ service imap-login {
 # tree (users, from insecureStaticUsers). Phase 3 replaces it
 # with the directory (MailDirectory).
 passdb passwd-file {
-  passwd_file_path = /etc/dovecot/users
+  passwd_file_path = /etc/dovecot-users/users
 }
 userdb passwd-file {
-  passwd_file_path = /etc/dovecot/users
+  passwd_file_path = /etc/dovecot-users/users
 }

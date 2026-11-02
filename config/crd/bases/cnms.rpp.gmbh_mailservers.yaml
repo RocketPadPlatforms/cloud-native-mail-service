@@ -425,6 +425,10 @@ spec:
         required:
         - spec
         type: object
+        x-kubernetes-validations:
+        - message: the MailServer name must be at most 44 characters so that the generated
+            object names stay within 63 characters
+          rule: size(self.metadata.name) <= 44
     served: true
     storage: true
     subresources:

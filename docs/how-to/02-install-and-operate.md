@@ -47,7 +47,8 @@ the first failing sub-condition:
 |-----------|-----------|----------------------|
 | `DomainsAuthorized` | every `spec.domains` entry passes the grant check | `NotGranted`, `DuplicateDomain`, `DomainNotFound` |
 | `CertificateReady` | the TLS Secret (`<name>-tls` or `spec.tls.secretName`) carries `tls.crt` and `tls.key` | `SecretNotFound`, `SecretIncomplete` |
-| `WorkloadsReady` | all data-plane workloads have all replicas ready | `WorkloadsNotReady` (message lists which) |
+| `ConfigValidated` | the rendered configuration of every component passed its validation Job (or already runs); `Unknown` while the Jobs run | `ConfigRejected` (message names the failed Job; delete the Job to retry), `ValidatingConfig` (Unknown) |
+| `WorkloadsReady` | every data-plane workload finished its rollout (latest spec observed, all replicas on the desired template and ready) | `Progressing` while converging, `RolloutStalled` after a Deployment exceeds its progress deadline or the workloads stay not ready for 10 minutes (the message lists which) |
 | `Observability` | the Prometheus Operator integration matches `spec.observability.prometheusOperator` (`auto` is the default) | `CRDsRequired` (setting `enabled` without the ServiceMonitor CRDs) |
 | `Ready` | all of the above | propagated reasons, e.g. `DirectoryNotFound`, `StaticUsersInvalid`, `RelayNotAvailable` (Phase 6), `IpPoolClaimNotAvailable` (Phase 7) |
 
@@ -93,7 +94,8 @@ started.
 
 | Mount | Source | Notes |
 |-------|--------|-------|
-| `/etc/dovecot` | rendered ConfigMap | self-contained `dovecot.conf` + `users` |
+| `/etc/dovecot` | rendered immutable ConfigMap | self-contained `dovecot.conf` |
+| `/etc/dovecot-users` | rendered immutable Secret | the `users` passwd-file (password hashes) |
 | `/srv/mail` | RWO PVC (`spec.mailboxes.storage`) | mail storage; must be writable by vmail (uid/gid 1000), enforced by the manifest (fsGroup) |
 | `/var/run/dovecot` | `emptyDir` | runtime sockets/state; lost on pod restart (rebuildable) |
 
@@ -125,8 +127,9 @@ users up by the full recipient address, with no local-part fallback).
 ### Validation and reload
 
 - Before rollout, the rendered configuration is validated with
-  `doveconf -n` in an init container (unknown settings are fatal, so
-  the gate is strict); a bad config never replaces a working one.
+  `doveconf -n` in a validation Job (unknown settings are fatal, so
+  the gate is strict; [ADR 0009](../decisions/0009-config-validation-gate.md));
+  a bad config never replaces a working one.
 - Running configuration changes and certificate renewals apply via
   `doveadm reload` (verified to work without `doveadm_password`), not
   by restarting the pod.
