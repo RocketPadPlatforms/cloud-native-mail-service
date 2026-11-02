@@ -3,8 +3,8 @@
 CNMS is a Kubernetes operator that runs and manages email servers on
 Kubernetes. It is a control plane: it renders configuration for proven
 software and manages its lifecycle — **Postfix** (SMTP in/out, relay),
-**Rspamd** with **Valkey** (spam filtering, DKIM signing, SPF/DMARC checks,
-rate limits), and **Dovecot** (IMAP, LMTP, SASL authentication).
+**Rspamd** with **Valkey** (spam filtering, SPF/DMARC checks, rate limits;
+DKIM signing is planned), and **Dovecot** (IMAP, LMTP, SASL authentication).
 
 - API group: `cnms.rpp.gmbh` (current version `v1alpha1`)
 - Repository: `github.com/RocketPadPlatforms/cloud-native-mail-service`
@@ -16,6 +16,10 @@ rate limits), and **Dovecot** (IMAP, LMTP, SASL authentication).
 published for every release. The project plan and phase status are in
 [docs/roadmap.md](docs/roadmap.md).
 
+> **DKIM signing is not implemented yet** (Phase 5): outbound mail currently
+> leaves unsigned. Recipient validation only knows the static test users for
+> now; the directory (Phase 3) replaces them.
+
 ## Key properties
 
 - Control plane and data plane are separate: if the operator is down, mail
@@ -24,11 +28,11 @@ published for every release. The project plan and phase status are in
   DKIM keys, and HELO names; own Rspamd and Valkey per `MailServer`.
 - No message content in etcd; no MTA is written by the operator.
 - Users come from an external directory (LDAP/SQL first, OIDC later) — the
-  operator configures Postfix/Dovecot to query it, it does not manage
-  accounts.
+  operator configures Postfix/Dovecot to query it. Environments without a
+  directory service get operator-managed `MailUser` accounts instead
+  ([ADR 0008](docs/decisions/0008-user-sources-and-service-accounts.md)).
 - Failures degrade gracefully: filter or lookup outages result in temporary
-  failure (4xx) and queueing, never lost mail and never unsigned outgoing
-  mail.
+  failure (4xx) and queueing, not lost mail.
 
 ## Documentation
 

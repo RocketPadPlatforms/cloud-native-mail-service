@@ -6,8 +6,8 @@ sidebar_label: Overview
 
 CNMS is a Kubernetes operator by Rocket Pad Platforms that runs and manages
 email servers on Kubernetes: **Postfix** (SMTP in/out, relay), **Rspamd**
-with **Valkey** (spam filtering, DKIM signing, SPF/DMARC checks, rate
-limits), and **Dovecot** (IMAP, LMTP, SASL authentication).
+with **Valkey** (spam filtering, SPF/DMARC checks, rate limits; DKIM signing
+is planned), and **Dovecot** (IMAP, LMTP, SASL authentication).
 
 The operator is a control plane, not an MTA: it renders configuration for
 proven software and manages its lifecycle. Control plane and data plane are
@@ -16,21 +16,29 @@ separate — if the operator is down, mail keeps flowing.
 **Status:** pre-v1 — API version `cnms.rpp.gmbh/v1alpha1`, subject to
 change. Upgrade notes are published for every release.
 
+:::danger
+**DKIM signing is not implemented yet** (Phase 5): outbound mail currently
+leaves unsigned. Recipient validation only knows the static test users for
+now; the directory (Phase 3) replaces them.
+:::
+
 ## What CNMS gives you
 
 - **Mail servers as custom resources.** Declare a `MailServer` and CNMS runs
   the full data plane — Postfix, Rspamd, Valkey and Dovecot — with
-  production-grade defaults: TLS, rate limits, DKIM signing, recipient
-  validation.
+  production-grade defaults: TLS, rate limits and recipient validation
+  (against the static test users until the directory phase); DKIM signing
+  follows with the `MailDomain` phase.
 - **Reputation isolation.** Every `MailServer` owns its workloads, queues,
   sending addresses, DKIM keys and HELO names, so several mail systems on
   one cluster never share sender reputation.
 - **Mail is never lost to a component outage.** Filtering or lookup
-  failures delay mail (4xx and queueing) — they never reject it or send it
-  unsigned.
-- **Users stay outside the operator.** Mailboxes and accounts come from an
-  external directory (LDAP or SQL); CNMS only configures Postfix and Dovecot
-  to query it.
+  failures delay mail (4xx and queueing) — they never reject it.
+- **Users stay outside the operator by default.** Mailboxes and accounts come
+  from an external directory (LDAP or SQL); CNMS only configures Postfix and
+  Dovecot to query it. Environments without a directory service use
+  operator-managed `MailUser` accounts
+  ([ADR 0008](decisions/0008-user-sources-and-service-accounts.md)).
 
 ## Documentation
 

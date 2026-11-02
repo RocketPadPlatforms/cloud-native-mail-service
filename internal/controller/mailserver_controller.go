@@ -65,6 +65,10 @@ const (
 	// ConditionObservability reports the Prometheus Operator
 	// integration state (ADR 0005).
 	ConditionObservability = "Observability"
+	// ConditionClientIPPreserved is false when the inbound Service
+	// hides client addresses from Postfix. It is a warning only: it
+	// never feeds into Ready.
+	ConditionClientIPPreserved = "ClientIPPreserved"
 	// conditionReady rolls up all other conditions.
 	conditionReady = "Ready"
 )
@@ -259,6 +263,8 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 	obsStatus, obsReason, obsMessage := r.reconcileObservability(ctx, server)
 	setCondition(conds, generation, ConditionObservability, obsStatus, obsReason, obsMessage)
+	ipStatus, ipReason, ipMessage := clientIPPreserved(server)
+	setCondition(conds, generation, ConditionClientIPPreserved, ipStatus, ipReason, ipMessage)
 	if g.want != nil && rollout.ready {
 		// This pass applied the workloads and their rollout finished:
 		// nothing runs the superseded configuration anymore. While a
@@ -276,6 +282,22 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	setCondition(conds, generation, conditionReady,
 		conditionStatus(reason == "Ready"), reason, message)
 	return r.finish(ctx, server, prevReady)
+}
+
+// clientIPPreserved reports whether Postfix sees the real client
+// address. A LoadBalancer Service with externalTrafficPolicy Cluster
+// source-NATs clients to a node address, so the per-client anvil rate
+// limits (ADR 0006) then count every sender together and throttle
+// all of them at once. The rate limits stay on; this is a warning.
+func clientIPPreserved(server *cnmsv1alpha1.MailServer) (metav1.ConditionStatus, string, string) {
+	in := server.Spec.Inbound
+	if in != nil && in.ExternalTrafficPolicy != nil && *in.ExternalTrafficPolicy == "Cluster" &&
+		(in.ServiceType == nil || *in.ServiceType == string(corev1.ServiceTypeLoadBalancer)) {
+		return metav1.ConditionFalse, "ClusterTrafficPolicy",
+			"inbound.externalTrafficPolicy is Cluster: client addresses are source-NATed, so the per-client rate limits apply to all senders together; use Local to preserve them"
+	}
+	return metav1.ConditionTrue, "Preserved",
+		"client addresses reach Postfix unchanged for postscreen and rate limits"
 }
 
 // setValidationCondition records the validation gate state and emits

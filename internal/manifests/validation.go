@@ -122,7 +122,7 @@ func validationVolumes(server *cnmsv1alpha1.MailServer, c render.Component, r *r
 				Name:         postfixQueueVolume,
 				VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
 			}},
-			append(configSubPathMounts("main.cf", "master.cf"), queueMount())
+			append(configSubPathMounts(), queueMount())
 	case render.ComponentRspamd:
 		return []corev1.Volume{config}, localDMount()
 	case render.ComponentDovecot:

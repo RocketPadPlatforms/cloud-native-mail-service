@@ -41,8 +41,12 @@ narrowing of port-25 egress arrives with Phase 7.
    exposed in the v1 API):
    - `smtpd_tls_auth_only = yes` on the submission listener (AUTH
      only over TLS).
-   - TLS ≥ 1.2 for smtpd and smtp (`*_tls_mandatory_protocols`),
-     modern cipher floors (`*_tls_mandatory_ciphers`).
+   - TLS ≥ 1.2 for smtpd and smtp, for mandatory TLS
+     (`*_tls_mandatory_protocols`) and for opportunistic TLS
+     (`*_tls_protocols`; the Postfix 3.11 default is `>=TLSv1`, so
+     without it port 25 would still negotiate TLS 1.0/1.1), modern
+     cipher floors (`*_tls_mandatory_ciphers`). A peer limited to
+     older TLS versions has to retry port 25 without TLS.
    - `reject_unauth_destination` (no open relay), present in both
      `smtpd_recipient_restrictions` and `smtpd_relay_restrictions` —
      the latter's default (`defer_unauth_destination`) would otherwise

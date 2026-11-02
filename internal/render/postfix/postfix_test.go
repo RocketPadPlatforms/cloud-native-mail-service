@@ -130,6 +130,31 @@ func TestRenderMasterCF(t *testing.T) {
 	}
 }
 
+func TestRenderVMailbox(t *testing.T) {
+	tests := []struct {
+		name  string
+		users []render.StaticUser
+	}{
+		{name: "no-users"},
+		{
+			// Sorted, lower-cased and de-duplicated.
+			name: "multi-user",
+			users: []render.StaticUser{
+				{Username: "zed", Mailbox: "Zed@" + domainB},
+				{Username: "amy", Mailbox: "amy@" + domainA},
+				{Username: "amy2", Mailbox: "AMY@" + domainA},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := testRequest(t, nil)
+			req.StaticUsers = tt.users
+			checkGolden(t, tt.name+".vmailbox", renderVMailbox(req))
+		})
+	}
+}
+
 func TestRenderErrors(t *testing.T) {
 	tests := []struct {
 		name string
@@ -175,5 +200,8 @@ func TestRenderResultCommands(t *testing.T) {
 	}
 	if _, ok := res.ConfigData["master.cf"]; !ok {
 		t.Error("missing master.cf in config data")
+	}
+	if got := res.ConfigData[vmailboxFile]; !strings.Contains(got, "testuser@"+domainA+" OK\n") {
+		t.Errorf("recipient table misses the static user:\n%s", got)
 	}
 }

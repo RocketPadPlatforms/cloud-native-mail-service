@@ -29,7 +29,8 @@ import (
 // needs every internal service and delivery agent to process mail). The
 // submission listener uses the numeric service name "587" so it does not
 // depend on an /etc/services entry; AUTH is enabled only for it, and TLS
-// is enforced for it (the main.cf default is opportunistic).
+// is enforced for it (the main.cf default is opportunistic). It only
+// serves authenticated clients.
 func renderMasterCF(req *render.RenderRequest) string {
 	var b strings.Builder
 	b.WriteString("# CNMS-rendered Postfix master.cf -- do not edit.\n")
@@ -42,6 +43,14 @@ func renderMasterCF(req *render.RenderRequest) string {
 		b.WriteString("587       inet  n       -       n       -       -       smtpd\n")
 		b.WriteString("  -o smtpd_sasl_auth_enable=yes\n")
 		b.WriteString("  -o smtpd_tls_security_level=encrypt\n")
+		// Only authenticated clients may use this port: the
+		// main.cf restrictions also permit mynetworks and mail for
+		// the local domains, which belong on port 25 only.
+		b.WriteString("  -o smtpd_client_restrictions=permit_sasl_authenticated,reject\n")
+		b.WriteString("  -o smtpd_relay_restrictions=permit_sasl_authenticated,reject\n")
+		// Marks the mail as originating for the milter (the
+		// MILTER_README submission recipe).
+		b.WriteString("  -o milter_macro_daemon_name=ORIGINATING\n")
 	}
 	b.WriteString("pickup    unix  n       -       n       60      1       pickup\n")
 	b.WriteString("cleanup   unix  n       -       n       -       0       cleanup\n")

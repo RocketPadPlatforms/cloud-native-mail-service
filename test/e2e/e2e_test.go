@@ -351,6 +351,30 @@ subjects:
 			Expect(ctype).To(HavePrefix("text/plain"), "Prometheus 3 rejects a scrape without a content type")
 		})
 
+		It("should refuse the Rspamd controller API to other pods", func() {
+			// The controller serves the learn and fuzzy endpoints; a
+			// pod outside the Rspamd pod must not reach them, nor the
+			// read-only endpoints (no password is configured).
+			base := "http://mail-rspamd." + e2eNamespace + ".svc.cluster.local:11334"
+			status := func(method, path string) (string, error) {
+				return e2eClientExec("curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+					"-X", method, "--data", "x", base+path)
+			}
+			Eventually(func(g Gomega) {
+				code, err := status("POST", "/learnspam")
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(code).To(Equal("401"), "learnspam must be refused from another pod")
+			}).Should(Succeed())
+			for _, path := range []string{"/fuzzyadd", "/savemap"} {
+				code, err := status("POST", path)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(code).To(Equal("401"), "%s must be refused from another pod", path)
+			}
+			code, err := status("GET", "/history")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(code).To(Equal("401"), "history must not be readable from another pod")
+		})
+
 		It("should log the Postfix daemons to the pod stdout (ADR 0004)", func() {
 			// postscreen logs every readiness-probe connection to the
 			// maillog; its presence on stdout proves the daemons' log
@@ -388,6 +412,18 @@ subjects:
 					"Dovecot LMTP did not accept the message")
 			}
 			Eventually(verifyDelivered, 3*time.Minute).Should(Succeed())
+		})
+
+		It("should reject unknown recipients of an own domain at SMTP time", func() {
+			// No bounce may be generated for a forged sender: the
+			// recipient table (virtual_mailbox_maps) rejects at RCPT.
+			out := swaks(
+				"--to", "nobody@"+e2eDomain,
+				"--from", "bob@client.example.org",
+				"--server", e2ePostfixSVC+":25",
+			)
+			Expect(out).To(ContainSubstring("550 5.1.1"),
+				"an unknown recipient must be rejected while the SMTP session is open: %s", out)
 		})
 
 		It("should accept authenticated submission over TLS", func() {
@@ -441,6 +477,17 @@ subjects:
 			)
 			Expect(out).To(ContainSubstring("554 5.7.1"),
 				"unauthenticated foreign-domain mail must be rejected (reject_unauth_destination): %s", out)
+		})
+
+		It("should refuse unauthenticated mail on the submission port", func() {
+			out := swaks(
+				"--to", e2eMailbox,
+				"--from", "bob@client.example.org",
+				"--server", e2ePostfixSVC+":587",
+				"--tls",
+			)
+			Expect(out).To(ContainSubstring("554 5.7.1"),
+				"port 587 must only serve authenticated clients: %s", out)
 		})
 
 		It("should require TLS before AUTH (ADR 0006 floor)", func() {

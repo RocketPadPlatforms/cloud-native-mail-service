@@ -255,7 +255,7 @@ func TestPostfixStatefulSet(t *testing.T) {
 	if main.Image != images.Postfix {
 		t.Errorf("postfix image = %q", main.Image)
 	}
-	for _, want := range []string{"main.cf", "master.cf"} {
+	for _, want := range []string{"main.cf", "master.cf", "vmailbox"} {
 		if !hasMount(main.VolumeMounts, configVolumeName, "/etc/postfix/"+want) {
 			t.Errorf("postfix main container misses subPath mount %s", want)
 		}
