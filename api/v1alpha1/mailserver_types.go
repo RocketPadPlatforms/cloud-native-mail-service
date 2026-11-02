@@ -23,6 +23,12 @@ import (
 	intstr "k8s.io/apimachinery/pkg/util/intstr"
 )
 
+// A removed Postfix replica would strand the mail in its queue
+// volume and the queue move is not implemented yet (ADR 0010). The
+// rule compares effective values; 2 is the default of
+// Postfix.Replicas, keep both in sync.
+// +kubebuilder:validation:XValidation:rule="(has(self.postfix) && has(self.postfix.replicas) ? self.postfix.replicas : 2) >= (has(oldSelf.postfix) && has(oldSelf.postfix.replicas) ? oldSelf.postfix.replicas : 2)",message="decreasing postfix.replicas is not supported yet; the queue move is not implemented"
+
 // MailServerSpec defines the desired state of a MailServer.
 //
 // A MailServer is a tenant-facing mail system: inbound and submission
@@ -201,9 +207,12 @@ type Mailboxes struct {
 	// +kubebuilder:default=false
 	Enabled *bool `json:"enabled,omitempty"`
 
-	// Size of the mail storage volume. Defaults to 10Gi.
+	// Size of the mail storage volume. Defaults to 10Gi. Immutable
+	// once set: the volume claim template of a StatefulSet cannot
+	// change, and existing volumes are resized manually (ADR 0010).
 	// +optional
 	// +kubebuilder:default="10Gi"
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="storage is immutable; resize the PersistentVolumeClaim manually"
 	Storage *resource.Quantity `json:"storage,omitempty"`
 
 	// Per-user quota. Unset means no quota.
@@ -221,9 +230,12 @@ type Postfix struct {
 	// +kubebuilder:default=2
 	Replicas *int32 `json:"replicas,omitempty"`
 
-	// Size of the per-replica queue volume. Defaults to 1Gi.
+	// Size of the per-replica queue volume. Defaults to 1Gi. Immutable
+	// once set: the volume claim template of a StatefulSet cannot
+	// change, and existing volumes are resized manually (ADR 0010).
 	// +optional
 	// +kubebuilder:default="1Gi"
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="queueStorage is immutable; resize the PersistentVolumeClaims manually"
 	QueueStorage *resource.Quantity `json:"queueStorage,omitempty"`
 }
 
