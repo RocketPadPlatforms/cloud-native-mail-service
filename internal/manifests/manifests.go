@@ -378,16 +378,19 @@ func topologySpreadConstraints(server *cnmsv1alpha1.MailServer) []corev1.Topolog
 // certReloadLoop is the command of the certificate-reload sidecar:
 // it polls the hash of the mounted certificate and runs the engine
 // reload command when it changes (renewal => reload, not rollout).
-// The first observation is recorded without reloading, and a failed
+// The hash at container start is the baseline, so the first pass does
+// not reload (the engine just read that certificate); a certificate
+// that appears later (optional Secret) counts as a change. A failed
 // reload is retried on the next loop.
 func certReloadLoop(certFile string, reload []string) []string {
 	script := `set -eu
 cert=` + certFile + `
-last=""
+sum() { if [ -e "$cert" ]; then sha256sum "$cert" | cut -d' ' -f1; fi; }
+last=$(sum)
 while :; do
   sleep 30
-  [ -e "$cert" ] || continue
-  now=$(sha256sum "$cert" | cut -d' ' -f1)
+  now=$(sum)
+  [ -n "$now" ] || continue
   if [ "$now" != "$last" ]; then
     if ` + strings.Join(reload, " ") + `; then
       last=$now
@@ -397,6 +400,15 @@ while :; do
   fi
 done`
 	return []string{"sh", "-c", script}
+}
+
+// startupPortProbe is a TCP startup probe that allows 150s (30 x 5s)
+// for the first start; readiness and liveness begin after it passes.
+func startupPortProbe(port int32) *corev1.Probe {
+	p := portProbe(port)
+	p.PeriodSeconds = 5
+	p.FailureThreshold = 30
+	return p
 }
 
 // portProbe builds a TCP socket probe for readiness/liveness.

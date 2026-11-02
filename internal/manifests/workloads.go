@@ -66,6 +66,9 @@ func postfixStatefulSet(server *cnmsv1alpha1.MailServer, r *render.RenderResult)
 					Annotations: podAnnotations(r),
 				},
 				Spec: corev1.PodSpec{
+					// The cert-reload sidecar signals the master
+					// of the postfix container.
+					ShareProcessNamespace:         new(true),
 					TerminationGracePeriodSeconds: new(postfixTerminationGrace),
 					SecurityContext: &corev1.PodSecurityContext{
 						// The queue volume is group-owned by the
@@ -108,6 +111,10 @@ func postfixStatefulSet(server *cnmsv1alpha1.MailServer, r *render.RenderResult)
 						// read-only (the master maintains
 						// postfix-files and the data spool; the
 						// queue is the only volume with mail).
+						// The startup probe gives a slow first start
+						// (empty queue volume, map builds) up to 150s
+						// before liveness can kill the container.
+						StartupProbe:   startupPortProbe(render.PortPostfixInbound),
 						ReadinessProbe: portProbe(render.PortPostfixInbound),
 						LivenessProbe:  portProbe(render.PortPostfixInbound),
 					}, {
@@ -133,8 +140,10 @@ func postfixStatefulSet(server *cnmsv1alpha1.MailServer, r *render.RenderResult)
 							ContainerPort: render.PortPostfixMetrics,
 						}},
 						// postqueue needs the config (postconf) and
-						// the queue; the certificate is not used.
-						VolumeMounts: configSubPathMounts("main.cf", "master.cf"),
+						// the queue (read-only: it only talks to the
+						// showq socket); the certificate is not used.
+						VolumeMounts: append(configSubPathMounts("main.cf", "master.cf"),
+							readOnlyMount(queueMount())),
 					}, {
 						// Certificate reload sidecar: polls the
 						// mounted certificate and runs `postfix
@@ -209,6 +218,11 @@ func dovecotStatefulSet(server *cnmsv1alpha1.MailServer, r *render.RenderResult)
 					Annotations: podAnnotations(r),
 				},
 				Spec: corev1.PodSpec{
+					// The cert-reload sidecar signals the Dovecot
+					// master (kill -HUP) in the dovecot container;
+					// both run as UID dovecotVmailID (the image
+					// USER is vmail), so the signal is permitted.
+					ShareProcessNamespace: new(true),
 					SecurityContext: &corev1.PodSecurityContext{
 						// The image runs rootless as vmail; fsGroup
 						// group-owns the emptyDir runtime and the
@@ -520,6 +534,12 @@ func dovecotMounts(withMailVolume bool) []corev1.VolumeMount {
 // rendered ssl cert_file/key_file, ADR 0004).
 func dovecotSSLDir() string {
 	return "/etc/dovecot/ssl"
+}
+
+// readOnlyMount returns m with ReadOnly set.
+func readOnlyMount(m corev1.VolumeMount) corev1.VolumeMount {
+	m.ReadOnly = true
+	return m
 }
 
 // queueMount mounts the Postfix queue volume.
