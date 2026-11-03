@@ -77,10 +77,16 @@ func build(t *testing.T, mutate func(*cnmsv1alpha1.MailServer)) []client.Object 
 // object set.
 func buildPlane(t *testing.T, mutate func(*cnmsv1alpha1.MailServer), users []render.StaticUser) *DataPlane {
 	t.Helper()
+	return buildPlaneFor(t, mutate, users, []string{domainB, domainA}) // unsorted on purpose
+}
+
+// buildPlaneFor is buildPlane with an explicit authorized domain set.
+func buildPlaneFor(t *testing.T, mutate func(*cnmsv1alpha1.MailServer), users []render.StaticUser, domains []string) *DataPlane {
+	t.Helper()
 	server := testServer(t, mutate)
 	req := &render.RenderRequest{
 		Server:            server,
-		AuthorizedDomains: []string{domainB, domainA}, // unsorted on purpose
+		AuthorizedDomains: domains,
 		StaticUsers:       users,
 	}
 	renders := map[render.Component]*render.RenderResult{}
@@ -628,6 +634,40 @@ func TestCertificate(t *testing.T) {
 	if sn, _ := spec2["secretName"].(string); sn != testName+"-tls" {
 		t.Errorf("secretName = %q, want %q", sn, testName+"-tls")
 	}
+}
+
+// With every domain revoked the plane still builds: the Certificate
+// keeps only the in-cluster server name and has no common name.
+func TestBuildWithoutAuthorizedDomains(t *testing.T) {
+	dp := buildPlaneFor(t, func(s *cnmsv1alpha1.MailServer) {
+		s.Spec.Mailboxes = &cnmsv1alpha1.Mailboxes{Enabled: new(true)}
+	}, nil, nil)
+	cert := mustFind[*unstructured.Unstructured](t,
+		find(t, dp.Base, kindCertificate, testName), testName)
+	spec := cert.Object["spec"].(map[string]any)
+	if _, has := spec["commonName"]; has {
+		t.Errorf("commonName = %v, want none", spec["commonName"])
+	}
+	want := "mail-postfix.tenant1.svc.cluster.local"
+	if dns, _ := spec["dnsNames"].([]any); len(dns) != 1 || dns[0] != want {
+		t.Errorf("dnsNames = %v, want [%s]", dns, want)
+	}
+	postfixCM := mustFind[*corev1.ConfigMap](t,
+		find(t, dp.Configs, kindConfigMap, configMapNameOf(t, dp, render.ComponentPostfix)), "postfix")
+	if strings.Contains(postfixCM.Data["main.cf"], "virtual_mailbox_domains") {
+		t.Error("postfix main.cf still lists virtual domains")
+	}
+}
+
+func configMapNameOf(t *testing.T, dp *DataPlane, c render.Component) string {
+	t.Helper()
+	for _, o := range dp.Configs {
+		if cm, ok := o.(*corev1.ConfigMap); ok && cm.Labels[componentLabel] == string(c) {
+			return cm.Name
+		}
+	}
+	t.Fatalf("no ConfigMap for %s", c)
+	return ""
 }
 
 func TestServiceMonitors(t *testing.T) {

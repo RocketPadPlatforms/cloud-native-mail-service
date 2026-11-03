@@ -18,6 +18,7 @@ package controller
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -112,15 +113,38 @@ func TestAuthorizationEvaluate(t *testing.T) {
 			wantNotOK:  true,
 		},
 		{
-			name:   "duplicate claim blocks every claimant",
+			name:   "foreign claim without grant does not block the owner",
 			server: testServerForAuth("tenant-a", testDomain),
 			grants: []cnmsv1alpha1.MailDomainGrant{grant(testDomain, "tenant-a", false)},
 			domains: []cnmsv1alpha1.MailDomain{
 				domain("tenant-a", testDomain, testDomain),
 				domain("tenant-b", "example.org-copy", testDomain),
 			},
+			mode:        AuthorizationAllowlist,
+			wantDomains: []string{testDomain},
+			wantReason:  ReasonAuthorized,
+		},
+		{
+			name:   "foreign claimant is not granted, not a duplicate",
+			server: testServerForAuth("tenant-b", "example.org-copy"),
+			grants: []cnmsv1alpha1.MailDomainGrant{grant(testDomain, "tenant-a", false)},
+			domains: []cnmsv1alpha1.MailDomain{
+				domain("tenant-a", testDomain, testDomain),
+				domain("tenant-b", "example.org-copy", testDomain),
+			},
 			mode:       AuthorizationAllowlist,
-			wantReason: ReasonDuplicateDomain,
+			wantReason: ReasonNotGranted,
+			wantNotOK:  true,
+		},
+		{
+			name:   "foreign claims of a domain without a grant stay unauthorized",
+			server: testServerForAuth("tenant-b", "example.org-copy"),
+			domains: []cnmsv1alpha1.MailDomain{
+				domain("tenant-b", "example.org-copy", testDomain),
+				domain("tenant-c", "example.org-copy", testDomain),
+			},
+			mode:       AuthorizationAllowlist,
+			wantReason: ReasonNotGranted,
 			wantNotOK:  true,
 		},
 		{
@@ -163,6 +187,34 @@ func TestAuthorizationEvaluate(t *testing.T) {
 			wantNotOK:  true,
 		},
 		{
+			// One revoked domain must not take the granted one down.
+			name:   "partial authorization keeps the granted subset",
+			server: testServerForAuth("tenant-a", "a.example.org", "b.example.org", "c.example.org"),
+			grants: []cnmsv1alpha1.MailDomainGrant{
+				grant("a.example.org", "tenant-a", false),
+				grant("c.example.org", "tenant-a", false),
+			},
+			domains: []cnmsv1alpha1.MailDomain{
+				domain("tenant-a", "a.example.org", "a.example.org"),
+				domain("tenant-a", "b.example.org", "b.example.org"),
+				domain("tenant-a", "c.example.org", "c.example.org"),
+			},
+			mode:        AuthorizationAllowlist,
+			wantDomains: []string{"a.example.org", "c.example.org"},
+			wantReason:  ReasonPartiallyAuthorized,
+		},
+		{
+			name:   "partial authorization with a missing MailDomain",
+			server: testServerForAuth("tenant-a", "a.example.org", "gone"),
+			grants: []cnmsv1alpha1.MailDomainGrant{grant("a.example.org", "tenant-a", false)},
+			domains: []cnmsv1alpha1.MailDomain{
+				domain("tenant-a", "a.example.org", "a.example.org"),
+			},
+			mode:        AuthorizationAllowlist,
+			wantDomains: []string{"a.example.org"},
+			wantReason:  ReasonPartiallyAuthorized,
+		},
+		{
 			name:   "multiple domains sorted with first as primary",
 			server: testServerForAuth("tenant-a", "b.example.org", "a.example.org"),
 			grants: []cnmsv1alpha1.MailDomainGrant{
@@ -186,10 +238,12 @@ func TestAuthorizationEvaluate(t *testing.T) {
 				claims: domainClaims(&cnmsv1alpha1.MailDomainList{Items: tc.domains}),
 				mode:   tc.mode,
 			}
-			got, reason, _ := e.Evaluate()
+			res := e.Evaluate()
+			got := res.domains
+			reason, _ := res.condition()
 			if tc.wantNotOK {
-				if got != nil {
-					t.Fatalf("Evaluate() = %v, want nil", got)
+				if len(got) != 0 {
+					t.Fatalf("Evaluate() = %v, want none", got)
 				}
 				if reason != tc.wantReason {
 					t.Fatalf("reason = %q, want %q", reason, tc.wantReason)
@@ -203,5 +257,31 @@ func TestAuthorizationEvaluate(t *testing.T) {
 				t.Fatalf("reason = %q, want %q", reason, tc.wantReason)
 			}
 		})
+	}
+}
+
+func TestAuthorizationConditionListsEveryFailure(t *testing.T) {
+	e := &authorizationEvaluator{
+		server: testServerForAuth("tenant-a", "a.example.org", "b.example.org", "gone"),
+		grants: grantRefs(&cnmsv1alpha1.MailDomainGrantList{Items: []cnmsv1alpha1.MailDomainGrant{{
+			ObjectMeta: metav1.ObjectMeta{Name: "a.example.org"},
+			Spec:       cnmsv1alpha1.MailDomainGrantSpec{Namespace: "tenant-a"},
+		}}}),
+		claims: domainClaims(&cnmsv1alpha1.MailDomainList{Items: []cnmsv1alpha1.MailDomain{
+			{ObjectMeta: metav1.ObjectMeta{Name: "a.example.org", Namespace: "tenant-a"},
+				Spec: cnmsv1alpha1.MailDomainSpec{Domain: "a.example.org"}},
+			{ObjectMeta: metav1.ObjectMeta{Name: "b.example.org", Namespace: "tenant-a"},
+				Spec: cnmsv1alpha1.MailDomainSpec{Domain: "b.example.org"}},
+		}}),
+		mode: AuthorizationAllowlist,
+	}
+	reason, msg := e.Evaluate().condition()
+	if reason != ReasonPartiallyAuthorized {
+		t.Fatalf("reason = %q, want %q", reason, ReasonPartiallyAuthorized)
+	}
+	for _, want := range []string{"only a.example.org served", `"b.example.org"`, `"gone"`} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("message %q misses %q", msg, want)
+		}
 	}
 }

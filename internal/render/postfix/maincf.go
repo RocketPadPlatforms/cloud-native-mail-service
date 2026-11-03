@@ -58,7 +58,13 @@ func renderMainCF(req *render.RenderRequest) string {
 	b.WriteString("smtpd_recipient_restrictions = permit_mynetworks, " +
 		"permit_sasl_authenticated, reject_unauth_destination\n\n")
 
-	if mailboxesEnabled(req) {
+	switch {
+	case len(domains) == 0:
+		b.WriteString("# --- delivery routing: no authorized domain (fail closed) ---\n")
+		b.WriteString("# Every domain is unauthorized or revoked (ADR 0003): port 25\n")
+		b.WriteString("# rejects all mail and submission is off.\n")
+		b.WriteString("mydestination =\n\n")
+	case mailboxesEnabled(req):
 		b.WriteString("# --- delivery routing: mailboxes enabled ---\n")
 		b.WriteString("# Recipients of the authorized domains are delivered to\n")
 		b.WriteString("# Dovecot over LMTP. Unknown recipients are rejected at\n")
@@ -70,7 +76,7 @@ func renderMainCF(req *render.RenderRequest) string {
 		fmt.Fprintf(&b, "virtual_transport = lmtp:%s:%d\n\n",
 			render.ServiceFQDN(req.Server.Name, req.Server.Namespace, render.ComponentDovecot),
 			render.PortDovecotLMTP)
-	} else {
+	default:
 		b.WriteString("# --- delivery routing: send-only (mailboxes disabled) ---\n")
 		b.WriteString("# This server is a sending system: port 25 rejects all\n")
 		b.WriteString("# mail (reject_unauth_destination), authenticated\n")
@@ -147,8 +153,11 @@ func renderMainCF(req *render.RenderRequest) string {
 func header(req *render.RenderRequest) string {
 	var b strings.Builder
 	b.WriteString("# CNMS-rendered Postfix main.cf -- do not edit.\n")
+	authorized := strings.Join(sortedDomains(req), ", ")
+	if authorized == "" {
+		authorized = "none"
+	}
 	fmt.Fprintf(&b, "# Source: MailServer %s/%s, authorized domains: %s\n\n",
-		req.Server.Namespace, req.Server.Name,
-		strings.Join(sortedDomains(req), ", "))
+		req.Server.Namespace, req.Server.Name, authorized)
 	return b.String()
 }

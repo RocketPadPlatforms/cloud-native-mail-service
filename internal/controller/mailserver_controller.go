@@ -98,6 +98,10 @@ const (
 // (certificates are issued, workloads come up, CRDs are installed).
 const requeueInterval = 30 * time.Second
 
+// readyRequeueInterval is how often a ready MailServer is
+// re-evaluated as a safety net behind the watches.
+const readyRequeueInterval = 10 * time.Minute
+
 // crdCacheTTL is how long CRD-availability results are cached, so
 // integrations installed later are picked up without a restart
 // (principle 10).
@@ -210,18 +214,30 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	authorized, authReason, authMessage := (&authorizationEvaluator{
+	auth := (&authorizationEvaluator{
 		server: server,
 		grants: grantRefs(grants),
 		claims: domainClaims(domains),
 		mode:   r.DomainAuthorization,
 	}).Evaluate()
-	allAuthorized := authReason == ReasonAuthorized || authReason == ReasonAuthorizationDisabled
+	authReason, authMessage := auth.condition()
+	prevAuth := meta.FindStatusCondition(*conds, ConditionDomainsAuthorized).DeepCopy()
 	setCondition(conds, generation, ConditionDomainsAuthorized,
-		conditionStatus(allAuthorized), authReason, authMessage)
-	if !allAuthorized {
-		return block(authReason, authMessage)
+		conditionStatus(auth.all()), authReason, authMessage)
+	r.emitAuthorizationEvent(server, auth, prevAuth, authReason, authMessage)
+	if len(auth.domains) == 0 {
+		// Nothing is authorized. A server that never had a data
+		// plane gets none; a running one is re-rendered fail closed
+		// below so a revoked domain is not served any longer.
+		exists, err := r.dataPlaneExists(ctx, server)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if !exists {
+			return block(authReason, authMessage)
+		}
 	}
+	authorized := auth.domains
 
 	// Static test users (fail closed: invalid users must not render).
 	users, userReason, userMessage, usersOK := r.staticUsers(ctx, server)
@@ -284,6 +300,32 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	return r.finish(ctx, server, prevReady)
 }
 
+// dataPlaneExists reports whether the Postfix StatefulSet of the
+// server exists, that is, whether a data plane was ever applied.
+func (r *MailServerReconciler) dataPlaneExists(ctx context.Context, server *cnmsv1alpha1.MailServer) (bool, error) {
+	key := types.NamespacedName{
+		Name:      render.ServiceName(server.Name, render.ComponentPostfix),
+		Namespace: server.Namespace,
+	}
+	err := r.Get(ctx, key, &appsv1.StatefulSet{})
+	if errors.IsNotFound(err) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// emitAuthorizationEvent records a Warning Event when domains became
+// (or are still, with a new message) unauthorized.
+func (r *MailServerReconciler) emitAuthorizationEvent(server *cnmsv1alpha1.MailServer, auth authorization, prev *metav1.Condition, reason, message string) {
+	if r.Recorder == nil || auth.all() {
+		return
+	}
+	if prev != nil && prev.Status == metav1.ConditionFalse && prev.Message == message {
+		return
+	}
+	r.Recorder.Eventf(server, nil, corev1.EventTypeWarning, reason, "AuthorizeDomains", "%s", message)
+}
+
 // clientIPPreserved reports whether Postfix sees the real client
 // address. A LoadBalancer Service with externalTrafficPolicy Cluster
 // source-NATs clients to a node address, so the per-client anvil rate
@@ -320,7 +362,7 @@ func (r *MailServerReconciler) setValidationCondition(server *cnmsv1alpha1.MailS
 }
 
 // finish persists the status, emits a Ready transition event and
-// schedules the re-check of a not-ready server.
+// schedules the re-check of the server.
 func (r *MailServerReconciler) finish(ctx context.Context, server *cnmsv1alpha1.MailServer, prevReady *metav1.Condition) (ctrl.Result, error) {
 	server.Status.ObservedGeneration = server.Generation
 	if err := r.Status().Update(ctx, server); err != nil {
@@ -331,7 +373,10 @@ func (r *MailServerReconciler) finish(ctx context.Context, server *cnmsv1alpha1.
 	if ready.Status == metav1.ConditionFalse {
 		return ctrl.Result{RequeueAfter: requeueInterval}, nil
 	}
-	return ctrl.Result{}, nil
+	// A ready server is re-checked too: authorization depends on
+	// objects the watches might miss, and a revocation must not wait
+	// for the cache resync.
+	return ctrl.Result{RequeueAfter: readyRequeueInterval}, nil
 }
 
 // emitReadyEvent records an Event when the Ready condition changes.
@@ -537,6 +582,10 @@ type crdCache struct {
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *MailServerReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(),
+		&cnmsv1alpha1.MailDomain{}, mailDomainDomainIndex, indexMailDomainByDomain); err != nil {
+		return err
+	}
 	certificate := &unstructured.Unstructured{}
 	certificate.SetGroupVersionKind(certificateGVK)
 	monitor := &unstructured.Unstructured{}
@@ -564,7 +613,7 @@ func (r *MailServerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		b = b.Owns(monitor)
 	}
 	return b.
-		Watches(&cnmsv1alpha1.MailDomain{}, handler.EnqueueRequestsFromMapFunc(r.mapSameNamespaceServers)).
+		Watches(&cnmsv1alpha1.MailDomain{}, handler.EnqueueRequestsFromMapFunc(r.mapDomainServers)).
 		Watches(&cnmsv1alpha1.MailDirectory{}, handler.EnqueueRequestsFromMapFunc(r.mapSameNamespaceServers)).
 		Watches(&cnmsv1alpha1.MailDomainGrant{}, handler.EnqueueRequestsFromMapFunc(r.mapGrantServers)).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.mapSameNamespaceServers)).
@@ -588,22 +637,57 @@ func crdInstalled(mgr ctrl.Manager, name string) bool {
 	return false
 }
 
+// mailDomainDomainIndex is the field index of MailDomains by
+// spec.domain: uniqueness is evaluated across namespaces, so a claim
+// must find the other claimants of its domain.
+const mailDomainDomainIndex = "spec.domain"
+
+// indexMailDomainByDomain is the extractor of mailDomainDomainIndex.
+func indexMailDomainByDomain(obj client.Object) []string {
+	d, ok := obj.(*cnmsv1alpha1.MailDomain)
+	if !ok || d.Spec.Domain == "" {
+		return nil
+	}
+	return []string{d.Spec.Domain}
+}
+
 // mapSameNamespaceServers enqueues every MailServer of the object's
-// namespace (a domain, directory or secret change may change the
-// render or the authorization).
+// namespace (a directory or secret change may change the render).
 func (r *MailServerReconciler) mapSameNamespaceServers(ctx context.Context, obj client.Object) []reconcile.Request {
 	return r.serversInNamespace(ctx, obj.GetNamespace())
 }
 
-// mapGrantServers enqueues the MailServers of the namespace a grant
-// points at (on delete events the handler passes the old object,
-// whose spec still carries the namespace).
-func (r *MailServerReconciler) mapGrantServers(ctx context.Context, obj client.Object) []reconcile.Request {
-	grant, ok := obj.(*cnmsv1alpha1.MailDomainGrant)
+// mapDomainServers enqueues the MailServers of the MailDomain's
+// namespace and of every namespace with a MailDomain claiming the same
+// domain: the uniqueness check is cluster wide, so a new, changed or
+// deleted claim can block or free the servers of the other claimants.
+// For a changed domain name the handler also maps the old object.
+func (r *MailServerReconciler) mapDomainServers(ctx context.Context, obj client.Object) []reconcile.Request {
+	d, ok := obj.(*cnmsv1alpha1.MailDomain)
 	if !ok {
 		return nil
 	}
-	return r.serversInNamespace(ctx, grant.Spec.Namespace)
+	namespaces := map[string]bool{d.Namespace: true}
+	peers := &cnmsv1alpha1.MailDomainList{}
+	if err := r.List(ctx, peers, client.MatchingFields{mailDomainDomainIndex: d.Spec.Domain}); err != nil {
+		log.FromContext(ctx).Error(err, "Could not list MailDomains", "domain", d.Spec.Domain)
+	}
+	for i := range peers.Items {
+		namespaces[peers.Items[i].Namespace] = true
+	}
+	var reqs []reconcile.Request
+	for _, ns := range slices.Sorted(maps.Keys(namespaces)) {
+		reqs = append(reqs, r.serversInNamespace(ctx, ns)...)
+	}
+	return reqs
+}
+
+// mapGrantServers enqueues every MailServer: a grant decides who owns
+// a domain for all namespaces (the owner of a subdomain carve-out, the
+// namespace before and after a change), so any server may be
+// affected. A reconcile is cheap and the object count is small.
+func (r *MailServerReconciler) mapGrantServers(ctx context.Context, _ client.Object) []reconcile.Request {
+	return r.serversInNamespace(ctx, metav1.NamespaceAll)
 }
 
 func (r *MailServerReconciler) serversInNamespace(ctx context.Context, ns string) []reconcile.Request {

@@ -165,14 +165,6 @@ func TestRenderErrors(t *testing.T) {
 			name: "no-server",
 			req:  &render.RenderRequest{AuthorizedDomains: []string{domainA}},
 		},
-		{
-			name: "no-domains",
-			req: &render.RenderRequest{
-				Server: &v1alpha1.MailServer{
-					ObjectMeta: metav1.ObjectMeta{Name: testName, Namespace: testNamespace},
-				},
-			},
-		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -203,5 +195,33 @@ func TestRenderResultCommands(t *testing.T) {
 	}
 	if got := res.ConfigData[vmailboxFile]; !strings.Contains(got, "testuser@"+domainA+" OK\n") {
 		t.Errorf("recipient table misses the static user:\n%s", got)
+	}
+}
+
+// With every domain revoked the configuration is fail closed: no
+// virtual domains, no SASL, no submission listener, and the hostname
+// is the in-cluster Service name.
+func TestRenderNoAuthorizedDomains(t *testing.T) {
+	req := testRequest(t, func(s *v1alpha1.MailServer) {
+		s.Spec.Mailboxes = &v1alpha1.Mailboxes{Enabled: new(true)}
+	})
+	req.AuthorizedDomains = nil
+	res, err := New().Render(req)
+	if err != nil {
+		t.Fatalf("Render() = %v, want success", err)
+	}
+	mainCF, masterCF := res.ConfigData["main.cf"], res.ConfigData["master.cf"]
+	checkGolden(t, "no-domains.maincf", mainCF)
+	checkGolden(t, "no-domains.mastercf", masterCF)
+	for _, bad := range []string{"virtual_mailbox_domains", "virtual_transport", "smtpd_sasl", "a.example", "b.example"} {
+		if strings.Contains(mainCF, bad) {
+			t.Errorf("main.cf contains %q, want it fail closed", bad)
+		}
+	}
+	if strings.Contains(masterCF, "587") {
+		t.Error("master.cf has a submission listener, want none")
+	}
+	if !strings.Contains(mainCF, "myhostname = mail-postfix.tenant1.svc.cluster.local\n") {
+		t.Error("main.cf myhostname is not the Service name")
 	}
 }

@@ -21,6 +21,8 @@ limitations under the License.
 package render
 
 import (
+	"slices"
+
 	cnmsv1alpha1 "github.com/RocketPadPlatforms/cloud-native-mail-service/api/v1alpha1"
 )
 
@@ -54,12 +56,25 @@ type RenderRequest struct {
 	// AuthorizedDomains are the MailServer domains that passed the
 	// domain authorization check (ADR-0003). Renderers must only
 	// reference these; the first entry is the primary domain
-	// (HELO name, certificate SAN order, postmaster address).
+	// (HELO name, certificate SAN order, postmaster address). It may
+	// be empty (every domain revoked): renderers then produce a
+	// fail-closed configuration that accepts and sends no mail.
 	AuthorizedDomains []string
 
 	// StaticUsers holds the parsed users from
 	// spec.submission.insecureStaticUsers (empty when unset).
 	StaticUsers []StaticUser
+}
+
+// ServerHostname is the name the server presents (Postfix myhostname,
+// certificate): the first sorted authorized domain, or, when no domain
+// is authorized, the in-cluster Postfix Service name, which belongs to
+// no tenant domain.
+func (r *RenderRequest) ServerHostname() string {
+	if len(r.AuthorizedDomains) == 0 {
+		return ServiceFQDN(r.Server.Name, r.Server.Namespace, ComponentPostfix)
+	}
+	return slices.Min(r.AuthorizedDomains)
 }
 
 // RenderResult is the rendered configuration of one component.

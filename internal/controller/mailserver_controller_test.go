@@ -372,7 +372,22 @@ var _ = Describe("MailServer controller", func() {
 			Expect(reason).To(Equal(ReasonAuthorized))
 		})
 
-		It("blocks a duplicated domain claim", func() {
+		It("blocks a duplicated domain claim in the owning namespace", func() {
+			createGrantG(domain, ns, false)
+			Expect(k8sClient.Create(ctx, &cnmsv1alpha1.MailDomain{
+				ObjectMeta: metav1.ObjectMeta{Name: "copy", Namespace: ns},
+				Spec:       cnmsv1alpha1.MailDomainSpec{Domain: domain},
+			})).To(Succeed())
+			createServerG(ns, "mail-d", domain, nil)
+			reconcileServerG(newReconcilerG(AuthorizationAllowlist, true), ns, "mail-d")
+
+			status, reason, _ := serverConditionG(ns, "mail-d", ConditionDomainsAuthorized)
+			Expect(status).To(Equal(metav1.ConditionFalse))
+			Expect(reason).To(Equal(ReasonDuplicateDomain))
+		})
+
+		It("ignores a foreign claim from a namespace without a grant", func() {
+			createGrantG(domain, ns, false)
 			ns2 := uniqueNamespace()
 			createNamespaceG(ns2)
 			createDomainG(ns2, domain)
@@ -380,8 +395,8 @@ var _ = Describe("MailServer controller", func() {
 			reconcileServerG(newReconcilerG(AuthorizationAllowlist, true), ns, "mail-d")
 
 			status, reason, _ := serverConditionG(ns, "mail-d", ConditionDomainsAuthorized)
-			Expect(status).To(Equal(metav1.ConditionFalse))
-			Expect(reason).To(Equal(ReasonDuplicateDomain))
+			Expect(status).To(Equal(metav1.ConditionTrue))
+			Expect(reason).To(Equal(ReasonAuthorized))
 		})
 
 		It("fails closed for a missing referenced MailDomain", func() {

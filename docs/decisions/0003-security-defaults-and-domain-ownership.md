@@ -111,9 +111,12 @@ Rules:
 - A claim from any other namespace is simply **unauthorized**
   (`Authorized=False, reason=NotGranted`); another tenant cannot knock out
   the real owner by creating a competing claim.
-- **Duplicates** (the same domain claimed by more than one `MailDomain`,
-  in one or across namespaces) block **every** claimant. This is a tenant
-  misconfiguration; failing closed beats an arbitrary winner.
+- **Duplicates** (the same domain claimed by more than one `MailDomain`
+  in the owning namespace) block **every** such claimant. This is a tenant
+  misconfiguration; failing closed beats an arbitrary winner. Claims from
+  namespaces without the grant are not counted: they are unauthorized
+  themselves and cannot knock out the owner. (In `unrestricted` mode there
+  is no owner, so claims from every namespace count.)
 - **Unrestricted mode:** the operator flag
   `--domain-authorization=allowlist|unrestricted` (default `allowlist`)
   disables the grant requirement for single-tenant clusters. It logs a
@@ -161,6 +164,20 @@ When a grant is deleted or no longer covers a domain:
   direction. Not configurable in v1.
 - **kept**: the DKIM `Secret`, so a domain that is granted again does not
   rotate its key.
+
+For a `MailServer` (Phase 2) the evaluation returns the authorized subset
+plus one failure per other domain, and the controller renders only the
+subset, so a revoked domain leaves the Postfix configuration and the
+certificate names on the next reconcile. The `DomainsAuthorized`
+condition is `False` with reason `PartiallyAuthorized` while some domains
+are served (the message names each blocked one); `Ready` stays `False`
+in that state, because `Ready` means the whole spec is realised and the
+safe reading of a partly blocked spec is "not done". With no authorized
+domain left, a running server is re-rendered fail closed (no recipients,
+no submission, certificate name = the in-cluster Service) instead of
+keeping the old configuration; a server that never had a data plane is
+not given one. The new configuration still passes the validation gate
+(ADR 0009), so a rejected render leaves the previous one running.
 
 ### Bypasses are closed at the wiring level
 

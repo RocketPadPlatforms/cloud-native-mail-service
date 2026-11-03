@@ -34,8 +34,13 @@ const (
 	// server's namespace.
 	ReasonNotGranted = "NotGranted"
 	// ReasonDuplicateDomain is set when a domain is claimed by more
-	// than one MailDomain; every claimant is blocked (fail closed).
+	// than one MailDomain among the competing claimants (the owning
+	// namespace in allowlist mode); every one is blocked (fail
+	// closed).
 	ReasonDuplicateDomain = "DuplicateDomain"
+	// ReasonPartiallyAuthorized is set when some, but not all, of the
+	// referenced domains are authorized: only those are served.
+	ReasonPartiallyAuthorized = "PartiallyAuthorized"
 	// ReasonDomainNotFound is set when a referenced MailDomain is
 	// missing.
 	ReasonDomainNotFound = "DomainNotFound"
@@ -91,34 +96,78 @@ type authorizationEvaluator struct {
 	mode   domainAuthorizationMode
 }
 
-// Evaluate returns the authorized domains, sorted, with the first
-// entry as the primary domain (HELO, certificate SAN, postmaster).
-// When not every claimed domain is authorized, the second and third
-// return values carry the condition reason and the first failure.
-func (e *authorizationEvaluator) Evaluate() ([]string, string, string) {
-	granted := make([]string, 0, len(e.server.Spec.Domains))
+// authorization is the outcome of evaluating one MailServer: the
+// authorized subset of its domains and one failure per other domain.
+// A failing domain never takes the others down; the controller
+// renders only the authorized subset (fail closed per domain).
+type authorization struct {
+	// domains are the authorized domains, sorted; the first entry is
+	// the primary domain (HELO, certificate SAN, postmaster). Empty
+	// when none is authorized.
+	domains  []string
+	failures []domainFailure
+	mode     domainAuthorizationMode
+}
+
+// domainFailure is one domain that is not authorized.
+type domainFailure struct {
+	reason  string
+	message string
+}
+
+// all reports whether every referenced domain is authorized.
+func (a authorization) all() bool { return len(a.failures) == 0 }
+
+// condition returns the DomainsAuthorized reason and message. With
+// no failure it is Authorized (or AuthorizationDisabled); with some
+// authorized domains left it is PartiallyAuthorized; otherwise it is
+// the reason of the first failure. The message lists every failure.
+func (a authorization) condition() (string, string) {
+	if a.all() {
+		if a.mode == AuthorizationUnrestricted {
+			return ReasonAuthorizationDisabled, "domain authorization is disabled (--domain-authorization=unrestricted)"
+		}
+		return ReasonAuthorized, "all domains are granted for this namespace"
+	}
+	msgs := make([]string, 0, len(a.failures))
+	for _, f := range a.failures {
+		msgs = append(msgs, f.message)
+	}
+	reason := a.failures[0].reason
+	msg := strings.Join(msgs, "; ")
+	if len(a.domains) > 0 {
+		reason = ReasonPartiallyAuthorized
+		msg = fmt.Sprintf("only %s served, the rest are blocked: %s",
+			strings.Join(a.domains, ", "), msg)
+	}
+	return reason, msg
+}
+
+// Evaluate checks every domain the server references (ADR 0003).
+func (e *authorizationEvaluator) Evaluate() authorization {
+	res := authorization{mode: e.mode}
+	fail := func(reason, format string, args ...any) {
+		res.failures = append(res.failures, domainFailure{reason, fmt.Sprintf(format, args...)})
+	}
 	for _, ref := range e.server.Spec.Domains {
 		claim := e.claim(ref.Name)
-		if claim == nil {
-			return nil, ReasonDomainNotFound, fmt.Sprintf(
-				"MailDomain %q not found in namespace %q", ref.Name, e.server.Namespace)
+		switch {
+		case claim == nil:
+			fail(ReasonDomainNotFound, "MailDomain %q not found in namespace %q", ref.Name, e.server.Namespace)
+		case e.mode == AuthorizationAllowlist && !e.granted(claim.domain):
+			fail(ReasonNotGranted, "no MailDomainGrant covering %q for namespace %q", claim.domain, e.server.Namespace)
+		default:
+			if n := e.claimsFor(claim.domain); n > 1 {
+				fail(ReasonDuplicateDomain,
+					"domain %q is claimed by %d MailDomain objects; every claimant is blocked until the duplicate is resolved",
+					claim.domain, n)
+				continue
+			}
+			res.domains = append(res.domains, claim.domain)
 		}
-		if n := e.claimsFor(claim.domain); n > 1 {
-			return nil, ReasonDuplicateDomain, fmt.Sprintf(
-				"domain %q is claimed by %d MailDomain objects; every claimant is blocked until the duplicate is resolved",
-				claim.domain, n)
-		}
-		if e.mode == AuthorizationAllowlist && !e.granted(claim.domain) {
-			return nil, ReasonNotGranted, fmt.Sprintf(
-				"no MailDomainGrant covering %q for namespace %q", claim.domain, e.server.Namespace)
-		}
-		granted = append(granted, claim.domain)
 	}
-	slices.Sort(granted)
-	if e.mode == AuthorizationUnrestricted {
-		return granted, ReasonAuthorizationDisabled, "domain authorization is disabled (--domain-authorization=unrestricted)"
-	}
-	return granted, ReasonAuthorized, "all domains are granted for this namespace"
+	slices.Sort(res.domains)
+	return res
 }
 
 // claim looks up the MailDomain object ref in the server's namespace.
@@ -131,11 +180,23 @@ func (e *authorizationEvaluator) claim(name string) *domainClaim {
 	return nil
 }
 
-// claimsFor counts all MailDomains (any namespace) claiming domain.
+// claimsFor counts the MailDomains claiming domain that compete for
+// it. In allowlist mode only the claims in the namespace that owns
+// the domain count: a claim from a namespace without the grant is
+// unauthorized anyway and must not block the owner (ADR 0003). In
+// unrestricted mode there is no owner, so every namespace counts.
 func (e *authorizationEvaluator) claimsFor(domain string) int {
+	ownerNS := ""
+	if e.mode == AuthorizationAllowlist {
+		g, found := e.owner(domain)
+		if !found {
+			return 0
+		}
+		ownerNS = g.namespace
+	}
 	n := 0
 	for i := range e.claims {
-		if e.claims[i].domain == domain {
+		if e.claims[i].domain == domain && (ownerNS == "" || e.claims[i].namespace == ownerNS) {
 			n++
 		}
 	}

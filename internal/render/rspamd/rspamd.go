@@ -46,9 +46,6 @@ func (r *Renderer) Render(req *render.RenderRequest) (*render.RenderResult, erro
 	if req == nil || req.Server == nil {
 		return nil, errors.New("render request without MailServer")
 	}
-	if len(req.AuthorizedDomains) == 0 {
-		return nil, errors.New("no authorized domains")
-	}
 	return &render.RenderResult{
 		// Flat file names: the ConfigMap volume is mounted at
 		// /etc/rspamd/local.d (internal/manifests), where ConfigMap
