@@ -12,3 +12,6 @@
 # Re-include Go module files
 !go.mod
 !go.sum
+
+# Re-include assets embedded with go:embed (checked by hack/dockerignore_test.go)
+!internal/render/rspamd/guard.lua

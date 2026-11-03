@@ -42,6 +42,26 @@ jobs:
           DNSENDPOINT_CRDS: ${{ matrix.dnsendpoint-crds }}
         run: make test
 
+  rspamd-guard:
+    permissions:
+      contents: read
+    name: Rspamd guard and signing matrix
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Run the guard matrix
+        run: make test-rspamd-guard
+
   generated:
     permissions:
       contents: read

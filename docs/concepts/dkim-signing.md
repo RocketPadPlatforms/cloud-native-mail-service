@@ -47,6 +47,10 @@ affected, and the rollout of the `MailServer` does not wait: the
 `DKIMKeysAvailable` condition names the missing key. A signing key never
 depends on Valkey, so a Valkey outage does not change any of this.
 
+The guard is tested against the pinned Rspamd image on every pull
+request: which mail is signed, which is deferred and which is left alone
+(see [the guard matrix](../reference/testing.md#the-guard-matrix)).
+
 ## Rotation
 
 With `spec.dkim.rotation` the operator creates the next key when the
