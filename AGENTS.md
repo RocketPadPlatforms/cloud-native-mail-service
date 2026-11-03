@@ -141,10 +141,10 @@ Fields the operator writes into spec (e.g. a claim binding) must be documented
 so GitOps users can either commit them or configure their GitOps tool to
 ignore the difference without the binding being lost.
 
-A full example is in `examples/full-setup.yaml` **if it was provided with this
-task**. Treat it as a design reference, not a spec; field names may be improved,
-but explain deviations. If the file does not exist, draft it yourself and mark
-it clearly as a draft, not as an agreed reference.
+Examples live in `config/samples`; full scenarios are in
+`config/samples/full-setup/`. Treat them as a design reference, not a spec;
+field names may be improved, but explain deviations. Mark a scenario that is
+not an agreed reference clearly as a draft.
 
 ## 4. Behaviour requirements
 
@@ -488,8 +488,8 @@ in e2e.
 - Generated reference: CRD API reference from Go types (e.g. `crd-ref-docs`),
   Helm values reference (e.g. `helm-docs`), metrics and alerts reference
   generated from the same source as the rules. License-check these tools too.
-- Doc examples come from `examples/` and are validated in envtest, so docs
-  cannot drift from the API.
+- Doc examples live in `config/samples` and are validated in envtest; the
+  docs embed those files, so docs cannot drift from the API.
 
 **Structure (Diataxis)**
 - Getting started: kind quickstart, first send and receive.

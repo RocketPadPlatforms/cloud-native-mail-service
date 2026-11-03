@@ -94,4 +94,4 @@ mail server.
   address until the egress-gateway work (Phase 7) gives each server its
   own address. The deny does not change that.
 
-See also the [install and operate guide](02-install-and-operate.md).
+See also the [install and operate guide](02-install-and-operate.mdx).

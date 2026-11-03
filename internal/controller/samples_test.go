@@ -17,7 +17,11 @@ limitations under the License.
 package controller
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -28,7 +32,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/yaml"
+	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	cnmsv1alpha1 "github.com/RocketPadPlatforms/cloud-native-mail-service/api/v1alpha1"
 )
@@ -65,8 +70,17 @@ var _ = Describe("CRD samples", func() {
 
 	When("applying the samples from config/samples", func() {
 		It("accepts every sample file", func() {
-			files, err := filepath.Glob(filepath.Join("..", "..", "config", "samples", "cnms_v1alpha1_*.yaml"))
-			Expect(err).NotTo(HaveOccurred())
+			// Every YAML file below config/samples, including the
+			// scenarios in subdirectories, except the kustomize
+			// files. Each file may hold several documents.
+			var files []string
+			root := filepath.Join("..", "..", "config", "samples")
+			Expect(filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+				if err == nil && !d.IsDir() && filepath.Ext(path) == ".yaml" && d.Name() != "kustomization.yaml" {
+					files = append(files, path)
+				}
+				return err
+			})).To(Succeed())
 			Expect(files).NotTo(BeEmpty())
 			slices.Sort(files)
 
@@ -82,21 +96,33 @@ var _ = Describe("CRD samples", func() {
 				data, err := os.ReadFile(file)
 				Expect(err).NotTo(HaveOccurred(), "reading %s", file)
 
-				obj := &unstructured.Unstructured{}
-				Expect(yaml.Unmarshal(data, &obj.Object)).To(Succeed(), "parsing %s", file)
-				// The static-users sample is a corev1 Secret; every
-				// other sample is a CNMS CR.
-				if obj.GetKind() != "Secret" {
-					Expect(obj.GetAPIVersion()).To(Equal("cnms.rpp.gmbh/v1alpha1"), "apiVersion in %s", file)
-				}
-				if obj.GetKind() == "MailDomainGrant" {
-					// Cluster-scoped: no namespace.
-					clusterScoped = append(clusterScoped, obj.GetName())
-				} else {
-					obj.SetNamespace(sampleNamespace)
-				}
+				docs := utilyaml.NewYAMLOrJSONDecoder(bytes.NewReader(data), 4096)
+				for {
+					obj := &unstructured.Unstructured{}
+					err := docs.Decode(&obj.Object)
+					if errors.Is(err, io.EOF) {
+						break
+					}
+					Expect(err).NotTo(HaveOccurred(), "parsing %s", file)
+					if len(obj.Object) == 0 {
+						continue // comment-only document
+					}
+					// Secrets are the only core objects in the samples;
+					// every other sample is a CNMS CR.
+					if obj.GetKind() != "Secret" {
+						Expect(obj.GetAPIVersion()).To(Equal("cnms.rpp.gmbh/v1alpha1"), "apiVersion in %s", file)
+					}
+					if obj.GetKind() == "MailDomainGrant" {
+						// Cluster-scoped: no namespace.
+						clusterScoped = append(clusterScoped, obj.GetName())
+					} else {
+						obj.SetNamespace(sampleNamespace)
+					}
 
-				Expect(k8sClient.Create(ctx, obj)).To(Succeed(), "applying %s", file)
+					// Strict validation rejects fields the CRD does not
+					// define, which pruning would drop silently.
+					Expect(k8sClient.Create(ctx, obj, client.FieldValidation("Strict"))).To(Succeed(), "applying %s", file)
+				}
 			}
 		})
 	})

@@ -3,7 +3,7 @@
 CNMS is a Kubernetes operator (a control plane) that renders
 configuration for proven mail software (the data plane) and manages
 its lifecycle. This page explains how the parts fit together; the
-[resource model](resource-model.md) documents the API objects, and
+[resource model](resource-model.mdx) documents the API objects, and
 [control plane vs data plane](control-vs-data-plane.md) and
 [failure modes](failure-modes.md) cover the operational consequences.
 

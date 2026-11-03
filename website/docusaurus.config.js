@@ -20,6 +20,18 @@ const config = {
     },
   },
   themes: ['@docusaurus/theme-mermaid'],
+  plugins: [
+    // Lets docs embed the validated samples in config/samples:
+    // `import Sample from '../../config/samples/x.yaml'` yields the file
+    // text. Docusaurus 3 does not bundle raw-loader; webpack's own
+    // asset/source module type does the same without a new dependency.
+    () => ({
+      name: 'raw-yaml',
+      configureWebpack: () => ({
+        module: { rules: [{ test: /\.yaml$/, type: 'asset/source' }] },
+      }),
+    }),
+  ],
   presets: [
     [
       'classic',

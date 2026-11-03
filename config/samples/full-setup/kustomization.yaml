@@ -1,0 +1,16 @@
+# DRAFT: a complete example scenario, not an agreed reference. It uses
+# only what the API offers today and is applied separately from the
+# top-level samples (their MailDomainGrant, MailDomain and MailServer use
+# other names, so both can coexist):
+#   kubectl create namespace mail-full-setup
+#   kubectl apply -n mail-full-setup -k config/samples/full-setup
+# The grants are cluster-scoped and name the namespace in spec.namespace
+# of maildomaingrant.yaml; change it when you apply into another
+# namespace. Create the cert-manager Issuer named in mailserver.yaml
+# first (see the comment there).
+resources:
+- maildomaingrant.yaml
+- maildomain.yaml
+- secrets.yaml
+- maildirectory.yaml
+- mailserver.yaml

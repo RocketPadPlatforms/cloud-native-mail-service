@@ -3,7 +3,7 @@
 Task-oriented guides:
 
 - [Block direct SMTP egress from other pods](block-direct-smtp-egress.md)
-- [Install and operate](02-install-and-operate.md)
+- [Install and operate](02-install-and-operate.mdx)
 - Install (Helm, Kustomize)
 - DNS records
 - Manual rDNS

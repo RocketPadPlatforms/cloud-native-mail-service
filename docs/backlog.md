@@ -86,10 +86,6 @@ committed.
 - List the licenses of the npm tooling of the docs site (Docusaurus and its
   dependencies, not shipped) in the third-party notices; only the Go modules
   and the data-plane images are listed today.
-- Docs examples: `AGENTS.md` section 10 has them come from an `examples/`
-  directory validated in envtest. The validated samples live in
-  `config/samples` and no `examples/` directory exists; decide where the
-  documentation snippets come from and check them in envtest.
 
 ## No phase yet
 

@@ -11,3 +11,4 @@
 - [Data-plane images](data-plane-licenses.md) (Postfix, Rspamd, Dovecot,
   Valkey and the other components shipped as images, with licences)
 - [Testing](testing.md) (test layers and the e2e suite design)
+- [Upgrade notes](upgrade-notes.md) (breaking changes per release)

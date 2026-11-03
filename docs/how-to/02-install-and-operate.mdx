@@ -1,3 +1,7 @@
+import CodeBlock from '@theme/CodeBlock';
+import Kustomization from '../../config/samples/full-setup/kustomization.yaml';
+import Secrets from '../../config/samples/full-setup/secrets.yaml';
+
 # Install and operate
 
 :::note
@@ -21,8 +25,33 @@ Prerequisites in the cluster: cert-manager (certificate issuing for
 kubectl apply -k config/default
 ```
 
-A `MailServer` then runs one data plane per server (reputation
-isolation, see [resource model](../concepts/resource-model.md)):
+## Example scenario
+
+`config/samples/full-setup/` is a draft scenario (not an agreed
+reference) that uses only what the v1alpha1 API offers today: a
+`MailDomainGrant` per domain, two `MailDomain`s, an LDAP `MailDirectory`
+with its Secrets, and a `MailServer`. The files are applied by the
+envtest suite, so they stay valid against the CRDs. The
+[resource model](../concepts/resource-model.mdx) shows the individual
+objects. Create the cert-manager `Issuer` named in `mailserver.yaml`
+first, then apply the directory with `-n`:
+
+```console
+kubectl create namespace mail-full-setup
+kubectl apply -n mail-full-setup -k config/samples/full-setup
+```
+
+<CodeBlock language="yaml" title="config/samples/full-setup/kustomization.yaml">{Kustomization}</CodeBlock>
+
+The Secrets hold placeholders; replace them with your values or create
+them from your secret store:
+
+<CodeBlock language="yaml" title="config/samples/full-setup/secrets.yaml">{Secrets}</CodeBlock>
+
+## Data-plane components
+
+A `MailServer` runs one data plane per server (reputation
+isolation, see [resource model](../concepts/resource-model.mdx)):
 
 | Component | Role | In-cluster ports |
 |-----------|------|------------------|

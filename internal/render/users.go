@@ -32,7 +32,7 @@ var usernameRE = regexp.MustCompile(`^[a-z0-9_-][a-z0-9._-]*$`)
 
 // usersDoc is the schema of the users.yaml payload in the
 // insecureStaticUsers Secret (see
-// docs/how-to/02-install-and-operate.md).
+// docs/how-to/02-install-and-operate.mdx).
 type usersDoc struct {
 	Users []userDoc `json:"users"`
 }

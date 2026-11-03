@@ -41,7 +41,7 @@ published for every release. The project plan and phase status are in
 ## Documentation
 
 Docs live in [`docs/`](docs/) (built by Docusaurus from [`website/`](website/)):
-[concepts](docs/concepts/), [install and operate](docs/how-to/02-install-and-operate.md),
+[concepts](docs/concepts/), [install and operate](docs/how-to/02-install-and-operate.mdx),
 [reference](docs/reference/) (API, status conditions), [architecture
 decisions](docs/decisions/), [roadmap](docs/roadmap.md) and
 [backlog](docs/backlog.md). The getting-started guide and the other how-to

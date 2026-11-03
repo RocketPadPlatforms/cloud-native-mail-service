@@ -1,0 +1,60 @@
+# DRAFT: part of a complete example scenario, not an agreed reference.
+# One mail server with its own Postfix, Rspamd, Valkey and Dovecot.
+#
+# The certificate comes from a cert-manager Issuer that must exist in
+# the same namespace. A self-signed one for trying things out:
+#
+#   apiVersion: cert-manager.io/v1
+#   kind: Issuer
+#   metadata:
+#     name: selfsigned-issuer
+#   spec:
+#     selfSigned: {}
+#
+# For production use an ACME or private-CA Issuer. A ClusterIssuer is
+# accepted only when the operator runs with --allow-cluster-issuers.
+apiVersion: cnms.rpp.gmbh/v1alpha1
+kind: MailServer
+metadata:
+  labels:
+    app.kubernetes.io/name: cloud-native-mail-service
+    app.kubernetes.io/managed-by: kustomize
+  name: mail
+spec:
+  directoryRef:
+    name: corp-ldap
+  outbound:
+    direct: {}
+  domains:
+    - name: example-com
+    - name: example-net
+  tls:
+    issuerRef:
+      kind: Issuer
+      name: selfsigned-issuer
+  inbound:
+    serviceType: LoadBalancer
+    externalTrafficPolicy: Local
+  submission:
+    enabled: true
+  mailboxes:
+    enabled: true
+    storage: 20Gi
+    quota: 2Gi
+  postfix:
+    replicas: 2
+    queueStorage: 2Gi
+  rspamd:
+    replicas: 2
+  valkey:
+    persistence: true
+    storage: 1Gi
+  availability:
+    postfixMinAvailable: 1
+    topologySpread:
+      maxSkew: 1
+      topologyKey: topology.kubernetes.io/zone
+  observability:
+    prometheusOperator: auto
+  backup:
+    enabled: true
