@@ -31,20 +31,29 @@ FROM ${BASE_IMAGE} AS builder
 ARG POSTFIX_VERSION=3.11.7
 ARG POSTFIX_SHA512=3b4ef7562a24bbab1d0ca361ac0af1037aa3d4ae65a7c825711de9d5d3ed88975aad63cb09991717de334f4382c29039b527a3e8d4e65c5a6d35efd3e782910f
 ARG POSTFIX_MIRROR=https://postfix-mirror.horus-it.com/postfix-release
+ARG POSTFIX_FALLBACK_MIRROR=http://ftp.porcupine.org/mirrors/postfix-release
 
-RUN apt-get update \
- && apt-get install -y --no-install-recommends \
+RUN apt-get -o Acquire::Retries=5 update \
+ && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
         build-essential ca-certificates curl ed gpg gpg-agent libldap-dev m4 \
         liblmdb-dev libsqlite3-dev libssl-dev \
  && rm -rf /var/lib/apt/lists/*
 
 COPY keys/wietse.pgp /tmp/wietse.pgp
 
+# Each file is tried on the primary mirror, then on the fallback (plain
+# HTTP is acceptable there: the SHA512 pin and the GPG signature below
+# authenticate the content).
 RUN set -eux; \
-    curl -fsSL -o /tmp/postfix.tar.gz \
-        "${POSTFIX_MIRROR}/official/postfix-${POSTFIX_VERSION}.tar.gz"; \
-    curl -fsSL -o /tmp/postfix.tar.gz.gpg2 \
-        "${POSTFIX_MIRROR}/official/postfix-${POSTFIX_VERSION}.tar.gz.gpg2"; \
+    fetch() { \
+        for m in "${POSTFIX_MIRROR}" "${POSTFIX_FALLBACK_MIRROR}"; do \
+            curl -fsSL --connect-timeout 15 --retry 5 --retry-delay 3 \
+                --retry-all-errors -o "/tmp/$1" "$m/official/$2" && return 0; \
+        done; \
+        return 1; \
+    }; \
+    fetch postfix.tar.gz "postfix-${POSTFIX_VERSION}.tar.gz"; \
+    fetch postfix.tar.gz.gpg2 "postfix-${POSTFIX_VERSION}.tar.gz.gpg2"; \
     echo "${POSTFIX_SHA512}  /tmp/postfix.tar.gz" | sha512sum -c -; \
     gpg --batch --no-default-keyring --keyring /tmp/keyring.gpg \
         --import /tmp/wietse.pgp; \
@@ -115,8 +124,8 @@ FROM ${BASE_IMAGE} AS runtime
 
 # Runtime dependencies of the built binaries plus the queue-metrics sidecar
 # tools (busybox httpd, jq; ADR 0005).
-RUN apt-get update \
- && apt-get install -y --no-install-recommends \
+RUN apt-get -o Acquire::Retries=5 update \
+ && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
         busybox jq libldap2 liblmdb0 libsqlite3-0 libssl3t64 \
  && rm -rf /var/lib/apt/lists/*
 
