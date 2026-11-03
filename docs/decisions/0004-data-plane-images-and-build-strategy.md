@@ -26,8 +26,12 @@ container image with a known user, writable paths, and a log path
 
 1. **Postfix image, built by CNMS** (`images/postfix/Dockerfile`):
    official 3.11.7 source tarball, downloaded from a mirror of the
-   official release directory (`postfix-mirror.horus-it.com`). The
-   version and the SHA512 are build arguments, and the build also
+   official release directory (`postfix-mirror.horus-it.com`), with
+   Wietse Venema's own mirror (`ftp.porcupine.org`, plain HTTP) as a
+   fallback; downloads are retried. Both serve byte-identical files
+   (same SHA512 for tarball and signature), and the content is
+   authenticated by the pin and the signature, not by the transport.
+   The version and the SHA512 are build arguments, and the build also
    verifies Wietse Venema's GPG signature of the tarball against the
    key in `images/postfix/keys`. The base is `debian:trixie-slim`
    (pinned by digest). Postfix 3.11 has no configure script: the

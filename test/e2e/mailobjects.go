@@ -301,9 +301,11 @@ const rspamdMetricsURL = "http://mail-rspamd." + e2eNamespace + ".svc.cluster.lo
 
 // servedCertFingerprint returns the SHA-256 fingerprint of the
 // certificate Postfix presents on the submission port (STARTTLS).
+// The timeout keeps a stalled connection (milter timeouts delay the
+// greeting) from blocking the caller.
 func servedCertFingerprint() (string, error) {
 	out, err := e2eClientExec("sh", "-c",
-		"openssl s_client -starttls smtp -connect "+e2ePostfixSVC+":587 </dev/null 2>/dev/null"+
+		"timeout 30 openssl s_client -starttls smtp -connect "+e2ePostfixSVC+":587 </dev/null 2>/dev/null"+
 			" | openssl x509 -noout -fingerprint -sha256")
 	return strings.TrimSpace(out), err
 }

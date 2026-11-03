@@ -165,9 +165,12 @@ var _ = Describe("CNMS e2e", Ordered, func() {
 		dump("MailServer conditions", "get", "mailserver", "mail", "-n", e2eNamespace,
 			"-o", `jsonpath={.status.conditions}`)
 		// --all-pods needs a selector on kubectl >= 1.37; the label
-		// also matches the e2e client pod.
+		// also matches the e2e client pod. Without --all-containers
+		// only the default container (not the cert-reload and
+		// metrics sidecars) would be shown.
 		dump("Data plane pod logs", "logs", "-n", e2eNamespace,
-			"-l", "cnms.rpp.gmbh/managed-by=cnms", "--all-pods", "--tail=100")
+			"-l", "cnms.rpp.gmbh/managed-by=cnms", "--all-pods",
+			"--all-containers", "--prefix", "--tail=100")
 		dump("Data plane events", "get", "events", "-n", e2eNamespace, "--sort-by=.lastTimestamp")
 	})
 
@@ -651,14 +654,30 @@ subjects:
 			Expect(status).To(Equal("Unknown"))
 
 			By("failing the validation Job")
-			now := time.Now().UTC().Format(time.RFC3339)
-			failed := fmt.Sprintf(`{"status":{"startTime":%q,"failed":1,"conditions":[`+
-				`{"type":"FailureTarget","status":"True","reason":"BackoffLimitExceeded","lastTransitionTime":%q},`+
-				`{"type":"Failed","status":"True","reason":"BackoffLimitExceeded","message":"simulated validation failure","lastTransitionTime":%q}]}}`,
-				now, now, now)
-			out, err = kubectl("patch", newJob, "-n", e2eNamespace,
-				"--subresource=status", "--type", "merge", "-p", failed)
-			Expect(err).NotTo(HaveOccurred(), "patch output: %s", out)
+			// A finished Job needs a startTime, and the API server
+			// rejects changing it once the Job controller has set it
+			// (it does so although the quota keeps the Pod from
+			// starting). So the patch sets it only while it is unset;
+			// if the controller sets it in between, the patch is
+			// rejected and the next attempt sees the value.
+			failJob := func(g Gomega) {
+				started, err := kubectl("get", newJob, "-n", e2eNamespace,
+					"-o", "jsonpath={.status.startTime}")
+				g.Expect(err).NotTo(HaveOccurred())
+				now := time.Now().UTC().Format(time.RFC3339)
+				startTime := ""
+				if strings.TrimSpace(started) == "" {
+					startTime = fmt.Sprintf(`"startTime":%q,`, now)
+				}
+				failed := fmt.Sprintf(`{"status":{%s"failed":1,"conditions":[`+
+					`{"type":"FailureTarget","status":"True","reason":"BackoffLimitExceeded","lastTransitionTime":%q},`+
+					`{"type":"Failed","status":"True","reason":"BackoffLimitExceeded","message":"simulated validation failure","lastTransitionTime":%q}]}}`,
+					startTime, now, now)
+				out, err := kubectl("patch", newJob, "-n", e2eNamespace,
+					"--subresource=status", "--type", "merge", "-p", failed)
+				g.Expect(err).NotTo(HaveOccurred(), "patch output: %s", out)
+			}
+			Eventually(failJob, time.Minute, time.Second).Should(Succeed())
 
 			By("the MailServer reports the rejected configuration")
 			verifyRejected := func(g Gomega) {
@@ -688,9 +707,18 @@ subjects:
 			// cert-manager re-issues a deleted certificate Secret; the
 			// kubelet updates the mounted files and the cert-reload
 			// sidecar reloads Postfix (renewal => reload, not rollout).
-			before, err := servedCertFingerprint()
-			Expect(err).NotTo(HaveOccurred())
-			Expect(before).To(ContainSubstring("Fingerprint"))
+			// While the Rspamd milter is unreachable (a pod
+			// restarting after an earlier spec) smtpd answers 451 on
+			// connect and offers no STARTTLS, hence no certificate:
+			// wait until submission serves one before taking the
+			// baseline.
+			var before string
+			Eventually(func(g Gomega) {
+				fp, err := servedCertFingerprint()
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(fp).To(ContainSubstring("Fingerprint"))
+				before = fp
+			}, 5*time.Minute, 10*time.Second).Should(Succeed())
 			uid, err := kubectl("get", "pod", "mail-postfix-0", "-n", e2eNamespace,
 				"-o", "jsonpath={.metadata.uid}")
 			Expect(err).NotTo(HaveOccurred())

@@ -6,7 +6,7 @@ ARG BASE_IMAGE=debian:trixie-slim@sha256:62bd423aeee912639ca8ee681c2b762cb3e2513
 
 FROM ${BASE_IMAGE}
 
-RUN apt-get update \
- && apt-get install -y --no-install-recommends \
+RUN apt-get -o Acquire::Retries=5 update \
+ && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
         ca-certificates curl openssl swaks libnet-ssleay-perl \
  && rm -rf /var/lib/apt/lists/*
