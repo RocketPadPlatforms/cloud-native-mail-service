@@ -255,9 +255,16 @@ receiver in another organizational domain has to publish). `SPFReady`,
 `MTASTSReady` and `ReportAuthorization` never feed into `Ready`. The
 `Ready` order is `Authorized`, `DKIMKeysValid`, `DNSPublished`,
 `RecordsVerified`. The mx hosts of the MTA-STS policy come from the
-`MailServer`s of the namespace that list the domain; until the
-`MailServer` controller provides them, an enabled MTA-STS has no policy
-and `MTASTSReady` is `False` with reason `NoMailServer`.
+`MailServer`s of the namespace that list the domain and serve it
+(authorized, ADR 0003): each contributes its `ServerHostname`, which is the
+first sorted domain it serves, so a server of several domains gives the
+same host for each of them. Several servers give several hosts, sorted
+without duplicates, so the policy does not depend on the order of the
+objects. While no server serves the domain an enabled MTA-STS has no
+policy and `MTASTSReady` is `False` with reason `NoMailServer`. The
+`MailDomain` controller watches `MailServer` spec changes for this. The
+name is the one in the certificate and the HELO; the MX record of the
+domain has to point at it, which CNMS does not publish (section 1).
 
 ### 5. Public suffixes
 

@@ -116,8 +116,14 @@ kubectl get maildomain example-org -o jsonpath='{range .status.records[*]}{.name
   receiver; `ReportAuthorization` names it.
 - **MTA-STS** is report-only: the status holds the policy text and its
   id, you serve it at `https://mta-sts.<domain>/.well-known/mta-sts.txt`.
-  The `mx` hosts will come from the `MailServer`s that list the domain;
-  until then `MTASTSReady` is `False` with reason `NoMailServer`.
+  The `mx` hosts come from the `MailServer`s of the namespace that list
+  the domain and serve it: each contributes its host name, the first
+  sorted domain it serves (the name in its certificate and HELO), so the
+  MX record of your domain has to point at that name. Several servers give
+  several hosts, sorted, without duplicates. While no server serves the
+  domain there is no policy and `MTASTSReady` is `False` with reason
+  `NoMailServer`; a server that starts or stops serving the domain
+  updates the policy and its id.
 - **Verification** asks a resolver for the records: the system resolver of
   the pod, or `--dns-resolver=host:port`. Unverified records are checked
   after one minute, backing off to ten; verified ones every hour. A

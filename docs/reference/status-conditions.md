@@ -106,7 +106,7 @@ only `Authorized` and `Ready` (and `DNSPublished` while its
 | `SPFReady` | `True` | `SPFGenerated` | an SPF record is generated from `spec.spf` |
 | `SPFReady` | `False` | `NoSendingSources` | no source is known, so no SPF record is generated |
 | `MTASTSReady` | `True` | `PolicyAvailable` | MTA-STS is enabled and the policy is in `status.mtaSts` |
-| `MTASTSReady` | `False` | `NoMailServer` | MTA-STS is enabled and no `MailServer` provides an `mx` host |
+| `MTASTSReady` | `False` | `NoMailServer` | MTA-STS is enabled and no `MailServer` of the namespace lists and serves the domain, so there is no `mx` host and no policy |
 | `ReportAuthorization` | `True` | `NotRequired` | every DMARC report address is in the organizational domain of the policy |
 | `ReportAuthorization` | `False` | `ReceiverRecordRequired` | a report address is in another organizational domain; its owner has to publish the record named in the message |
 

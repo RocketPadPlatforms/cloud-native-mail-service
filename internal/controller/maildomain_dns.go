@@ -198,7 +198,8 @@ func (st *dnsState) dkimStates(domain string, keys []generatedKey) map[string]dk
 
 // composeInput builds the input of the record composition from the spec
 // and the published keys (ADR 0012). The MTA-STS hosts come from the
-// MTASTSHosts hook.
+// MailServers of the namespace (mtaSTSHosts), unless the MTASTSHosts
+// override is set.
 func (r *MailDomainReconciler) composeInput(ctx context.Context, md *cnmsv1alpha1.MailDomain, keys []keyEntry) (dnsrecords.Input, error) {
 	spec := &md.Spec
 	in := dnsrecords.Input{Domain: spec.Domain, SPF: &dnsrecords.SPF{}}
@@ -220,12 +221,13 @@ func (r *MailDomainReconciler) composeInput(ctx context.Context, md *cnmsv1alpha
 	}
 	if m := spec.MTAStS; m != nil && m.Enabled != nil && *m.Enabled {
 		in.MTASTS = &dnsrecords.MTASTS{Mode: deref(m.Mode)}
+		hosts := r.mtaSTSHosts
 		if r.MTASTSHosts != nil {
-			hosts, err := r.MTASTSHosts(ctx, md)
-			if err != nil {
-				return in, err
-			}
-			in.MTASTS.MX = hosts
+			hosts = r.MTASTSHosts
+		}
+		var err error
+		if in.MTASTS.MX, err = hosts(ctx, md); err != nil {
+			return in, err
 		}
 	}
 	if t := spec.TLSRPT; t != nil && t.Enabled != nil && *t.Enabled {

@@ -31,9 +31,11 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/recorder"
 
@@ -64,9 +66,9 @@ type MailDomainReconciler struct {
 	// record is verified.
 	Resolver dnsrecords.Resolver
 
-	// MTASTSHosts returns the mx hosts of the MTA-STS policy of the
-	// domain: the host names of the MailServers that serve it
-	// (ADR 0012). Nil means none, so there is no policy.
+	// MTASTSHosts overrides the mx hosts of the MTA-STS policy of the
+	// domain, which are otherwise the host names of the MailServers of
+	// the namespace that serve it (ADR 0012). Tests set it.
 	MTASTSHosts func(ctx context.Context, md *cnmsv1alpha1.MailDomain) ([]string, error)
 
 	// Now is the clock; nil means time.Now. Tests advance a fake one.
@@ -84,6 +86,8 @@ type MailDomainReconciler struct {
 // +kubebuilder:rbac:groups=cnms.rpp.gmbh,resources=maildomains/status,verbs=patch
 // +kubebuilder:rbac:groups=cnms.rpp.gmbh,resources=maildomains/finalizers,verbs=update
 // +kubebuilder:rbac:groups=cnms.rpp.gmbh,resources=maildomaingrants,verbs=get;list;watch
+// The MTA-STS policy lists the hosts of the MailServers that serve the domain.
+// +kubebuilder:rbac:groups=cnms.rpp.gmbh,resources=mailservers,verbs=get;list;watch
 // Key Secrets are immutable: created, deleted when a retired key leaves DNS, never updated,
 // and kept when the MailDomain goes away. They are never cached or watched.
 // The DNSEndpoint is an optional integration (principle 10): the CRD is looked up by name.
@@ -394,6 +398,10 @@ func (r *MailDomainReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return b.
 		Watches(&cnmsv1alpha1.MailDomain{}, handler.EnqueueRequestsFromMapFunc(r.mapPeerDomains)).
 		Watches(&cnmsv1alpha1.MailDomainGrant{}, handler.EnqueueRequestsFromMapFunc(r.mapGrantDomains)).
+		// A server that starts or stops serving the domain changes the mx
+		// hosts of the MTA-STS policy; its status writes do not.
+		Watches(&cnmsv1alpha1.MailServer{}, handler.EnqueueRequestsFromMapFunc(r.mapServerDomains),
+			builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Complete(r)
 }
 
