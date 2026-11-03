@@ -33,10 +33,6 @@ scoped; nothing here is committed.
   today the sizes are immutable and resized manually (ADR 0010).
 - Optional Rspamd message history (`MailServer` field with a retention
   period and subject privacy); disabled today (ADR 0005).
-- Licence policy call for GPL-2.0-only `busybox` in the CNMS Postfix
-  image (queue-metrics and Rspamd metrics sidecars): decide whether it
-  fits section 9 of the project plan, then add it to `NOTICE` and the
-  third-party notices (ADR 0005, licence note).
 - Phase 5 (`MailDomain`, DKIM): a "never unsigned" guard in Rspamd, a
   postfilter Lua rule that calls `task:set_pre_result('soft reject', ...)`
   for authenticated or local mail without `DKIM_SIGNED`. Exempt the

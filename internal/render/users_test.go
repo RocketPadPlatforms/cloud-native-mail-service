@@ -47,6 +47,17 @@ func TestParseStaticUsers(t *testing.T) {
 		}
 	})
 
+	t.Run("mailbox is lower-cased", func(t *testing.T) {
+		users, err := ParseStaticUsers([]byte(strings.Replace(valid,
+			"testuser@example.com", "TestUser@Example.COM", 1)))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if users[0].Mailbox != "testuser@example.com" {
+			t.Fatalf("got mailbox %q, want it lower-cased", users[0].Mailbox)
+		}
+	})
+
 	t.Run("crypt magic hash", func(t *testing.T) {
 		_, err := ParseStaticUsers([]byte(strings.Replace(valid,
 			"'{SHA512-CRYPT}$6$salt$hash'", "$6$salt$hash", 1)))

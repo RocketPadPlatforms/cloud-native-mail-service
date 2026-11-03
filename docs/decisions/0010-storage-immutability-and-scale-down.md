@@ -61,6 +61,12 @@ Two gaps followed from that:
   parked in the backlog and the hardening phase (Phase 9, together
   with queue-rescue). The rules and the decreasing-replicas message
   are removed when the queue move lands.
+- Edge case: the immutability rule only guards the field while the
+  `mailboxes` block exists. Removing the block and adding it again
+  with a different `storage` passes admission, but the retained
+  Dovecot PVC is reused as it is, so the new size is silently
+  ignored (the volume keeps its old size). Resize the PVC directly in
+  that case.
 - The rules are no migration concern: there is no release yet.
 - Tests: envtest checks the CEL rules, and the template-change paths
   of `applyObject` are asserted through a client interceptor

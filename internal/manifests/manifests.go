@@ -497,12 +497,14 @@ done`
 // the last good body is kept) so stale data is detectable. The file is
 // served as /metrics/index.txt because httpd sends no Content-Type for
 // a file without an extension and Prometheus 3 rejects that (same as
-// the Postfix queue-metrics sidecar). `busybox` is called by name: the
+// the Postfix queue-metrics sidecar). Only $dir/www is the document
+// root: the httpd config and the working copies stay outside it, so
+// /metrics/ is the only thing served. `busybox` is called by name: the
 // image does not symlink the applets.
 func rspamdMetricsLoop(listenPort, controllerPort int32) []string {
 	script := fmt.Sprintf(`set -eu
 dir=/tmp/rspamd-metrics
-mkdir -p "$dir/metrics"
+mkdir -p "$dir/www/metrics"
 printf 'I:index.txt\n.txt:text/plain\n' > "$dir/httpd.conf"
 scrape() {
   if busybox wget -q -T 5 -O "$dir/new" http://127.0.0.1:%[2]d/metrics; then
@@ -517,11 +519,11 @@ scrape() {
     echo "# TYPE cnms_rspamd_metrics_up gauge"
     echo "cnms_rspamd_metrics_up $up"
     if [ -f "$dir/last" ]; then cat "$dir/last"; fi
-  } > "$dir/metrics/.index.tmp"
-  mv "$dir/metrics/.index.tmp" "$dir/metrics/index.txt"
+  } > "$dir/www/metrics/.index.tmp"
+  mv "$dir/www/metrics/.index.tmp" "$dir/www/metrics/index.txt"
 }
 scrape
-busybox httpd -f -p 0.0.0.0:%[1]d -h "$dir" -c "$dir/httpd.conf" &
+busybox httpd -f -p 0.0.0.0:%[1]d -h "$dir/www" -c "$dir/httpd.conf" &
 srv=$!
 trap 'exit 0' TERM INT
 while :; do

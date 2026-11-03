@@ -29,8 +29,10 @@ Policy:
 - **Runtime dependencies** (Go modules in the operator binary, images we build
   or reference by default): permissive licenses (Apache-2.0, MIT, BSD, ISC)
   or weak copyleft used unmodified as separate programs (LGPL, MPL-2.0,
-  EPL/IPL). No SSPL, RSAL, BSL, Commons Clause, AGPL, or other
-  source-available licenses.
+  EPL/IPL). Strong copyleft (GPL) is allowed only for unmodified,
+  separate programs inside images (BusyBox, Debian base packages),
+  never linked into the operator binary. No SSPL, RSAL, BSL, Commons
+  Clause, AGPL, or other source-available licenses.
 - **Build/dev tools** (linters, doc generators, CI tooling): any OSI-approved
   license, recorded here when added.
 - Enforced in CI by `make license-check`

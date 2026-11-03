@@ -22,9 +22,11 @@
 set -eu
 
 PORT="${CNMS_QUEUE_METRICS_PORT:-9150}"
-DOCROOT=/tmp/cnms-queue-metrics
+WORKDIR=/tmp/cnms-queue-metrics
+# Only DOCROOT is served; the httpd config stays outside it.
+DOCROOT="$WORKDIR/www"
 mkdir -p "$DOCROOT/metrics"
-printf 'I:index.txt\n.txt:text/plain\n' > "$DOCROOT/httpd.conf"
+printf 'I:index.txt\n.txt:text/plain\n' > "$WORKDIR/httpd.conf"
 
 # Values of the last successful sample ("" until the first one).
 last_body=""
@@ -89,4 +91,4 @@ while :; do
     generate || echo "could not write the metrics file" >&2
 done &
 
-exec busybox httpd -f -p "0.0.0.0:${PORT}" -h "$DOCROOT" -c "$DOCROOT/httpd.conf"
+exec busybox httpd -f -p "0.0.0.0:${PORT}" -h "$DOCROOT" -c "$WORKDIR/httpd.conf"

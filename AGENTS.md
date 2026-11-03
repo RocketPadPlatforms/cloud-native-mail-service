@@ -459,8 +459,10 @@ in e2e.
   - **Shipped runtime** (Go modules in the binary, images we build or
     reference by default): permissive licenses (Apache-2.0, MIT, BSD, ISC) or
     weak copyleft used unmodified as separate programs (e.g. LGPL, MPL-2.0,
-    EPL-2.0/IPL for Postfix). No SSPL, RSAL, BSL, Commons Clause, AGPL or other
-    source-available licenses.
+    EPL-2.0/IPL for Postfix). Strong copyleft (GPL) is allowed only for
+    unmodified, separate programs inside images (e.g. BusyBox, Debian base
+    packages), never linked into the operator binary. No SSPL, RSAL, BSL,
+    Commons Clause, AGPL or other source-available licenses.
   - **Build/dev tools** not shipped (linters, doc generators, Renovate as a
     service): any OSI-approved license, recorded.
 - Starting point to verify (do not trust this table; check the source):
