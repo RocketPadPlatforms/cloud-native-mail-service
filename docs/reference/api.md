@@ -131,7 +131,7 @@ _Appears in:_
 
 
 DKIMStatus reports the current DKIM signing state. A key is pending
-(published, not signing yet), active (signing) or retiring (still
+(published, not signing), active (signing) or retiring (still
 published, no longer signing).
 
 
@@ -141,8 +141,8 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `active` _[DKIMKeyStatus](#dkimkeystatus) array_ | Active keys: the ones that sign, at most one per algorithm. |  | MaxItems: 2 <br />Optional: \{\} <br /> |
-| `pending` _[DKIMKeyStatus](#dkimkeystatus) array_ | Pending keys: published and waiting for a verified record. |  | MaxItems: 8 <br />Optional: \{\} <br /> |
+| `active` _[DKIMKeyStatus](#dkimkeystatus) array_ | Active keys: the ones that sign, at most one per algorithm for<br />generated keys; with your own keys every key with signing true. |  | MaxItems: 8 <br />Optional: \{\} <br /> |
+| `pending` _[DKIMKeyStatus](#dkimkeystatus) array_ | Pending keys: published, not signing. A generated key waits for<br />its verified record; with your own keys these are the keys with<br />signing false, before they take over or after they stopped<br />signing. |  | MaxItems: 8 <br />Optional: \{\} <br /> |
 | `retiring` _[DKIMKeyStatus](#dkimkeystatus) array_ | Retiring keys: replaced by an active key, published until their<br />overlap ends. |  | MaxItems: 8 <br />Optional: \{\} <br /> |
 | `nextRotation` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#time-v1-meta)_ | Time the next generated key is created. Unset without rotation<br />and with your own keys. |  | Optional: \{\} <br /> |
 

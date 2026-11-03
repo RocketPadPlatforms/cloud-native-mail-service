@@ -30,6 +30,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	cnmsv1alpha1 "github.com/RocketPadPlatforms/cloud-native-mail-service/api/v1alpha1"
+	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/dnsrecords"
 )
 
 // fakeClock is the clock of the MailDomain reconciler in tests.
@@ -55,17 +56,21 @@ func (c *fakeClock) Advance(d time.Duration) {
 // domainTestEnv is one MailDomain reconciler with its fake clock.
 type domainTestEnv struct {
 	r     *MailDomainReconciler
+	dns   *dnsrecords.FakeResolver
 	clock *fakeClock
 }
 
 func newDomainEnvG(mode domainAuthorizationMode) *domainTestEnv {
-	clock := newFakeClock()
+	clock, dns := newFakeClock(), dnsrecords.NewFakeResolver()
 	return &domainTestEnv{
 		clock: clock,
+		dns:   dns,
 		r: &MailDomainReconciler{
 			Client:              k8sClient,
 			Scheme:              scheme.Scheme,
+			APIReader:           k8sClient,
 			DomainAuthorization: mode,
+			Resolver:            dns,
 			Now:                 clock.Now,
 		},
 	}
@@ -204,7 +209,7 @@ var _ = Describe("MailDomain controller", func() {
 			createGrantG(domain, ns, false)
 			createMailDomainG(ns, domain, nil)
 			env := newDomainEnvG(AuthorizationAllowlist)
-			env.reconcile(ns, name)
+			env.settle(ns, name)
 			first := getMailDomainG(ns, name).ResourceVersion
 
 			env.clock.Advance(time.Minute)

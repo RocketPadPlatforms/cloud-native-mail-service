@@ -75,6 +75,12 @@ var _ = BeforeSuite(func() {
 		crdPaths = append(crdPaths,
 			filepath.Join("..", "..", "hack", "crds", "prometheus-operator"))
 	}
+	// DNSENDPOINT_CRDS=1 installs a minimal DNSEndpoint CRD so the
+	// optional external-dns integration can be exercised.
+	if os.Getenv("DNSENDPOINT_CRDS") == "1" {
+		crdPaths = append(crdPaths,
+			filepath.Join("..", "..", "hack", "crds", "external-dns"))
+	}
 	testEnv = &envtest.Environment{
 		CRDDirectoryPaths:     crdPaths,
 		ErrorIfCRDPathMissing: true,

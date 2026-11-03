@@ -926,16 +926,16 @@ func (r *MailServerReconciler) serversInNamespace(ctx context.Context, ns string
 	return reqs
 }
 
-// ownershipConflictError reports that an object the data plane needs
-// already exists and is not controlled by the MailServer: it belongs
-// to someone else (a tenant's own Service of the same name, an object
-// of another server) and must not be overwritten.
+// ownershipConflictError reports that an object a controller needs
+// already exists and is not controlled by its owner (a MailServer or a
+// MailDomain): it belongs to someone else (a tenant's own Service of the
+// same name, an object of another server) and must not be overwritten.
 type ownershipConflictError struct {
-	kind, name string
+	kind, name, owner string
 }
 
 func (e *ownershipConflictError) Error() string {
-	return fmt.Sprintf("%s %q already exists and is not controlled by this MailServer; rename or delete it", e.kind, e.name)
+	return fmt.Sprintf("%s %q already exists and is not controlled by this %s; rename or delete it", e.kind, e.name, e.owner)
 }
 
 // applyFailureReason is the condition reason for a failed apply.
@@ -981,7 +981,7 @@ func applyObject(ctx context.Context, c client.Client, reader client.Reader, sch
 		return err
 	}
 	if !metav1.IsControlledBy(existing, owner) {
-		return &ownershipConflictError{kind: kindName(desired), name: desired.GetName()}
+		return &ownershipConflictError{kind: kindName(desired), name: desired.GetName(), owner: kindName(owner)}
 	}
 	// spec.volumeClaimTemplates is immutable on update (k8s 1.37).
 	// The API makes the storage sizes immutable (ADR 0010), so the
