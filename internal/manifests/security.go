@@ -21,9 +21,11 @@ import (
 )
 
 // Security contexts of the data plane (ADR 0006). Every container
-// drops all capabilities, forbids privilege escalation and has a
-// read-only root filesystem; the pods use the runtime's default
-// seccomp profile. Writable paths are emptyDir mounts.
+// drops all capabilities (those it needs are added back) and has a
+// read-only root filesystem; all but the Dovecot container of a pod
+// with mailboxes forbid privilege escalation (see dovecotSecurity).
+// The pods use the runtime's default seccomp profile. Writable paths
+// are emptyDir mounts.
 //
 // Rspamd, Valkey, the exporters, the sidecars of the Rspamd and
 // Valkey pods and their validation Jobs run as an unprivileged user

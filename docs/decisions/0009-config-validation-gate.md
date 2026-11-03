@@ -99,10 +99,14 @@ Postfix 3.11.7, Valkey 9.1.2):
    `patch`. Secrets get `get` and `list` but no `watch`: the operator
    reads the TLS and users Secrets by name and lists its own (by
    label) for the cleanup, all uncached, so it never holds Secrets in
-   memory. Its cache holds only the ConfigMaps and Jobs that carry the
-   managed-by label; the existing-object check of a create (`createOwned`)
-   therefore reads uncached, because a foreign object of the same name
-   carries no label.
+   memory. Its cache holds only the objects of the data plane that carry
+   the managed-by label (ConfigMaps, Jobs, Services, PVCs, StatefulSets,
+   Deployments, PodDisruptionBudgets, NetworkPolicies; the volume claim
+   templates carry it too); the existing-object checks of a create
+   (`createOwned`) and of an apply (`applyObject`, on a cache miss)
+   therefore read uncached, because a foreign object of the same name
+   carries no label. The optional Certificate and ServiceMonitor
+   informers are not filtered.
 
 ## Consequences
 

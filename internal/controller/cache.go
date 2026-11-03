@@ -17,8 +17,11 @@ limitations under the License.
 package controller
 
 import (
+	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -27,17 +30,29 @@ import (
 )
 
 // CacheOptions limits the manager cache to what the operator needs in
-// memory: the ConfigMaps and Jobs it creates (they carry the managed-by
-// label). Tenant ConfigMaps and Jobs are never cached, so a cached read
-// cannot see them: code that must notice a foreign object of the same
-// name (createOwned) reads through the API reader.
+// memory: the objects it creates (they carry the managed-by label, also
+// on the volume claim templates, so the claims of the StatefulSets
+// match). Tenant objects of these kinds are never cached, so a cached
+// read cannot see them: code that must notice a foreign object of the
+// same name (createOwned, applyObject) reads through the API reader.
+//
+// shortcut: the optional cert-manager Certificate and Prometheus
+// ServiceMonitor informers stay unfiltered, because a ByObject entry for
+// a kind whose CRD is missing fails the manager setup; filter them when
+// the CRD presence is known before the manager is built.
 func CacheOptions() cache.Options {
 	managed := cache.ByObject{
 		Label: labels.SelectorFromSet(labels.Set{manifests.ManagedByLabel: manifests.ManagedByValue}),
 	}
 	return cache.Options{ByObject: map[client.Object]cache.ByObject{
-		&corev1.ConfigMap{}: managed,
-		&batchv1.Job{}:      managed,
+		&corev1.ConfigMap{}:             managed,
+		&corev1.Service{}:               managed,
+		&corev1.PersistentVolumeClaim{}: managed,
+		&batchv1.Job{}:                  managed,
+		&appsv1.StatefulSet{}:           managed,
+		&appsv1.Deployment{}:            managed,
+		&policyv1.PodDisruptionBudget{}: managed,
+		&networkingv1.NetworkPolicy{}:   managed,
 	}}
 }
 

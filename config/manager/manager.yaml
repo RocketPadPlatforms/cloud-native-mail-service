@@ -67,8 +67,11 @@ spec:
             port: 8081
           initialDelaySeconds: 5
           periodSeconds: 10
-        # The cache holds only the operator's own ConfigMaps and Jobs, and no Secrets, so
-        # memory grows with the number of MailServers, not with the cluster.
+        # The cache holds only the objects the operator creates (managed-by label) and no
+        # Secrets, so memory grows with the number of MailServers, not with the cluster.
+        # The exception are the optional cert-manager Certificate and Prometheus
+        # ServiceMonitor informers, which are cluster-wide when those CRDs are installed:
+        # raise the limit in a cluster with thousands of them.
         resources:
           limits:
             cpu: 500m

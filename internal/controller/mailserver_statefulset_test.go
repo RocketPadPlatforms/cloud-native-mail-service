@@ -101,7 +101,7 @@ var _ = Describe("StatefulSet volume claim template changes", func() {
 			d.Spec.VolumeClaimTemplates[0].Spec.Resources.Requests[corev1.ResourceStorage] = resource.MustParse("5Gi")
 			d.Spec.Replicas = new(int32(3))
 		})
-		Expect(applyObject(ctx, wrapped, scheme.Scheme, server, d)).To(Succeed())
+		Expect(applyObject(ctx, wrapped, wrapped, scheme.Scheme, server, d)).To(Succeed())
 
 		Expect(deleted).To(BeEmpty())
 		sts := getStatefulSetG(ns, postfixObjectName)
@@ -113,7 +113,7 @@ var _ = Describe("StatefulSet volume claim template changes", func() {
 	It("recreates the StatefulSet with background propagation when the template names change", func() {
 		old := getStatefulSetG(ns, "mail-dovecot")
 		d := desired("mail-dovecot", func(d *appsv1.StatefulSet) { d.Spec.VolumeClaimTemplates = mailTemplate() })
-		Expect(applyObject(ctx, wrapped, scheme.Scheme, server, d)).To(Succeed())
+		Expect(applyObject(ctx, wrapped, wrapped, scheme.Scheme, server, d)).To(Succeed())
 
 		Expect(deleted).To(HaveLen(1))
 		Expect(*deleted[0].PropagationPolicy).To(Equal(metav1.DeletePropagationBackground))
@@ -125,6 +125,6 @@ var _ = Describe("StatefulSet volume claim template changes", func() {
 	It("does not fail when the recreated StatefulSet still exists", func() {
 		failNew = true
 		d := desired("mail-dovecot", func(d *appsv1.StatefulSet) { d.Spec.VolumeClaimTemplates = mailTemplate() })
-		Expect(applyObject(ctx, wrapped, scheme.Scheme, server, d)).To(Succeed())
+		Expect(applyObject(ctx, wrapped, wrapped, scheme.Scheme, server, d)).To(Succeed())
 	})
 })
