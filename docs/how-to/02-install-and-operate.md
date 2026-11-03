@@ -212,7 +212,9 @@ started.
   `NET_BIND_SERVICE` capability does not help a non-root process
   (Kubernetes cannot grant ambient capabilities; verified with
   `dovecot/dovecot:2.4.5`). NetworkPolicies and probes use the
-  container ports.
+  container ports. A server created before the container ports changed
+  has a short LMTP and IMAP interruption while the Dovecot pod rolls to
+  the new ports; mail for LMTP is deferred by Postfix, not lost.
 - The certificate comes from the `spec.tls` cert-manager Issuer
   (Secret default `<name>-tls`) and is mounted at `/etc/dovecot/ssl`.
   Certificate renewals trigger a **reload**, not a pod restart.

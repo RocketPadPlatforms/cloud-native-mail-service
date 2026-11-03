@@ -20,24 +20,58 @@ on:
 
 permissions: {}
 
+# A newer push to a pull request supersedes the running build. Runs on main
+# and tags get their own group, so none is cancelled or dropped from the queue
+# and every publish completes.
+concurrency:
+  group: images-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  build:
+  # The Postfix and e2e-client images build under QEMU emulation and do not
+  # depend on the Go code: a pull request builds only the images it touches.
+  changes:
     if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+    name: Select images
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2 # the merge commit and its base
+          persist-credentials: false
+
+      - name: Select the images to build
+        id: select
+        run: |
+          files=$(git diff --name-only HEAD^1 HEAD)
+          workflow='^\.github/workflows/image(s|-build)\.yml$'
+          matrix='[]'
+          if grep -qE "^(Dockerfile|go\.(mod|sum)|api/|cmd/|internal/)|$workflow" <<<"$files"; then
+            matrix=$(jq -c '. + [{image: "cnms-operator", context: "."}]' <<<"$matrix")
+          fi
+          if grep -qE "^images/postfix/|$workflow" <<<"$files"; then
+            matrix=$(jq -c '. + [{image: "cnms-postfix", context: "images/postfix", "postfix-tag": true}]' <<<"$matrix")
+          fi
+          if grep -qE "^images/e2e-client/|$workflow" <<<"$files"; then
+            matrix=$(jq -c '. + [{image: "cnms-e2e-client", context: "images/e2e-client", "postfix-tag": true}]' <<<"$matrix")
+          fi
+          echo "matrix={\"include\":$matrix}" >> "$GITHUB_OUTPUT"
+          echo "$matrix" | jq .
+
+  build:
+    needs: changes
+    if: github.event_name == 'pull_request' && !contains(needs.changes.outputs.matrix, '"include":[]')
     permissions:
       contents: read
     name: Build ${{ matrix.image }}
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - image: cnms-operator
-            context: .
-          - image: cnms-postfix
-            context: images/postfix
-            postfix-tag: true
-          - image: cnms-e2e-client
-            context: images/e2e-client
-            postfix-tag: true
+      matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
     uses: ./.github/workflows/image-build.yml
     with:
       image: ${{ matrix.image }}

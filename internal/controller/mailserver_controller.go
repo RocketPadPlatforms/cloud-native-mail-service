@@ -208,7 +208,7 @@ type MailServerReconciler struct {
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=cert-manager.io,resources=certificates,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=monitoring.coreos.com,resources=servicemonitors,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch
+// +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get
 // +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
 // Reconcile moves the cluster state of one MailServer toward the
@@ -810,7 +810,7 @@ func (r *MailServerReconciler) reconcileObservability(ctx context.Context, serve
 		}
 	}
 	for _, obj := range want {
-		if err := applyObject(ctx, r.Client, r.Scheme, server, obj); err != nil {
+		if err := applyObject(ctx, r.Client, r.APIReader, r.Scheme, server, obj); err != nil {
 			return metav1.ConditionFalse, applyFailureReason(err), err.Error()
 		}
 	}
@@ -1019,10 +1019,17 @@ func kindName(obj client.Object) string {
 // so replacing the spec is safe. An existing object that is not
 // controlled by the MailServer is never overwritten (an
 // ownershipConflictError is returned); the controller reference is
-// set on create only.
-func applyObject(ctx context.Context, c client.Client, scheme *runtime.Scheme, owner, desired client.Object) error {
+// set on create only. The cache only holds the operator's own
+// (labelled) objects, so a NotFound from it is confirmed with reader
+// (not the cache): an object of someone else with the name, or one of
+// ours that lost its label, is found there.
+func applyObject(ctx context.Context, c client.Client, reader client.Reader, scheme *runtime.Scheme, owner, desired client.Object) error {
 	existing := desired.DeepCopyObject().(client.Object)
 	err := c.Get(ctx, client.ObjectKeyFromObject(desired), existing)
+	if errors.IsNotFound(err) {
+		existing = emptyLike(desired)
+		err = reader.Get(ctx, client.ObjectKeyFromObject(desired), existing)
+	}
 	if errors.IsNotFound(err) {
 		if err := controllerutil.SetControllerReference(owner, desired, scheme); err != nil {
 			return err
@@ -1062,6 +1069,17 @@ func applyObject(ctx context.Context, c client.Client, scheme *runtime.Scheme, o
 		return nil
 	}
 	return c.Update(ctx, existing)
+}
+
+// emptyLike returns an empty object of the type (and kind, for
+// unstructured) of obj, so a read does not merge into its content.
+func emptyLike(obj client.Object) client.Object {
+	if u, ok := obj.(*unstructured.Unstructured); ok {
+		e := &unstructured.Unstructured{}
+		e.SetGroupVersionKind(u.GroupVersionKind())
+		return e
+	}
+	return reflect.New(reflect.TypeOf(obj).Elem()).Interface().(client.Object)
 }
 
 // recreateStatefulSet replaces a StatefulSet whose volume claim

@@ -120,7 +120,7 @@ func (r *MailServerReconciler) applyDataPlane(ctx context.Context, server *cnmsv
 		if !certCRDs && isUnstructuredKind(obj, certificateGVK.Kind) {
 			continue
 		}
-		if err := applyObject(ctx, r.Client, r.Scheme, server, obj); err != nil {
+		if err := applyObject(ctx, r.Client, r.APIReader, r.Scheme, server, obj); err != nil {
 			return nil, fmt.Errorf("apply %T %s: %w", obj, obj.GetName(), err)
 		}
 	}
@@ -162,7 +162,7 @@ func (r *MailServerReconciler) applyDataPlane(ctx context.Context, server *cnmsv
 	}
 
 	for _, obj := range plane.Workloads {
-		if err := applyObject(ctx, r.Client, r.Scheme, server, obj); err != nil {
+		if err := applyObject(ctx, r.Client, r.APIReader, r.Scheme, server, obj); err != nil {
 			return nil, fmt.Errorf("apply %T %s: %w", obj, obj.GetName(), err)
 		}
 	}

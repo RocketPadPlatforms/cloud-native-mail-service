@@ -44,8 +44,8 @@ const (
 // file is the complete configuration (no includes), so the listener
 // set is exactly the one rendered here. Every setting and its
 // runtime effect was verified against the running 2.4.5 image
-// (doveconf -n plus live protocol probes on ports 24, 143, 993,
-// 12345 and LMTP/IMAP deliveries).
+// (doveconf -n plus live protocol probes on the container ports
+// 31024, 31143, 31993 and 12345, and LMTP/IMAP deliveries).
 func renderDovecotConf(req *render.RenderRequest) string {
 	var b strings.Builder
 	b.WriteString("# CNMS-rendered Dovecot dovecot.conf -- do not edit.\n")

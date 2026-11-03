@@ -34,6 +34,9 @@ import (
 	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/manifests"
 )
 
+// foreignSelector is the selector of a tenant's own Service.
+var foreignSelector = map[string]string{"app": "mine"}
+
 // The operator only touches objects it controls: it never overwrites
 // an object of someone else that happens to carry a generated name,
 // and it only deletes ServiceMonitors it created itself.
@@ -47,7 +50,7 @@ var _ = Describe("MailServer object ownership", func() {
 		foreign := &corev1.Service{
 			ObjectMeta: metav1.ObjectMeta{Name: postfixObjectName, Namespace: ns},
 			Spec: corev1.ServiceSpec{
-				Selector: map[string]string{"app": "mine"},
+				Selector: foreignSelector,
 				Ports:    []corev1.ServicePort{{Name: "http", Port: 8080}},
 			},
 		}
@@ -64,7 +67,7 @@ var _ = Describe("MailServer object ownership", func() {
 		got := &corev1.Service{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: postfixObjectName, Namespace: ns}, got)).To(Succeed())
 		Expect(got.OwnerReferences).To(BeEmpty())
-		Expect(got.Spec.Selector).To(Equal(map[string]string{"app": "mine"}))
+		Expect(got.Spec.Selector).To(Equal(foreignSelector))
 		Expect(got.Spec.Ports).To(HaveLen(1))
 		Expect(got.Spec.Ports[0].Port).To(Equal(int32(8080)))
 		// No workload was applied on top of the conflict.
@@ -141,6 +144,38 @@ var _ = Describe("MailServer object ownership", func() {
 				DomainAuthorization: AuthorizationAllowlist, EnableInsecureTestFeatures: true,
 			}, "ConfigMap", cm)
 		})
+	})
+
+	// Same for the applied (updatable) kinds: the manager cache does
+	// not hold an unlabelled Service, and the apply must still refuse it.
+	It("does not overwrite a foreign Service the manager cache does not hold", func() {
+		Expect(k8sClient.Create(ctx, &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{Name: postfixObjectName, Namespace: ns},
+			Spec: corev1.ServiceSpec{
+				Selector: foreignSelector,
+				Ports:    []corev1.ServicePort{{Name: "http", Port: 8080}},
+			},
+		})).To(Succeed())
+		createServerG(ns, testServerName, domain, nil)
+		mgr := startManagerG()
+		Expect(mgr.GetCache().WaitForCacheSync(ctx)).To(BeTrue())
+		cached := &corev1.Service{}
+		err := mgr.GetClient().Get(ctx, types.NamespacedName{Name: postfixObjectName, Namespace: ns}, cached)
+		Expect(apierrors.IsNotFound(err)).To(BeTrue(), "the cache must not hold unlabelled Services")
+
+		reconcileServerG(&MailServerReconciler{
+			Client: mgr.GetClient(), Scheme: mgr.GetScheme(), APIReader: mgr.GetAPIReader(),
+			DomainAuthorization: AuthorizationAllowlist, EnableInsecureTestFeatures: true,
+		}, ns, testServerName)
+
+		status, reason, msg := serverConditionG(ns, testServerName, conditionReady)
+		Expect(status).To(Equal(metav1.ConditionFalse))
+		Expect(reason).To(Equal(ReasonOwnershipConflict))
+		Expect(msg).To(ContainSubstring(`Service "` + postfixObjectName + `"`))
+		got := &corev1.Service{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: postfixObjectName, Namespace: ns}, got)).To(Succeed())
+		Expect(got.OwnerReferences).To(BeEmpty())
+		Expect(got.Spec.Selector).To(Equal(foreignSelector))
 	})
 
 	It("keeps updating the objects it controls", func() {
