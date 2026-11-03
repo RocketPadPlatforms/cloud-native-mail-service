@@ -6,7 +6,8 @@ scoped; nothing here is committed.
 - DNS TXT proof of control on `MailDomainGrant` (`verification.dnsTXT`),
   for self-service domain onboarding (see ADR 0003).
 - Additive `MailDomainGrant` fields: `allowedClusterIssuers`,
-  `allowedDNSModes`.
+  `allowedDNSModes`. `allowedClusterIssuers` replaces the all-or-nothing
+  `--allow-cluster-issuers` operator flag (ADR 0003).
 - Make the revocation grace period (15 minutes) configurable.
 - Capsule integration documentation (namespace prefix enforcement for
   grant binding).

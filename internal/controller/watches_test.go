@@ -181,9 +181,9 @@ func startManagerG(setups ...func(ctrl.Manager) error) {
 var _ = Describe("Controller watches", func() {
 	const wait, poll = "20s", "200ms"
 
-	serverCondition := func(ns, name, condType string) func() (string, error) {
+	authorized := func(ns string) func() (string, error) {
 		return func() (string, error) {
-			status, reason, _ := serverConditionG(ns, name, condType)
+			status, reason, _ := serverConditionG(ns, testServerName, ConditionDomainsAuthorized)
 			return string(status) + "/" + reason, nil
 		}
 	}
@@ -196,14 +196,14 @@ var _ = Describe("Controller watches", func() {
 		createDomainG(ns, domain)
 		createServerG(ns, testServerName, domain, nil)
 		startManagerG(mailServerSetup(AuthorizationUnrestricted))
-		Eventually(serverCondition(ns, testServerName, ConditionDomainsAuthorized), wait, poll).
+		Eventually(authorized(ns), wait, poll).
 			Should(Equal("True/" + ReasonAuthorizationDisabled))
 
 		// The competing claim sits in a namespace without any server.
 		// The not-ready server's 30s re-check is far outside the wait,
 		// so only the cross-namespace watch can flip the condition.
 		createDomainG(ns2, domain)
-		Eventually(serverCondition(ns, testServerName, ConditionDomainsAuthorized), wait, poll).
+		Eventually(authorized(ns), wait, poll).
 			Should(Equal("False/" + ReasonDuplicateDomain))
 	})
 
@@ -211,13 +211,13 @@ var _ = Describe("Controller watches", func() {
 		ns, domain := grantFixture()
 		createServerG(ns, testServerName, domain, nil)
 		startManagerG(mailServerSetup(AuthorizationAllowlist))
-		Eventually(serverCondition(ns, testServerName, ConditionDomainsAuthorized), wait, poll).
+		Eventually(authorized(ns), wait, poll).
 			Should(Equal("True/" + ReasonAuthorized))
 
 		Expect(k8sClient.Delete(ctx, &cnmsv1alpha1.MailDomainGrant{
 			ObjectMeta: metav1.ObjectMeta{Name: domain},
 		})).To(Succeed())
-		Eventually(serverCondition(ns, testServerName, ConditionDomainsAuthorized), wait, poll).
+		Eventually(authorized(ns), wait, poll).
 			Should(Equal("False/" + ReasonNotGranted))
 	})
 

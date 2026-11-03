@@ -18,9 +18,11 @@ package controller
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -92,7 +94,17 @@ const (
 	ReasonStaticUsersInvalid = "StaticUsersInvalid"
 	// ReasonApplyFailed is set when applying the data plane fails.
 	ReasonApplyFailed = "ApplyFailed"
+	// ReasonClusterIssuerNotAllowed is set when tls.issuerRef is a
+	// ClusterIssuer and the operator runs without
+	// --allow-cluster-issuers.
+	ReasonClusterIssuerNotAllowed = "ClusterIssuerNotAllowed"
+	// ReasonOwnershipConflict is set when an object the data plane
+	// needs already exists and is controlled by someone else.
+	ReasonOwnershipConflict = "OwnershipConflict"
 )
+
+// clusterIssuerKind is the cert-manager kind of a shared issuer.
+const clusterIssuerKind = "ClusterIssuer"
 
 // requeueInterval is how often a not-ready MailServer is re-checked
 // (certificates are issued, workloads come up, CRDs are installed).
@@ -134,6 +146,12 @@ type MailServerReconciler struct {
 	// EnableInsecureTestFeatures accepts
 	// spec.submission.insecureStaticUsers (Phase 2 test users).
 	EnableInsecureTestFeatures bool
+
+	// AllowClusterIssuers is the --allow-cluster-issuers flag: without
+	// it a MailServer may only reference a namespaced Issuer, because
+	// a shared ClusterIssuer would let any tenant obtain certificates
+	// from it (ADR 0003).
+	AllowClusterIssuers bool
 
 	// APIReader reads without the cache (mgr.GetAPIReader()); the
 	// stale-object cleanup uses it so a lagging cache cannot hide
@@ -209,6 +227,13 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return block(ReasonIpPoolClaimNotAvailable, "ipPoolClaimRef arrives in Phase 7")
 	}
 
+	// A shared ClusterIssuer needs the operator's opt-in (ADR 0003).
+	if server.Spec.TLS.IssuerRef.Kind == clusterIssuerKind && !r.AllowClusterIssuers {
+		return block(ReasonClusterIssuerNotAllowed, fmt.Sprintf(
+			"tls.issuerRef %q is a ClusterIssuer, which the operator does not allow (start it with --allow-cluster-issuers, or use a namespaced Issuer)",
+			server.Spec.TLS.IssuerRef.Name))
+	}
+
 	// Domain authorization (ADR 0003), re-evaluated on every reconcile.
 	grants, domains, err := r.listAuthorizationInput(ctx)
 	if err != nil {
@@ -255,7 +280,15 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	g, err := r.applyDataPlane(ctx, server, authorized, users, certCRDs)
 	if err != nil {
 		log.FromContext(ctx).Error(err, "Could not apply data plane")
-		return block(ReasonApplyFailed, err.Error())
+		reason := applyFailureReason(err)
+		// A transition to not-ready already emits an Event; a conflict
+		// that appears while the server was not ready would not.
+		if reason == ReasonOwnershipConflict && r.Recorder != nil && prevReady != nil &&
+			prevReady.Status == metav1.ConditionFalse &&
+			(prevReady.Reason != reason || prevReady.Message != err.Error()) {
+			r.Recorder.Eventf(server, nil, corev1.EventTypeWarning, reason, "ApplyDataPlane", "%s", err.Error())
+		}
+		return block(reason, err.Error())
 	}
 	r.setValidationCondition(server, g, prevValidated)
 
@@ -517,14 +550,21 @@ func (r *MailServerReconciler) reconcileObservability(ctx context.Context, serve
 		got := &unstructured.UnstructuredList{}
 		got.SetAPIVersion("monitoring.coreos.com/v1")
 		got.SetKind("ServiceMonitorList")
+		// Only monitors this server created are candidates: the
+		// instance label alone also matches a Helm release or
+		// another tool that uses the same name.
 		if err := r.List(ctx, got,
 			client.InNamespace(server.Namespace),
-			client.MatchingLabels{manifests.InstanceLabelKey: server.Name},
+			client.MatchingLabels{
+				manifests.InstanceLabelKey: server.Name,
+				manifests.ManagedByLabel:   "cnms",
+				manifests.ServerLabel:      server.Name,
+			},
 		); err != nil {
 			return metav1.ConditionFalse, "ListFailed", err.Error()
 		}
 		for i := range got.Items {
-			if slices.ContainsFunc(want, func(w client.Object) bool {
+			if !metav1.IsControlledBy(&got.Items[i], server) || slices.ContainsFunc(want, func(w client.Object) bool {
 				return w.GetName() == got.Items[i].GetName()
 			}) {
 				continue
@@ -536,7 +576,7 @@ func (r *MailServerReconciler) reconcileObservability(ctx context.Context, serve
 	}
 	for _, obj := range want {
 		if err := applyObject(ctx, r.Client, r.Scheme, server, obj); err != nil {
-			return metav1.ConditionFalse, ReasonApplyFailed, err.Error()
+			return metav1.ConditionFalse, applyFailureReason(err), err.Error()
 		}
 	}
 	if len(want) > 0 {
@@ -705,10 +745,41 @@ func (r *MailServerReconciler) serversInNamespace(ctx context.Context, ns string
 	return reqs
 }
 
+// ownershipConflictError reports that an object the data plane needs
+// already exists and is not controlled by the MailServer: it belongs
+// to someone else (a tenant's own Service of the same name, an object
+// of another server) and must not be overwritten.
+type ownershipConflictError struct {
+	kind, name string
+}
+
+func (e *ownershipConflictError) Error() string {
+	return fmt.Sprintf("%s %q already exists and is not controlled by this MailServer; rename or delete it", e.kind, e.name)
+}
+
+// applyFailureReason is the condition reason for a failed apply.
+func applyFailureReason(err error) string {
+	if _, ok := stderrors.AsType[*ownershipConflictError](err); ok {
+		return ReasonOwnershipConflict
+	}
+	return ReasonApplyFailed
+}
+
+// kindName returns a readable kind for error messages.
+func kindName(obj client.Object) string {
+	if u, ok := obj.(*unstructured.Unstructured); ok {
+		return u.GetKind()
+	}
+	return strings.TrimPrefix(fmt.Sprintf("%T", obj), "*")
+}
+
 // applyObject creates obj if it does not exist and updates the
 // controller-owned fields if it does. Every object of the data plane
 // set is fully owned by the MailServer (controller owner reference),
-// so replacing the spec is safe.
+// so replacing the spec is safe. An existing object that is not
+// controlled by the MailServer is never overwritten (an
+// ownershipConflictError is returned); the controller reference is
+// set on create only.
 func applyObject(ctx context.Context, c client.Client, scheme *runtime.Scheme, owner, desired client.Object) error {
 	existing := desired.DeepCopyObject().(client.Object)
 	err := c.Get(ctx, client.ObjectKeyFromObject(desired), existing)
@@ -720,6 +791,9 @@ func applyObject(ctx context.Context, c client.Client, scheme *runtime.Scheme, o
 	}
 	if err != nil {
 		return err
+	}
+	if !metav1.IsControlledBy(existing, owner) {
+		return &ownershipConflictError{kind: kindName(desired), name: desired.GetName()}
 	}
 	// spec.volumeClaimTemplates is immutable on update (k8s 1.37).
 	// The API makes the storage sizes immutable (ADR 0010), so the

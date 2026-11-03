@@ -16,7 +16,10 @@ or removed before `v1beta1`.
 1. **Same-namespace references.** All cross-resource references (`directoryRef`,
    `domains`, `outbound.relay.relayRef`, `outbound.direct.ipPoolClaimRef`,
    secret refs) are name-only and resolve within the object's own namespace.
-   No `namespace` fields; no cross-namespace RBAC.
+   No `namespace` fields; no cross-namespace RBAC. (Amended by ADR 0008:
+   `MailServiceAccount.spec.serverRef.namespace` is the one cross-namespace
+   reference, and it only takes effect when the server's namespace allows
+   it.)
 2. **Outbound is exactly one of `direct` or `relay`** (CEL `has()` XOR).
    `direct.ipPoolClaimRef` is optional: without a claim, mail leaves via the
    pods' source addresses. Claims arrive with the IP management phase (7); the

@@ -65,6 +65,7 @@ func main() {
 	var enableHTTP2 bool
 	var domainAuthorization string
 	var enableInsecureTestFeatures bool
+	var allowClusterIssuers bool
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -93,6 +94,10 @@ func main() {
 	flag.BoolVar(&enableInsecureTestFeatures, "enable-insecure-test-features", false,
 		"Accept MailServer.spec.submission.insecureStaticUsers (Phase 2 test "+
 			"users from a Secret with crypt(3) password hashes).")
+	flag.BoolVar(&allowClusterIssuers, "allow-cluster-issuers", false,
+		"Allow MailServers to reference a cert-manager ClusterIssuer in "+
+			"tls.issuerRef (ADR 0003). Off by default: a shared ClusterIssuer "+
+			"would let any tenant obtain certificates from it.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -209,6 +214,7 @@ func main() {
 		Recorder:                   mgr.GetEventRecorder("mailserver-controller"),
 		DomainAuthorization:        authMode,
 		EnableInsecureTestFeatures: enableInsecureTestFeatures,
+		AllowClusterIssuers:        allowClusterIssuers,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "mailserver")
 		os.Exit(1)

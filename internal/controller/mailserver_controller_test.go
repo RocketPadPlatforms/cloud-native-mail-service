@@ -65,6 +65,12 @@ const usersSecretName = "users"
 // testServerName is the MailServer name of the gate and rollout specs.
 const testServerName = "mail"
 
+// issuerKind and prometheusEnabled are spec values used by several specs.
+const (
+	issuerKind        = "Issuer"
+	prometheusEnabled = "enabled"
+)
+
 // tlsCertKey is the certificate key of the TLS Secret.
 const tlsCertKey = "tls.crt"
 
@@ -141,7 +147,7 @@ func newServerG(ns, name, domain string, mutate func(*cnmsv1alpha1.MailServer)) 
 			Outbound:     cnmsv1alpha1.Outbound{Direct: &cnmsv1alpha1.DirectOutbound{}},
 			Domains:      []cnmsv1alpha1.NameReference{{Name: domainLabel(domain)}},
 			TLS: cnmsv1alpha1.TLS{
-				IssuerRef: cnmsv1alpha1.IssuerReference{Kind: "Issuer", Name: "test-issuer"},
+				IssuerRef: cnmsv1alpha1.IssuerReference{Kind: issuerKind, Name: "test-issuer"},
 			},
 		},
 	}
@@ -457,7 +463,7 @@ var _ = Describe("MailServer controller", func() {
 				names = append(names, p.Name)
 			}
 			Expect(names).To(ContainElements(
-				"mail-ingress", "mail-egress", "mail-egress-smtp", "cnms-no-port25-egress"))
+				"mail-ingress", "mail-egress", "mail-egress-smtp", "mail-egress-rspamd"))
 
 			getPDBG(ns, postfixObjectName)
 
@@ -699,7 +705,7 @@ var _ = Describe("MailServer controller", func() {
 		})
 
 		It("requires the CRDs in enabled mode", func() {
-			enabled := "enabled"
+			enabled := prometheusEnabled
 			createServerG(ns, "mail", domain, func(s *cnmsv1alpha1.MailServer) {
 				s.Spec.Observability = &cnmsv1alpha1.Observability{PrometheusOperator: &enabled}
 			})
@@ -718,7 +724,7 @@ var _ = Describe("MailServer controller", func() {
 			if os.Getenv("PROMETHEUS_CRDS") != "1" {
 				return // nothing can exist without the CRDs
 			}
-			enabled := "enabled"
+			enabled := prometheusEnabled
 			createServerG(ns, "mail", domain, func(s *cnmsv1alpha1.MailServer) {
 				s.Spec.Observability = &cnmsv1alpha1.Observability{PrometheusOperator: &enabled}
 			})

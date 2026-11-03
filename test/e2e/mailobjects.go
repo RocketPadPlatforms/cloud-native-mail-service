@@ -207,10 +207,6 @@ kind: Pod
 metadata:
   name: e2e-client
   namespace: cnms-e2e
-  labels:
-    # Excludes the client from the no-port-25 egress floor (the
-    # client must reach Postfix on port 25 for the inbound tests).
-    cnms.rpp.gmbh/managed-by: cnms
 spec:
   containers:
     - name: client

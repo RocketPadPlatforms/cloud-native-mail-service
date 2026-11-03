@@ -1,6 +1,7 @@
 # ADR 0008: Operator-managed users and service accounts
 
-- **Status:** Accepted
+- **Status:** Accepted, amended 2026-11-03 (tenant isolation, see
+  "Amendment" below)
 - **Date:** 2026-10-25
 
 ## Context
@@ -78,6 +79,51 @@ is required today, so a directory-less server cannot be Ready at all.
    accounts": `MailDirectory` (LDAP and SQL) plus `MailUser` and
    `MailServiceAccount`, sharing one passdb/Postfix-map rendering seam and
    one e2e fixture set.
+
+## Amendment: cross-namespace use needs the server's consent
+
+As first written, decision 2 let any namespace obtain sending credentials
+for any `MailServer` by naming it in `spec.serverRef`, and did not tie
+`spec.sender` to a domain the server may use. That contradicts the tenant
+isolation principle ("tenants cannot reference other tenants' resources")
+and ADR 0002, decision 1 ("no `namespace` fields"). Nothing is implemented
+yet, so this amends the design before Phase 3:
+
+1. **The server opts in.** A new optional field
+   `MailServer.spec.serviceAccounts.allowedNamespaces` (a list of namespace
+   names, not selectors, because tenants can label their own namespaces)
+   names the namespaces whose `MailServiceAccount`s may reference the
+   server. The default is empty: only `MailServiceAccount`s in the server's
+   own namespace are accepted. The field is edited by whoever may edit the
+   `MailServer`, so a tenant cannot grant itself access to another
+   tenant's server. A reference from a namespace that is not listed gets
+   `Ready=False, reason=NamespaceNotAllowed`; no Secret, no passdb entry
+   and no NetworkPolicy are created. Removing a namespace from the list
+   revokes its accounts on the next reconcile (the credential Secret is
+   deleted and the account is dropped from the passdb), like a revoked
+   `MailDomainGrant`. The field is added in Phase 3 and is not implemented
+   now.
+2. **The sender must belong to an authorized domain.** `spec.sender` must
+   be an address in a domain of the referenced server that passes the
+   domain authorization of ADR 0003 (the server's authorized subset, not
+   every domain it lists). Otherwise the account is
+   `Ready=False, reason=SenderNotAuthorized`, and an account whose domain
+   is revoked later loses its credential in the same reconcile that drops
+   the domain from the server.
+3. **Reconciling with ADR 0002, decision 1.** `spec.serverRef.namespace` is
+   the single cross-namespace reference in the API. It is a request, not an
+   authorization: it takes effect only when the server's namespace has
+   consented through `allowedNamespaces` (the same two-sided pattern as
+   Gateway API's `ReferenceGrant`). All other references stay
+   same-namespace, and no cross-namespace RBAC is granted to tenants: the
+   operator does the cross-namespace work. When `serverRef.namespace` is
+   omitted it defaults to the account's own namespace, which needs no
+   consent.
+4. **Watches.** The operator maps `MailServer` changes (including
+   `allowedNamespaces` and domain authorization changes) to the accounts
+   that reference the server in other namespaces, and account changes to
+   the server; this joins the cross-namespace mapping already named in the
+   consequences.
 
 ## Consequences
 

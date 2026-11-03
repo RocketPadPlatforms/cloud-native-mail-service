@@ -108,8 +108,9 @@ cannot bypass CNMS even when they can create the underlying objects:
   `DNSEndpoint`s from the operator's own namespace
   (`--namespace=cnms-system`, a tight `--domain-filter`, its own
   `--txt-owner-id`); tenant-created `DNSEndpoint`s elsewhere are ignored.
-- shared `ClusterIssuer`s are intended to be used only through the grant
-  model; tenant-created `Certificate`s are best contained with
+- shared `ClusterIssuer`s are refused unless the operator runs with
+  `--allow-cluster-issuers` (a per-grant allow-list is on the backlog);
+  tenant-created `Certificate`s are best contained with
   cert-manager approver-policy.
 - a documented Kyverno sample can give early rejection at admission time
   and enforce rules the operator cannot (e.g. tenants creating

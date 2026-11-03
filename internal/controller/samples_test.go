@@ -235,7 +235,7 @@ func validMailServer(name string) *cnmsv1alpha1.MailServer {
 			Outbound:     cnmsv1alpha1.Outbound{Direct: &cnmsv1alpha1.DirectOutbound{}},
 			Domains:      []cnmsv1alpha1.NameReference{{Name: "dom"}},
 			TLS: cnmsv1alpha1.TLS{
-				IssuerRef: cnmsv1alpha1.IssuerReference{Kind: "Issuer", Name: "iss"},
+				IssuerRef: cnmsv1alpha1.IssuerReference{Kind: issuerKind, Name: "iss"},
 			},
 		},
 	}

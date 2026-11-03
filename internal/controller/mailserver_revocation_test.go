@@ -73,10 +73,10 @@ func installCertificateCRD() {
 	}).Should(Succeed())
 }
 
-func certificateDNSNamesG(ns, name string) []string {
+func certificateDNSNamesG(ns string) []string {
 	cert := &unstructured.Unstructured{}
 	cert.SetGroupVersionKind(certificateGVK)
-	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: ns}, cert)).To(Succeed())
+	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testServerName, Namespace: ns}, cert)).To(Succeed())
 	names, _, err := unstructured.NestedStringSlice(cert.Object, "spec", "dnsNames")
 	Expect(err).ToNot(HaveOccurred())
 	return names
@@ -131,7 +131,7 @@ var _ = Describe("MailServer domain revocation", func() {
 		status, reason, _ := serverConditionG(ns, testServerName, ConditionDomainsAuthorized)
 		Expect(status).To(Equal(metav1.ConditionTrue))
 		Expect(reason).To(Equal(ReasonAuthorized))
-		Expect(certificateDNSNamesG(ns, testServerName)).To(ConsistOf(domainA, domainB))
+		Expect(certificateDNSNamesG(ns)).To(ConsistOf(domainA, domainB))
 		cf := postfixMainCFG(ns)
 		Expect(cf).To(ContainSubstring("virtual_mailbox_domains = " + minDomain(domainA, domainB) + ", "))
 	})
@@ -154,7 +154,7 @@ var _ = Describe("MailServer domain revocation", func() {
 		cf := postfixMainCFG(ns)
 		Expect(cf).To(ContainSubstring("virtual_mailbox_domains = " + domainA + "\n"))
 		Expect(cf).ToNot(ContainSubstring(domainB))
-		Expect(certificateDNSNamesG(ns, testServerName)).To(ConsistOf(domainA))
+		Expect(certificateDNSNamesG(ns)).To(ConsistOf(domainA))
 	})
 
 	It("renders fail closed when every grant is revoked", func() {
@@ -172,7 +172,7 @@ var _ = Describe("MailServer domain revocation", func() {
 		Expect(cf).ToNot(ContainSubstring("smtpd_sasl_type"))
 		Expect(cf).ToNot(ContainSubstring(domainA))
 		Expect(cf).ToNot(ContainSubstring(domainB))
-		Expect(certificateDNSNamesG(ns, testServerName)).To(ConsistOf(
+		Expect(certificateDNSNamesG(ns)).To(ConsistOf(
 			"mail-postfix." + ns + ".svc.cluster.local"))
 	})
 
@@ -184,7 +184,7 @@ var _ = Describe("MailServer domain revocation", func() {
 
 		status, _, _ := serverConditionG(ns, testServerName, ConditionDomainsAuthorized)
 		Expect(status).To(Equal(metav1.ConditionTrue))
-		Expect(certificateDNSNamesG(ns, testServerName)).To(ConsistOf(domainA, domainB))
+		Expect(certificateDNSNamesG(ns)).To(ConsistOf(domainA, domainB))
 	})
 })
 

@@ -1,0 +1,146 @@
+/*
+Copyright 2026 Rocket Pad Platforms GmbH.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package controller
+
+import (
+	"os"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
+
+	cnmsv1alpha1 "github.com/RocketPadPlatforms/cloud-native-mail-service/api/v1alpha1"
+	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/manifests"
+)
+
+// The operator only touches objects it controls: it never overwrites
+// an object of someone else that happens to carry a generated name,
+// and it only deletes ServiceMonitors it created itself.
+var _ = Describe("MailServer object ownership", func() {
+	var ns, domain string
+	BeforeEach(func() {
+		ns, domain = grantFixture()
+	})
+
+	It("does not overwrite a Service it does not control", func() {
+		foreign := &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{Name: postfixObjectName, Namespace: ns},
+			Spec: corev1.ServiceSpec{
+				Selector: map[string]string{"app": "mine"},
+				Ports:    []corev1.ServicePort{{Name: "http", Port: 8080}},
+			},
+		}
+		Expect(k8sClient.Create(ctx, foreign)).To(Succeed())
+		createServerG(ns, testServerName, domain, nil)
+
+		reconcileServerG(newReconcilerG(AuthorizationAllowlist, true), ns, testServerName)
+
+		status, reason, msg := serverConditionG(ns, testServerName, conditionReady)
+		Expect(status).To(Equal(metav1.ConditionFalse))
+		Expect(reason).To(Equal(ReasonOwnershipConflict))
+		Expect(msg).To(ContainSubstring(postfixObjectName))
+
+		got := &corev1.Service{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: postfixObjectName, Namespace: ns}, got)).To(Succeed())
+		Expect(got.OwnerReferences).To(BeEmpty())
+		Expect(got.Spec.Selector).To(Equal(map[string]string{"app": "mine"}))
+		Expect(got.Spec.Ports).To(HaveLen(1))
+		Expect(got.Spec.Ports[0].Port).To(Equal(int32(8080)))
+		// No workload was applied on top of the conflict.
+		err := k8sClient.Get(ctx, types.NamespacedName{Name: postfixObjectName, Namespace: ns}, &appsv1.StatefulSet{})
+		Expect(apierrors.IsNotFound(err)).To(BeTrue())
+	})
+
+	It("keeps updating the objects it controls", func() {
+		createServerG(ns, testServerName, domain, nil)
+		r := newReconcilerG(AuthorizationAllowlist, true)
+		deployG(r, ns, testServerName)
+
+		svc := &corev1.Service{}
+		key := types.NamespacedName{Name: postfixObjectName, Namespace: ns}
+		Expect(k8sClient.Get(ctx, key, svc)).To(Succeed())
+		svc.Spec.Ports = svc.Spec.Ports[:1]
+		Expect(k8sClient.Update(ctx, svc)).To(Succeed())
+
+		reconcileServerG(r, ns, testServerName)
+		Expect(k8sClient.Get(ctx, key, svc)).To(Succeed())
+		Expect(len(svc.Spec.Ports)).To(BeNumerically(">", 1))
+		status, reason, _ := serverConditionG(ns, testServerName, ConditionDomainsAuthorized)
+		Expect(status).To(Equal(metav1.ConditionTrue))
+		Expect(reason).To(Equal(ReasonAuthorized))
+	})
+
+	Describe("ServiceMonitor cleanup", func() {
+		monitor := func(name string, labels map[string]string) *unstructured.Unstructured {
+			u := &unstructured.Unstructured{}
+			u.SetGroupVersionKind(serviceMonitorGVK)
+			u.SetName(name)
+			u.SetNamespace(ns)
+			u.SetLabels(labels)
+			u.Object["spec"] = map[string]any{
+				"selector":  map[string]any{"matchLabels": map[string]any{"a": "b"}},
+				"endpoints": []any{map[string]any{"port": "metrics"}},
+			}
+			return u
+		}
+		exists := func(name string) bool {
+			u := &unstructured.Unstructured{}
+			u.SetGroupVersionKind(serviceMonitorGVK)
+			err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: ns}, u)
+			return err == nil
+		}
+
+		It("deletes only ServiceMonitors the server controls", func() {
+			if os.Getenv("PROMETHEUS_CRDS") != "1" {
+				Skip("needs the Prometheus Operator CRDs")
+			}
+			instance := map[string]string{manifests.InstanceLabelKey: testServerName}
+			cnms := map[string]string{
+				manifests.InstanceLabelKey: testServerName,
+				manifests.ManagedByLabel:   "cnms",
+				manifests.ServerLabel:      testServerName,
+			}
+			// A Helm release with the same instance label.
+			Expect(k8sClient.Create(ctx, monitor("helm-release", instance))).To(Succeed())
+			// Carries every CNMS label but has no controller reference.
+			Expect(k8sClient.Create(ctx, monitor("lookalike", cnms))).To(Succeed())
+
+			enabled, disabled := prometheusEnabled, "disabled"
+			createServerG(ns, testServerName, domain, func(s *cnmsv1alpha1.MailServer) {
+				s.Spec.Observability = &cnmsv1alpha1.Observability{PrometheusOperator: &enabled}
+			})
+			r := newReconcilerG(AuthorizationAllowlist, true)
+			reconcileServerG(r, ns, testServerName)
+			Expect(listServiceMonitorsG(ns)).To(HaveLen(5)) // 3 of the server, 2 foreign
+
+			mutateServerG(ns, func(s *cnmsv1alpha1.MailServer) {
+				s.Spec.Observability = &cnmsv1alpha1.Observability{PrometheusOperator: &disabled}
+			})
+			reconcileServerG(r, ns, testServerName)
+
+			Expect(exists("helm-release")).To(BeTrue())
+			Expect(exists("lookalike")).To(BeTrue())
+			Expect(listServiceMonitorsG(ns)).To(HaveLen(2))
+		})
+	})
+})

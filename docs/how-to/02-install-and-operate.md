@@ -47,6 +47,7 @@ without an expiry.
 | Flag | Default | Effect |
 |------|---------|--------|
 | `--domain-authorization` | `allowlist` | `allowlist` requires a `MailDomainGrant` covering every domain of a `MailServer` and naming its namespace ([domain authorization](../concepts/domain-authorization.md)); `unrestricted` skips the grant requirement for single-tenant clusters (the operator logs a warning at startup). Uniqueness is enforced in both modes. |
+| `--allow-cluster-issuers` | `false` | Lets a `MailServer` reference a cert-manager `ClusterIssuer` in `spec.tls.issuerRef`. Without the flag such a server is fail-closed (`Ready=False, reason=ClusterIssuerNotAllowed`) and no `Certificate` is created; a namespaced `Issuer` is always allowed. A shared `ClusterIssuer` lets every tenant obtain certificates from it, so enable the flag only on clusters where that is intended. Add it to the manager `args` in `config/manager/manager.yaml` (Kustomize); the Helm chart will expose it as a value (Phase 10). |
 | `--enable-insecure-test-features` | `false` | Accepts `spec.submission.insecureStaticUsers` (Phase 2 test users from a Secret). Without the flag a `MailServer` that sets the field is fail-closed (`Ready=False, reason=InsecureStaticUsersDisabled`). |
 
 ## Status conditions
@@ -62,7 +63,15 @@ the first failing sub-condition:
 | `WorkloadsReady` | every data-plane workload finished its rollout (latest spec observed, all replicas on the desired template and ready) | `Progressing` while converging, `RolloutStalled` after a Deployment exceeds its progress deadline or the workloads stay not ready for 10 minutes (the message lists which) |
 | `Observability` | the Prometheus Operator integration matches `spec.observability.prometheusOperator` (`auto` is the default) | `CRDsRequired` (setting `enabled` without the ServiceMonitor CRDs) |
 | `ClientIPPreserved` | Postfix sees the real client address (postscreen and the per-client rate limits depend on it); informational, never part of `Ready` | `ClusterTrafficPolicy` (`inbound.externalTrafficPolicy: Cluster` on a LoadBalancer Service source-NATs clients, so the rate limits count all senders together; use `Local`) |
-| `Ready` | all of the above (except `ClientIPPreserved`) | propagated reasons, e.g. `DirectoryNotFound`, `StaticUsersInvalid`, `RelayNotAvailable` (Phase 6), `IpPoolClaimNotAvailable` (Phase 7) |
+| `Ready` | all of the above (except `ClientIPPreserved`) | propagated reasons, e.g. `DirectoryNotFound`, `StaticUsersInvalid`, `OwnershipConflict`, `RelayNotAvailable` (Phase 6), `IpPoolClaimNotAvailable` (Phase 7) |
+
+The operator only changes objects it controls. If an object it needs
+(for example a Service named `<server>-postfix`) already exists and has
+no controller reference to the `MailServer`, nothing is overwritten and
+the server reports `Ready=False, reason=OwnershipConflict` with a Warning
+Event naming the object; rename or delete the foreign object. Likewise,
+only ServiceMonitors that carry the CNMS labels and a controller
+reference to the server are ever deleted.
 
 A not-ready `MailServer` is re-checked every 30 seconds (certificates
 get issued, workloads come up, CRDs get installed), a ready one every

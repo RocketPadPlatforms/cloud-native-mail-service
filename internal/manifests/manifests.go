@@ -55,8 +55,9 @@ const (
 	// the cert-reload sidecar (D5).
 	ConfigHashAnnotation = "cnms.rpp.gmbh/config-hash"
 
-	// ManagedByLabel marks CNMS-managed resources; ADR 0006 excludes
-	// labeled pods from the namespace port-25 egress deny.
+	// ManagedByLabel marks CNMS-managed resources. It is a label for
+	// listing and cleanup only: tenants can set it on their own pods,
+	// so no security decision may rest on it (ADR 0006).
 	ManagedByLabel = "cnms.rpp.gmbh/managed-by"
 
 	// appLabel marks the app family of the rendered resources.
@@ -73,8 +74,8 @@ const (
 	// managedByValue marks a resource as CNMS-managed.
 	managedByValue = "cnms"
 
-	// serverLabel carries the MailServer name on pods and policies.
-	serverLabel = "cnms.rpp.gmbh/mailserver"
+	// ServerLabel carries the MailServer name on all its objects.
+	ServerLabel = "cnms.rpp.gmbh/mailserver"
 
 	// TLSCertFile and TLSKeyFile are the cert-manager standard keys.
 	TLSCertFile = "tls.crt"
@@ -224,7 +225,7 @@ func ServiceMonitors(server *cnmsv1alpha1.MailServer) []client.Object {
 				"selector": map[string]any{
 					"matchLabels": map[string]any{
 						appLabel:       appValue,
-						serverLabel:    server.Name,
+						ServerLabel:    server.Name,
 						componentLabel: string(c),
 					},
 				},
@@ -305,7 +306,7 @@ func objectLabels(server *cnmsv1alpha1.MailServer, c render.Component) map[strin
 		InstanceLabelKey:  server.Name,
 		managedByAppLabel: managedByValue,
 		ManagedByLabel:    managedByValue,
-		serverLabel:       server.Name,
+		ServerLabel:       server.Name,
 	}
 	if c != "" {
 		l[componentLabel] = string(c)
@@ -318,7 +319,7 @@ func serverSelector(server *cnmsv1alpha1.MailServer) *metav1.LabelSelector {
 	return &metav1.LabelSelector{
 		MatchLabels: map[string]string{
 			appLabel:    appValue,
-			serverLabel: server.Name,
+			ServerLabel: server.Name,
 		},
 	}
 }
