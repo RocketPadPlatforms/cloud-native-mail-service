@@ -98,7 +98,7 @@ spec:
                     properties:
                       caSecretRef:
                         description: |-
-                          CASSecretRef references a Secret with the CA bundle (key
+                          CASecretRef references a Secret with the CA bundle (key
                           "ca.crt") used to verify the server certificate.
                         properties:
                           name:
@@ -186,7 +186,7 @@ spec:
                     properties:
                       caSecretRef:
                         description: |-
-                          CASSecretRef references a Secret with the CA bundle (key
+                          CASecretRef references a Secret with the CA bundle (key
                           "ca.crt") used to verify the server certificate.
                         properties:
                           name:

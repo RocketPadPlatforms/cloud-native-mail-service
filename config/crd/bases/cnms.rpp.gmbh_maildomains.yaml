@@ -81,10 +81,15 @@ spec:
                         (default 24h)
                       rule: duration(self.interval) >= duration('24h') && (!has(self.overlap)
                         || duration(self.overlap) < duration(self.interval))
-                  selector:
+                  selectorPrefix:
                     default: cnms
-                    description: Selector of the current signing key. Defaults to
-                      "cnms".
+                    description: |-
+                      Prefix of the selector names. The selector of a key is
+                      `<prefix>-<yyyymmdd>`, the UTC date the key was created (rotation
+                      is at most daily), so a rotation publishes a new selector next
+                      to the old one. The selector in use is reported in
+                      status.dkim.selector; only the prefix is configuration.
+                      Defaults to "cnms".
                     maxLength: 30
                     pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$
                     type: string
@@ -257,8 +262,11 @@ spec:
               dkim:
                 description: DKIM reports the current signing state.
                 properties:
-                  keyAge:
-                    description: Age of the active key.
+                  keyCreated:
+                    description: |-
+                      Creation time of the active key. The age is derived from it,
+                      so status does not change on every reconcile.
+                    format: date-time
                     type: string
                   pendingSelector:
                     description: Selector of the key being rolled in, during an overlap.

@@ -73,6 +73,11 @@ const (
 	// hides client addresses from Postfix. It is a warning only: it
 	// never feeds into Ready.
 	ConditionClientIPPreserved = "ClientIPPreserved"
+	// ConditionDedicatedSendingAddress is false when direct outbound
+	// mail leaves from the node's address, which is shared with other
+	// workloads (ADR 0002). It is a warning only: it never feeds into
+	// Ready.
+	ConditionDedicatedSendingAddress = "DedicatedSendingAddress"
 	// ConditionNodeDrainable is false when the Postfix disruption
 	// budget allows no voluntary disruption, so a node drain waits
 	// until the budget or the replica count is changed. It is a
@@ -87,6 +92,9 @@ const (
 	// ReasonDirectoryNotFound is set when the referenced MailDirectory
 	// does not exist.
 	ReasonDirectoryNotFound = "DirectoryNotFound"
+	// ReasonNoUserSource is set when the server has neither a
+	// directoryRef nor static test users.
+	ReasonNoUserSource = "NoUserSource"
 	// ReasonRelayNotAvailable is set for relay outbound (Phase 6).
 	ReasonRelayNotAvailable = "RelayNotAvailable"
 	// ReasonIpPoolClaimNotAvailable is set for a direct outbound with
@@ -308,6 +316,8 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	setCondition(conds, generation, ConditionObservability, obsStatus, obsReason, obsMessage)
 	ipStatus, ipReason, ipMessage := clientIPPreserved(server)
 	setCondition(conds, generation, ConditionClientIPPreserved, ipStatus, ipReason, ipMessage)
+	sendStatus, sendReason, sendMessage := dedicatedSendingAddress(server)
+	setCondition(conds, generation, ConditionDedicatedSendingAddress, sendStatus, sendReason, sendMessage)
 	drainStatus, drainReason, drainMessage := nodeDrainable(server)
 	setCondition(conds, generation, ConditionNodeDrainable, drainStatus, drainReason, drainMessage)
 	if g.want != nil && rollout.ready {
@@ -369,24 +379,30 @@ type blockedBy struct{ reason, message string }
 // static users are only loaded when needed (a fail-closed render has
 // none).
 func (r *MailServerReconciler) preflight(ctx context.Context, server *cnmsv1alpha1.MailServer, needUsers bool) (*blockedBy, []render.StaticUser, error) {
-	// Fail closed when the referenced MailDirectory is missing
-	// (recipient validation and auth are backed by it).
-	err := r.Get(ctx, types.NamespacedName{
-		Name: server.Spec.DirectoryRef.Name, Namespace: server.Namespace,
-	}, &cnmsv1alpha1.MailDirectory{})
-	if errors.IsNotFound(err) {
-		return &blockedBy{ReasonDirectoryNotFound, fmt.Sprintf(
-			"MailDirectory %q not found in namespace %q",
-			server.Spec.DirectoryRef.Name, server.Namespace)}, nil, nil
-	}
-	if err != nil {
-		return nil, nil, err
+	// Fail closed when no user source is configured, or the
+	// referenced MailDirectory is missing (recipient validation and
+	// auth are backed by it).
+	if ref := server.Spec.DirectoryRef; ref != nil {
+		err := r.Get(ctx, types.NamespacedName{Name: ref.Name, Namespace: server.Namespace},
+			&cnmsv1alpha1.MailDirectory{})
+		if errors.IsNotFound(err) {
+			return &blockedBy{ReasonDirectoryNotFound, fmt.Sprintf(
+				"MailDirectory %q not found in namespace %q", ref.Name, server.Namespace)}, nil, nil
+		}
+		if err != nil {
+			return nil, nil, err
+		}
+	} else if sub := server.Spec.Submission; sub == nil || sub.InsecureStaticUsers == nil {
+		// shortcut: MailUser is not counted as a user source, add it
+		// together with the MailUser controller (ADR 0008).
+		return &blockedBy{ReasonNoUserSource,
+			"spec.directoryRef is not set and no other user source exists; set directoryRef"}, nil, nil
 	}
 	// Outbound modes not implemented yet (fail closed).
 	switch {
 	case server.Spec.Outbound.Relay != nil:
 		return &blockedBy{ReasonRelayNotAvailable, "relay outbound arrives in Phase 6"}, nil, nil
-	case server.Spec.Outbound.Direct != nil && server.Spec.Outbound.Direct.IpPoolClaimRef != nil:
+	case server.Spec.Outbound.Direct != nil && server.Spec.Outbound.Direct.IPPoolClaimRef != nil:
 		return &blockedBy{ReasonIpPoolClaimNotAvailable, "ipPoolClaimRef arrives in Phase 7"}, nil, nil
 	}
 	// A shared ClusterIssuer needs the operator's opt-in (ADR 0003).
@@ -532,6 +548,18 @@ func clientIPPreserved(server *cnmsv1alpha1.MailServer) (metav1.ConditionStatus,
 	}
 	return metav1.ConditionTrue, "Preserved",
 		"client addresses reach Postfix unchanged for postscreen and rate limits"
+}
+
+// dedicatedSendingAddress reports whether the outbound mail has its own
+// address: direct delivery without an IP pool claim leaves from the
+// node address, so its reputation is shared with everything else on
+// the node.
+func dedicatedSendingAddress(server *cnmsv1alpha1.MailServer) (metav1.ConditionStatus, string, string) {
+	if d := server.Spec.Outbound.Direct; d != nil && d.IPPoolClaimRef == nil {
+		return metav1.ConditionFalse, "NodeSourceAddress",
+			"direct outbound without ipPoolClaimRef sends from the node address, which other workloads share, so the sender reputation is shared; set outbound.direct.ipPoolClaimRef or use a relay"
+	}
+	return metav1.ConditionTrue, "Dedicated", "outbound mail has its own sending address or goes through a relay"
 }
 
 // nodeDrainable reports whether the Postfix disruption budget lets a

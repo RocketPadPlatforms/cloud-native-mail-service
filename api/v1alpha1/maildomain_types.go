@@ -68,12 +68,17 @@ type MailDomainSpec struct {
 
 // DKIM configures DKIM signing for the domain.
 type DKIM struct {
-	// Selector of the current signing key. Defaults to "cnms".
+	// Prefix of the selector names. The selector of a key is
+	// `<prefix>-<yyyymmdd>`, the UTC date the key was created (rotation
+	// is at most daily), so a rotation publishes a new selector next
+	// to the old one. The selector in use is reported in
+	// status.dkim.selector; only the prefix is configuration.
+	// Defaults to "cnms".
 	// +optional
 	// +kubebuilder:validation:MaxLength=30
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`
 	// +kubebuilder:default="cnms"
-	Selector *string `json:"selector,omitempty"`
+	SelectorPrefix *string `json:"selectorPrefix,omitempty"`
 
 	// Key rotation. When set, the operator rotates the key on the
 	// given interval and publishes the new selector with an overlap
@@ -233,9 +238,10 @@ type DKIMStatus struct {
 	// +optional
 	Selector string `json:"selector,omitempty"`
 
-	// Age of the active key.
+	// Creation time of the active key. The age is derived from it,
+	// so status does not change on every reconcile.
 	// +optional
-	KeyAge *metav1.Duration `json:"keyAge,omitempty"`
+	KeyCreated *metav1.Time `json:"keyCreated,omitempty"`
 
 	// Selector of the key being rolled in, during an overlap.
 	// +optional

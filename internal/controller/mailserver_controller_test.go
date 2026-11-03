@@ -146,7 +146,7 @@ func newServerG(ns, name, domain string, mutate func(*cnmsv1alpha1.MailServer)) 
 	s := &cnmsv1alpha1.MailServer{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 		Spec: cnmsv1alpha1.MailServerSpec{
-			DirectoryRef: cnmsv1alpha1.NameReference{Name: directoryName},
+			DirectoryRef: &cnmsv1alpha1.NameReference{Name: directoryName},
 			Outbound:     cnmsv1alpha1.Outbound{Direct: &cnmsv1alpha1.DirectOutbound{}},
 			Domains:      []cnmsv1alpha1.NameReference{{Name: domainLabel(domain)}},
 			TLS: cnmsv1alpha1.TLS{
@@ -586,6 +586,15 @@ var _ = Describe("MailServer controller", func() {
 			Expect(status).To(Equal(metav1.ConditionTrue))
 		})
 
+		It("warns about direct outbound from the node address without failing Ready", func() {
+			reconcile("mail", nil)
+			status, reason, _ := serverConditionG(ns, "mail", ConditionDedicatedSendingAddress)
+			Expect(status).To(Equal(metav1.ConditionFalse))
+			Expect(reason).To(Equal("NodeSourceAddress"))
+			_, readyReason, _ := serverConditionG(ns, "mail", conditionReady)
+			Expect(readyReason).ToNot(Equal("NodeSourceAddress"))
+		})
+
 		It("reports a full percentage budget as blocking node drains", func() {
 			pct := intstr.FromString("100%")
 			reconcile("mail", func(s *cnmsv1alpha1.MailServer) {
@@ -677,6 +686,32 @@ var _ = Describe("MailServer controller", func() {
 			for _, cm := range configMapsG(ns, "dovecot") {
 				Expect(cm.Data).ToNot(HaveKey("users"))
 			}
+		})
+
+		It("renders static users without a directoryRef", func() {
+			createUsersSecretG(ns, validUsers)
+			createServerG(ns, "mail", domain, func(s *cnmsv1alpha1.MailServer) {
+				s.Spec.DirectoryRef = nil
+				s.Spec.Submission = &cnmsv1alpha1.Submission{
+					InsecureStaticUsers: &cnmsv1alpha1.InsecureStaticUsers{SecretName: usersSecretName},
+				}
+			})
+			reconcileServerG(newReconcilerG(AuthorizationAllowlist, true), ns, "mail")
+
+			_, readyReason, _ := serverConditionG(ns, "mail", conditionReady)
+			Expect(readyReason).ToNot(Equal(ReasonNoUserSource))
+			Expect(secretsG(ns, "dovecot")).To(HaveLen(1))
+		})
+
+		It("is not ready without any user source", func() {
+			createServerG(ns, "mail", domain, func(s *cnmsv1alpha1.MailServer) {
+				s.Spec.DirectoryRef = nil
+			})
+			reconcileServerG(newReconcilerG(AuthorizationAllowlist, true), ns, "mail")
+
+			status, reason, _ := serverConditionG(ns, "mail", conditionReady)
+			Expect(status).To(Equal(metav1.ConditionFalse))
+			Expect(reason).To(Equal(ReasonNoUserSource))
 		})
 
 		It("fails closed for an invalid password hash", func() {

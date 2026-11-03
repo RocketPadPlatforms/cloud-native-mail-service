@@ -9,7 +9,7 @@ spec:
   domain: example.org
   dnsMode: manual
   dkim:
-    selector: cnms
+    selectorPrefix: cnms
     rotation:
       interval: 2160h
       overlap: 24h
