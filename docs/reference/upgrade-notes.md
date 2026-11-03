@@ -15,10 +15,25 @@ prune the old field names.
 ### API fields
 
 - **`MailDomain.spec.dkim.selector` is now `selectorPrefix`.** The
-  selector of a key is `<prefix>-<yyyymmdd>`; the selector in use is
-  `status.dkim.selector`. Rename the field in your manifests.
-- **`MailDomain.status.dkim.keyAge` is now `keyCreated`**, a timestamp
-  instead of a duration.
+  selector of a key is `<prefix>-<yyyymmdd>`; the selectors in use are
+  in `status.dkim`. Rename the field in your manifests. The CRD no
+  longer defaults it (the operator uses `cnms`), because it must stay
+  unset when `keys` is used.
+- **`MailDomain.status.dkim` is a list of keys.** The fields `selector`,
+  `keyAge` (a duration) and `pendingSelector` are replaced by `active`,
+  `pending` and `retiring` (each key with `selector`, `algorithm` and a
+  `keyCreated` timestamp; retiring keys also have `until`) and
+  `nextRotation`.
+- **`MailDomain.spec.dkim.rotation.overlap` defaults to 120h** (was
+  24h), which covers the Postfix queue lifetime of 5 days. An interval
+  of 5 days or less is rejected unless `overlap` is set to a shorter
+  value.
+- **`MailDomain.spec.dmarc.testing` publishes `t=y`** with its RFC 9989
+  meaning (receivers apply the policy one level lower), not "evaluated
+  but not enforced".
+- **`MailDomain.spec.tlsRpt.enabled` requires a report address** in
+  `tlsRpt.rua` or `dmarc.rua`; such an object is rejected at admission.
+- **A `MailDomain` name is limited to 63 characters.**
 - **`MailDomain.status.mtaSts.policyId` is a string**, derived from the
   policy content (a truncated SHA-256), no longer an increasing integer.
 - **`MailDomain.status.records` is an atomic list**, no longer a map

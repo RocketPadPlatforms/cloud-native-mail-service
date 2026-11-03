@@ -1,0 +1,52 @@
+# Bring your own DKIM keys, the recommended production setup: the keys
+# stay in GitOps (SOPS, sealed secrets) or an external secret store, so
+# a restore needs no key recovery. This replaces
+# cnms_v1alpha1_maildomain.yaml (same domain), so it is not part of the
+# kustomization.
+#
+# Rotation: publish the next key with signing false, wait until the
+# status shows its record verified, then flip the flags in one change and
+# remove the old key after the overlap (at least 5 days, the Postfix
+# queue lifetime).
+apiVersion: cnms.rpp.gmbh/v1alpha1
+kind: MailDomain
+metadata:
+  labels:
+    app.kubernetes.io/name: cloud-native-mail-service
+    app.kubernetes.io/managed-by: kustomize
+  name: maildomain-byo-sample
+spec:
+  domain: example.org
+  dkim:
+    keys:
+      - selector: s2026a
+        secretRef:
+          name: example-org-dkim
+          key: s2026a.key
+        signing: true
+      - selector: s2027a
+        secretRef:
+          name: example-org-dkim
+          key: s2027a.key
+        signing: false
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  labels:
+    app.kubernetes.io/name: cloud-native-mail-service
+    app.kubernetes.io/managed-by: kustomize
+  name: example-org-dkim
+type: Opaque
+stringData:
+  # Placeholders. Use an RSA key of at least 2048 bits or an Ed25519 key
+  # in PEM form (for example from `openssl genpkey`), and create the
+  # Secret from your secret store instead of committing it.
+  s2026a.key: |
+    -----BEGIN PRIVATE KEY-----
+    REPLACE-WITH-THE-PEM-ENCODED-SIGNING-KEY
+    -----END PRIVATE KEY-----
+  s2027a.key: |
+    -----BEGIN PRIVATE KEY-----
+    REPLACE-WITH-THE-PEM-ENCODED-NEXT-KEY
+    -----END PRIVATE KEY-----

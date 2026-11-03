@@ -52,14 +52,77 @@ spec:
               dkim:
                 description: DKIM signing configuration.
                 properties:
+                  ed25519:
+                    description: |-
+                      Ed25519 adds a second signature with an Ed25519 key (RFC 8463)
+                      next to the RSA one. Receivers that do not know Ed25519 ignore
+                      it. Defaults to false; not allowed together with keys.
+                    type: boolean
+                  keys:
+                    description: |-
+                      Keys lists your own keys by reference (bring your own keys, the
+                      recommended production setup: the keys live in GitOps or an
+                      external secret store). It replaces key generation. Rotate by
+                      publishing the new key with signing false, waiting until the
+                      status shows its record verified, flipping the signing flags in
+                      one change and removing the old key after the overlap. Each
+                      Secret value is a PEM (or base64) private key: RSA of at least
+                      2048 bits or Ed25519.
+                    items:
+                      description: DKIMKey references one DKIM private key.
+                      properties:
+                        secretRef:
+                          description: |-
+                            SecretRef is the Secret key (same namespace) that holds the
+                            private key.
+                          properties:
+                            key:
+                              description: Key in the Secret data.
+                              maxLength: 253
+                              pattern: ^[-._a-zA-Z0-9]+$
+                              type: string
+                            name:
+                              description: Name of the Secret.
+                              maxLength: 253
+                              pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                              type: string
+                          required:
+                          - key
+                          - name
+                          type: object
+                        selector:
+                          description: |-
+                            Selector of the key: a DNS label. The record is published at
+                            `<selector>._domainkey.<domain>`.
+                          maxLength: 63
+                          pattern: ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$
+                          type: string
+                        signing:
+                          default: true
+                          description: |-
+                            Signing is true when the key signs outgoing mail. A key with
+                            signing false is only published, so that receivers know it
+                            before it takes over. Defaults to true.
+                          type: boolean
+                      required:
+                      - secretRef
+                      - selector
+                      type: object
+                    maxItems: 8
+                    minItems: 1
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - selector
+                    x-kubernetes-list-type: map
                   rotation:
                     description: |-
-                      Key rotation. When set, the operator rotates the key on the
-                      given interval and publishes the new selector with an overlap
-                      so that both selectors stay valid during the switch. Rotation
-                      progress (schedule, start times) is recorded in the
-                      "cnms.rpp.gmbh/rotation" annotation on the resource, because it
-                      must survive a restore without status.
+                      Key rotation. When set, the operator rotates the generated keys
+                      on the given interval and publishes the new selector with an
+                      overlap so that both selectors stay valid during the switch.
+                      Rotation progress (which keys are active, when a retiring key
+                      ends) is recorded in the "cnms.rpp.gmbh/rotation" annotation on
+                      the resource, because it must survive a restore without status.
+                      Not allowed together with keys.
                     properties:
                       interval:
                         description: Interval after which the key is rotated. At least
@@ -67,38 +130,62 @@ spec:
                         maxLength: 32
                         type: string
                       overlap:
-                        default: 24h0m0s
+                        default: 120h0m0s
                         description: |-
                           Overlap during which the old and the new selector are both
-                          valid. Defaults to 24h; must be shorter than the interval.
+                          valid. It has to cover the Postfix queue lifetime (5 days):
+                          deferred mail is verified on delivery, possibly days after it was
+                          signed. Defaults to 120h; must be shorter than the interval, so
+                          an interval of 5 days or less needs an explicit overlap.
                         maxLength: 32
                         type: string
+                        x-kubernetes-validations:
+                        - message: overlap must be positive
+                          rule: duration(self) > duration('0s')
                     required:
                     - interval
                     type: object
                     x-kubernetes-validations:
                     - message: interval must be at least 24h and longer than the overlap
-                        (default 24h)
+                        (default 120h); set overlap explicitly for an interval of
+                        5 days or less
                       rule: duration(self.interval) >= duration('24h') && (!has(self.overlap)
                         || duration(self.overlap) < duration(self.interval))
                   selectorPrefix:
-                    default: cnms
                     description: |-
-                      Prefix of the selector names. The selector of a key is
-                      `<prefix>-<yyyymmdd>`, the UTC date the key was created (rotation
-                      is at most daily), so a rotation publishes a new selector next
-                      to the old one. The selector in use is reported in
-                      status.dkim.selector; only the prefix is configuration.
-                      Defaults to "cnms".
+                      Prefix of the selector names of generated keys. The RSA selector
+                      is `<prefix>-<yyyymmdd>` and the Ed25519 selector
+                      `<prefix>-ed25519-<yyyymmdd>`, the UTC date the key was created
+                      (rotation is at most daily), so a rotation publishes a new
+                      selector next to the old one. The selectors in use are reported
+                      in status.dkim. Defaults to "cnms" when the operator generates
+                      the keys; not allowed together with keys.
                     maxLength: 30
                     pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$
                     type: string
                 type: object
+                x-kubernetes-validations:
+                - message: 'keys excludes rotation, ed25519 and selectorPrefix: with
+                    your own keys you own the selectors and the schedule'
+                  rule: '!has(self.keys) || !(has(self.rotation) || has(self.ed25519)
+                    || has(self.selectorPrefix))'
+                - message: at least one key must have signing set to true
+                  rule: '!has(self.keys) || self.keys.exists(k, !has(k.signing) ||
+                    k.signing)'
               dmarc:
                 description: |-
                   DMARC policy. Records published by CNMS use DMARC1 semantics
                   (RFC 9989-9991).
                 properties:
+                  nonExistentSubdomainPolicy:
+                    description: |-
+                      Policy for non-existent subdomains (np, RFC 9989). Omitted by
+                      default, so they follow subdomainPolicy, then policy.
+                    enum:
+                    - none
+                    - quarantine
+                    - reject
+                    type: string
                   policy:
                     default: none
                     description: Enforcement policy. Defaults to "none".
@@ -125,11 +212,23 @@ spec:
                     maxLength: 254
                     pattern: ^[^\x00-\x20\x7f:;,"'!@<>?%\\]+@[a-zA-Z0-9]([-a-zA-Z0-9]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([-a-zA-Z0-9]{0,61}[a-zA-Z0-9])?)+$
                     type: string
+                  subdomainPolicy:
+                    description: |-
+                      Policy for existing subdomains (sp). Omitted by default, so the
+                      subdomains follow policy.
+                    enum:
+                    - none
+                    - quarantine
+                    - reject
+                    type: string
                   testing:
                     default: false
                     description: |-
-                      Testing mode: the t= tag is set, so policies are evaluated but
-                      not enforced. Defaults to false.
+                      Testing mode: publishes t=y (RFC 9989). Receivers that implement
+                      it apply the policy one level lower (reject as quarantine,
+                      quarantine as none); it has no effect on none. The Rspamd of the
+                      data plane ignores t on the records of inbound mail (ADR 0012).
+                      Defaults to false.
                     type: boolean
                 type: object
               dnsMode:
@@ -159,7 +258,7 @@ spec:
                     domain
                   rule: self == oldSelf
               mtaSts:
-                description: MTA-STS policy publication.
+                description: MTA-STS policy reporting. CNMS does not serve the policy.
                 properties:
                   enabled:
                     default: false
@@ -172,6 +271,71 @@ spec:
                       `https://mta-sts.<domain>/.well-known/mta-sts.txt` with a valid
                       public certificate.
                     type: boolean
+                  mode:
+                    default: testing
+                    description: |-
+                      Mode of the reported policy: "testing" (default; senders report
+                      failures but still deliver), "enforce" or "none".
+                    enum:
+                    - testing
+                    - enforce
+                    - none
+                    type: string
+                type: object
+              spf:
+                description: 'SPF record generation: the sending sources of the domain.'
+                properties:
+                  include:
+                    description: |-
+                      Domains whose SPF records are included (include: mechanisms), for
+                      example the one of a mail provider. At most 5: SPF allows ten
+                      DNS lookups in total (RFC 7208), and CNMS does not follow the
+                      includes.
+                    items:
+                      maxLength: 253
+                      pattern: ^([a-z0-9_]([a-z0-9_-]{0,61}[a-z0-9_])?[.])+[a-z]([a-z0-9-]{0,61}[a-z0-9])?$
+                      type: string
+                    maxItems: 5
+                    type: array
+                    x-kubernetes-list-type: set
+                  ip4:
+                    description: |-
+                      IPv4 addresses or CIDR ranges allowed to send for the domain
+                      (ip4: mechanisms).
+                    items:
+                      maxLength: 64
+                      type: string
+                    maxItems: 16
+                    type: array
+                    x-kubernetes-list-type: set
+                    x-kubernetes-validations:
+                    - message: every entry must be an IPv4 address or CIDR
+                      rule: self.all(a, (isIP(a) && ip(a).family() == 4) || (isCIDR(a)
+                        && cidr(a).ip().family() == 4))
+                  ip6:
+                    description: |-
+                      IPv6 addresses or CIDR ranges allowed to send for the domain
+                      (ip6: mechanisms).
+                    items:
+                      maxLength: 64
+                      type: string
+                    maxItems: 16
+                    type: array
+                    x-kubernetes-list-type: set
+                    x-kubernetes-validations:
+                    - message: every entry must be an IPv6 address or CIDR
+                      rule: self.all(a, (isIP(a) && ip(a).family() == 6) || (isCIDR(a)
+                        && cidr(a).ip().family() == 6))
+                  qualifier:
+                    default: softfail
+                    description: |-
+                      Result for senders not listed: "softfail" (~all, default), "fail"
+                      (-all) or "neutral" (?all).
+                    enum:
+                    - softfail
+                    - fail
+                    - neutral
+                    type: string
                 type: object
               tlsRpt:
                 description: TLS-RPT reporting.
@@ -193,14 +357,25 @@ spec:
             required:
             - domain
             type: object
+            x-kubernetes-validations:
+            - message: tlsRpt.enabled requires a report address in tlsRpt.rua or dmarc.rua
+              rule: '!has(self.tlsRpt) || !has(self.tlsRpt.enabled) || !self.tlsRpt.enabled
+                || has(self.tlsRpt.rua) || (has(self.dmarc) && has(self.dmarc.rua))'
           status:
             description: status defines the observed state of the MailDomain
             properties:
               conditions:
                 description: |-
-                  Conditions represent the current state of the MailDomain. The
-                  "Ready" condition is true when the required records are
-                  published and verified.
+                  Conditions represent the current state of the MailDomain:
+                  Authorized (the domain is granted to the namespace and unique),
+                  DKIMKeysValid (every key is present and usable), DKIMRotation
+                  (false while a new key waits for its DNS record),
+                  RecordsVerified (a lookup found the required records),
+                  DNSPublished (the DNSEndpoint is managed, externalDNS mode),
+                  SPFReady (an SPF record can be generated), MTASTSReady (a policy
+                  exists, when MTA-STS is enabled) and Ready. "Ready" is true when
+                  the domain is authorized, the DKIM keys are valid and every
+                  required record is verified.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -262,18 +437,115 @@ spec:
               dkim:
                 description: DKIM reports the current signing state.
                 properties:
-                  keyCreated:
+                  active:
+                    description: 'Active keys: the ones that sign, at most one per
+                      algorithm.'
+                    items:
+                      description: DKIMKeyStatus describes one DKIM key.
+                      properties:
+                        algorithm:
+                          description: Algorithm of the key.
+                          enum:
+                          - rsa
+                          - ed25519
+                          type: string
+                        keyCreated:
+                          description: |-
+                            Creation time of the key. The age is derived from it, so status
+                            does not change on every reconcile. Unset for your own keys.
+                          format: date-time
+                          type: string
+                        selector:
+                          description: Selector of the key.
+                          maxLength: 63
+                          type: string
+                        until:
+                          description: Time a retiring key leaves DNS. Set only for
+                            retiring keys.
+                          format: date-time
+                          type: string
+                      required:
+                      - algorithm
+                      - selector
+                      type: object
+                    maxItems: 2
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  nextRotation:
                     description: |-
-                      Creation time of the active key. The age is derived from it,
-                      so status does not change on every reconcile.
+                      Time the next generated key is created. Unset without rotation
+                      and with your own keys.
                     format: date-time
                     type: string
-                  pendingSelector:
-                    description: Selector of the key being rolled in, during an overlap.
-                    type: string
-                  selector:
-                    description: Selector of the active key.
-                    type: string
+                  pending:
+                    description: 'Pending keys: published and waiting for a verified
+                      record.'
+                    items:
+                      description: DKIMKeyStatus describes one DKIM key.
+                      properties:
+                        algorithm:
+                          description: Algorithm of the key.
+                          enum:
+                          - rsa
+                          - ed25519
+                          type: string
+                        keyCreated:
+                          description: |-
+                            Creation time of the key. The age is derived from it, so status
+                            does not change on every reconcile. Unset for your own keys.
+                          format: date-time
+                          type: string
+                        selector:
+                          description: Selector of the key.
+                          maxLength: 63
+                          type: string
+                        until:
+                          description: Time a retiring key leaves DNS. Set only for
+                            retiring keys.
+                          format: date-time
+                          type: string
+                      required:
+                      - algorithm
+                      - selector
+                      type: object
+                    maxItems: 8
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  retiring:
+                    description: |-
+                      Retiring keys: replaced by an active key, published until their
+                      overlap ends.
+                    items:
+                      description: DKIMKeyStatus describes one DKIM key.
+                      properties:
+                        algorithm:
+                          description: Algorithm of the key.
+                          enum:
+                          - rsa
+                          - ed25519
+                          type: string
+                        keyCreated:
+                          description: |-
+                            Creation time of the key. The age is derived from it, so status
+                            does not change on every reconcile. Unset for your own keys.
+                          format: date-time
+                          type: string
+                        selector:
+                          description: Selector of the key.
+                          maxLength: 63
+                          type: string
+                        until:
+                          description: Time a retiring key leaves DNS. Set only for
+                            retiring keys.
+                          format: date-time
+                          type: string
+                      required:
+                      - algorithm
+                      - selector
+                      type: object
+                    maxItems: 8
+                    type: array
+                    x-kubernetes-list-type: atomic
                 type: object
               mtaSts:
                 description: MTAStS reports the published policy state.
@@ -338,6 +610,11 @@ spec:
         required:
         - spec
         type: object
+        x-kubernetes-validations:
+        - message: 'the MailDomain name must be at most 63 characters: it is a label
+            value on the DKIM key Secrets, whose names (<name>-dkim-<selector>) then
+            stay within 116 characters'
+          rule: size(self.metadata.name) <= 63
     served: true
     storage: true
     subresources:
