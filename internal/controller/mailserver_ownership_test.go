@@ -23,6 +23,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -58,7 +59,7 @@ var _ = Describe("MailServer object ownership", func() {
 		status, reason, msg := serverConditionG(ns, testServerName, conditionReady)
 		Expect(status).To(Equal(metav1.ConditionFalse))
 		Expect(reason).To(Equal(ReasonOwnershipConflict))
-		Expect(msg).To(ContainSubstring(postfixObjectName))
+		Expect(msg).To(ContainSubstring(`Service "` + postfixObjectName + `"`))
 
 		got := &corev1.Service{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: postfixObjectName, Namespace: ns}, got)).To(Succeed())
@@ -69,6 +70,53 @@ var _ = Describe("MailServer object ownership", func() {
 		// No workload was applied on top of the conflict.
 		err := k8sClient.Get(ctx, types.NamespacedName{Name: postfixObjectName, Namespace: ns}, &appsv1.StatefulSet{})
 		Expect(apierrors.IsNotFound(err)).To(BeTrue())
+	})
+
+	// The immutable configuration and the validation Jobs are named by
+	// their content, so a tenant could pre-create them: a Job that
+	// "passed" or a ConfigMap with other content.
+	Describe("pre-created content-named objects", func() {
+		var plane *manifests.DataPlane
+		BeforeEach(func() {
+			createServerG(ns, testServerName, domain, nil)
+			server := &cnmsv1alpha1.MailServer{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testServerName, Namespace: ns}, server)).To(Succeed())
+			var err error
+			plane, err = renderDataPlane(server, []string{domain}, nil)
+			Expect(err).ToNot(HaveOccurred())
+		})
+
+		expectConflict := func(kind, name string) {
+			reconcileServerG(newReconcilerG(AuthorizationAllowlist, true), ns, testServerName)
+			status, reason, msg := serverConditionG(ns, testServerName, conditionReady)
+			Expect(status).To(Equal(metav1.ConditionFalse))
+			Expect(reason).To(Equal(ReasonOwnershipConflict))
+			Expect(msg).To(ContainSubstring(kind + ` "` + name + `"`))
+			err := k8sClient.Get(ctx, types.NamespacedName{Name: postfixObjectName, Namespace: ns}, &appsv1.StatefulSet{})
+			Expect(apierrors.IsNotFound(err)).To(BeTrue())
+		}
+
+		It("does not accept a foreign validation Job as the result", func() {
+			want := plane.Validations[0].Job
+			foreign := &batchv1.Job{
+				ObjectMeta: metav1.ObjectMeta{Name: want.Name, Namespace: ns},
+				Spec:       *want.Spec.DeepCopy(),
+			}
+			Expect(k8sClient.Create(ctx, foreign)).To(Succeed())
+			finishJobG(foreign, true)
+
+			expectConflict("Job", want.Name)
+		})
+
+		It("does not accept a foreign ConfigMap in place of the configuration", func() {
+			name := plane.Configs[0].GetName()
+			Expect(k8sClient.Create(ctx, &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+				Data:       map[string]string{"main.cf": "# not the rendered configuration"},
+			})).To(Succeed())
+
+			expectConflict("ConfigMap", name)
+		})
 	})
 
 	It("keeps updating the objects it controls", func() {

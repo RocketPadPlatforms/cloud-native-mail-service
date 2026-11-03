@@ -17,6 +17,7 @@ limitations under the License.
 package controller
 
 import (
+	"fmt"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -123,6 +124,7 @@ var _ = Describe("MailServer domain revocation", func() {
 			s.Spec.Domains = append(s.Spec.Domains, cnmsv1alpha1.NameReference{Name: domainLabel(domainB)})
 			s.Spec.Mailboxes = &cnmsv1alpha1.Mailboxes{Enabled: new(true)}
 		})
+		createTLSSecretG(ns, testServerName+"-tls")
 		r = newReconcilerG(AuthorizationAllowlist, true)
 		settle()
 	})
@@ -145,8 +147,16 @@ var _ = Describe("MailServer domain revocation", func() {
 		Expect(status).To(Equal(metav1.ConditionFalse))
 		Expect(reason).To(Equal(ReasonPartiallyAuthorized))
 		Expect(msg).To(ContainSubstring(domainB))
-		// Ready reports the unmet part of the spec.
+		Expect(msg).To(ContainSubstring("once the new configuration is rolled out"))
+		// While the new revision rolls out the revoked domain is
+		// still served, so Ready does not claim otherwise.
 		readyStatus, readyReason, _ := serverConditionG(ns, testServerName, conditionReady)
+		Expect(readyStatus).To(Equal(metav1.ConditionFalse))
+		Expect(readyReason).To(Equal(ReasonProgressing))
+		// Once rolled out, Ready reports the unmet part of the spec.
+		convergeWorkloadsG(ns)
+		reconcileServerG(r, ns, testServerName)
+		readyStatus, readyReason, _ = serverConditionG(ns, testServerName, conditionReady)
 		Expect(readyStatus).To(Equal(metav1.ConditionFalse))
 		Expect(readyReason).To(Equal(ReasonPartiallyAuthorized))
 
@@ -155,6 +165,14 @@ var _ = Describe("MailServer domain revocation", func() {
 		Expect(cf).To(ContainSubstring("virtual_mailbox_domains = " + domainA + "\n"))
 		Expect(cf).ToNot(ContainSubstring(domainB))
 		Expect(certificateDNSNamesG(ns)).To(ConsistOf(domainA))
+	})
+
+	It("reports the validation, not the revocation, until the new configuration is ready", func() {
+		revoke(domainB)
+		reconcileServerG(r, ns, testServerName)
+
+		_, reason, _ := serverConditionG(ns, testServerName, conditionReady)
+		Expect(reason).To(Equal(ReasonValidatingConfig))
 	})
 
 	It("renders fail closed when every grant is revoked", func() {
@@ -185,6 +203,167 @@ var _ = Describe("MailServer domain revocation", func() {
 		status, _, _ := serverConditionG(ns, testServerName, ConditionDomainsAuthorized)
 		Expect(status).To(Equal(metav1.ConditionTrue))
 		Expect(certificateDNSNamesG(ns)).To(ConsistOf(domainA, domainB))
+	})
+
+	// The tenant controls the inputs below; none of them may keep a
+	// revocation from reaching the data plane.
+	expectFailClosed := func() {
+		cf := postfixMainCFG(ns)
+		Expect(cf).ToNot(ContainSubstring("virtual_mailbox_domains"))
+		Expect(cf).ToNot(ContainSubstring(domainA))
+		Expect(cf).ToNot(ContainSubstring(domainB))
+	}
+
+	It("keeps serving while the MailDirectory is missing and nothing is revoked", func() {
+		Expect(k8sClient.Delete(ctx, &cnmsv1alpha1.MailDirectory{
+			ObjectMeta: metav1.ObjectMeta{Name: directoryName, Namespace: ns},
+		})).To(Succeed())
+		settle()
+
+		_, reason, _ := serverConditionG(ns, testServerName, conditionReady)
+		Expect(reason).To(Equal(ReasonDirectoryNotFound))
+		Expect(postfixMainCFG(ns)).To(ContainSubstring(domainB))
+	})
+
+	It("revokes a domain although the MailDirectory is missing", func() {
+		Expect(k8sClient.Delete(ctx, &cnmsv1alpha1.MailDirectory{
+			ObjectMeta: metav1.ObjectMeta{Name: directoryName, Namespace: ns},
+		})).To(Succeed())
+		revoke(domainB)
+		settle()
+
+		expectFailClosed()
+		_, reason, _ := serverConditionG(ns, testServerName, conditionReady)
+		Expect(reason).To(Equal(ReasonDirectoryNotFound))
+	})
+
+	It("revokes a domain and drops the Certificate although the ClusterIssuer is refused", func() {
+		mutateServerG(ns, func(s *cnmsv1alpha1.MailServer) { s.Spec.TLS.IssuerRef.Kind = clusterIssuerKind })
+		settle()
+		// Refused, but nothing is revoked: the running data plane stays.
+		Expect(certificateDNSNamesG(ns)).To(ConsistOf(domainA, domainB))
+
+		revoke(domainB)
+		settle()
+
+		expectFailClosed()
+		_, reason, _ := serverConditionG(ns, testServerName, conditionReady)
+		Expect(reason).To(Equal(ReasonClusterIssuerNotAllowed))
+		cert := &unstructured.Unstructured{}
+		cert.SetGroupVersionKind(certificateGVK)
+		err := k8sClient.Get(ctx, types.NamespacedName{Name: testServerName, Namespace: ns}, cert)
+		Expect(apierrors.IsNotFound(err)).To(BeTrue())
+	})
+
+	It("revokes a domain although the users Secret is broken", func() {
+		createUsersSecretG(ns,
+			"users:\n  - username: testuser\n    passwordHash: '$6$salt$hash'\n    mailbox: testuser@example.org\n")
+		mutateServerG(ns, func(s *cnmsv1alpha1.MailServer) {
+			s.Spec.Submission = &cnmsv1alpha1.Submission{
+				InsecureStaticUsers: &cnmsv1alpha1.InsecureStaticUsers{SecretName: usersSecretName},
+			}
+		})
+		settle()
+		Expect(k8sClient.Delete(ctx, &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: usersSecretName, Namespace: ns},
+		})).To(Succeed())
+		revoke(domainB)
+		settle()
+
+		expectFailClosed()
+		_, reason, _ := serverConditionG(ns, testServerName, conditionReady)
+		Expect(reason).To(Equal(ReasonStaticUsersInvalid))
+	})
+
+	// failClosedJobsG names the validation Jobs of the fail-closed
+	// render, so a spec can finish those and leave the others.
+	failClosedJobsG := func() map[string]bool {
+		server := &cnmsv1alpha1.MailServer{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testServerName, Namespace: ns}, server)).To(Succeed())
+		plane, err := renderDataPlane(server, nil, nil)
+		Expect(err).ToNot(HaveOccurred())
+		names := map[string]bool{}
+		for _, v := range plane.Validations {
+			names[v.Job.Name] = true
+		}
+		return names
+	}
+
+	for _, rejected := range []bool{false, true} {
+		It(fmt.Sprintf("revokes a domain while another change is validating (rejected=%t)", rejected), func() {
+			mutateServerG(ns, func(s *cnmsv1alpha1.MailServer) {
+				s.Spec.Submission = &cnmsv1alpha1.Submission{Enabled: new(false)}
+			})
+			reconcileServerG(r, ns, testServerName)
+			revoke(domainB)
+			reconcileServerG(r, ns, testServerName)
+			// The new configuration stays unfinished (or fails); only
+			// the fail-closed one passes.
+			closed := failClosedJobsG()
+			jobs := jobsG(ns, testServerName, "")
+			for i := range jobs {
+				switch {
+				case len(jobs[i].Status.Conditions) > 0:
+				case closed[jobs[i].Name]:
+					finishJobG(&jobs[i], true)
+				case rejected:
+					finishJobG(&jobs[i], false)
+				}
+			}
+			reconcileServerG(r, ns, testServerName)
+
+			expectFailClosed()
+			validated, reason, _ := serverConditionG(ns, testServerName, ConditionConfigValidated)
+			if rejected {
+				Expect(validated).To(Equal(metav1.ConditionFalse))
+				Expect(reason).To(Equal(ReasonConfigRejected))
+			} else {
+				Expect(validated).To(Equal(metav1.ConditionUnknown))
+				Expect(reason).To(Equal(ReasonValidatingConfig))
+			}
+		})
+	}
+})
+
+// Before the first rollout there is no workload yet, but the
+// Certificate already lists the domains and cert-manager keeps
+// renewing it.
+var _ = Describe("MailServer revocation before the first rollout", func() {
+	var ns, domainA, domainB string
+	var r *MailServerReconciler
+
+	BeforeEach(func() {
+		installCertificateCRD()
+		ns, domainA = grantFixture()
+		domainB = uniqueDomain()
+		createDomainG(ns, domainB)
+		createGrantG(domainB, ns, false)
+		createServerG(ns, testServerName, domainA, func(s *cnmsv1alpha1.MailServer) {
+			s.Spec.Domains = append(s.Spec.Domains, cnmsv1alpha1.NameReference{Name: domainLabel(domainB)})
+		})
+		r = newReconcilerG(AuthorizationAllowlist, true)
+		// The validation Jobs never finish: no workload is created.
+		reconcileServerG(r, ns, testServerName)
+		Expect(certificateDNSNamesG(ns)).To(ConsistOf(domainA, domainB))
+	})
+
+	own := func() string { return "mail-postfix." + ns + ".svc.cluster.local" }
+
+	It("stops renewing the Certificate when every grant is revoked", func() {
+		for _, d := range []string{domainA, domainB} {
+			Expect(k8sClient.Delete(ctx, &cnmsv1alpha1.MailDomainGrant{ObjectMeta: metav1.ObjectMeta{Name: d}})).To(Succeed())
+		}
+		reconcileServerG(r, ns, testServerName)
+		Expect(certificateDNSNamesG(ns)).To(ConsistOf(own()))
+	})
+
+	It("drops a revoked domain from the Certificate while the directory is missing", func() {
+		Expect(k8sClient.Delete(ctx, &cnmsv1alpha1.MailDirectory{
+			ObjectMeta: metav1.ObjectMeta{Name: directoryName, Namespace: ns},
+		})).To(Succeed())
+		Expect(k8sClient.Delete(ctx, &cnmsv1alpha1.MailDomainGrant{ObjectMeta: metav1.ObjectMeta{Name: domainB}})).To(Succeed())
+		reconcileServerG(r, ns, testServerName)
+		Expect(certificateDNSNamesG(ns)).To(ConsistOf(own()))
 	})
 })
 

@@ -39,7 +39,8 @@ const (
 	// closed).
 	ReasonDuplicateDomain = "DuplicateDomain"
 	// ReasonPartiallyAuthorized is set when some, but not all, of the
-	// referenced domains are authorized: only those are served.
+	// referenced domains are authorized: only those are rendered, and
+	// the blocked ones leave the data plane with the next rollout.
 	ReasonPartiallyAuthorized = "PartiallyAuthorized"
 	// ReasonDomainNotFound is set when a referenced MailDomain is
 	// missing.
@@ -137,7 +138,7 @@ func (a authorization) condition() (string, string) {
 	msg := strings.Join(msgs, "; ")
 	if len(a.domains) > 0 {
 		reason = ReasonPartiallyAuthorized
-		msg = fmt.Sprintf("only %s served, the rest are blocked: %s",
+		msg = fmt.Sprintf("only %s authorized, the blocked domains are removed once the new configuration is rolled out: %s",
 			strings.Join(a.domains, ", "), msg)
 	}
 	return reason, msg

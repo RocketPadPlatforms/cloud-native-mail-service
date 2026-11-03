@@ -86,15 +86,23 @@ For a `MailServer` this means:
   rendered; the others are left out of the Postfix configuration and the
   certificate's names. `DomainsAuthorized` is `False` with reason
   `PartiallyAuthorized` and a message naming each blocked domain, and a
-  Warning Event is emitted. `Ready` stays `False` until the whole spec is
-  realised, even though the authorized domains keep working.
+  Warning Event is emitted. A blocked domain is still served until the new
+  configuration is validated and rolled out, so `Ready` shows the
+  validation or rollout state first; afterwards it stays `False` with
+  `PartiallyAuthorized` until the whole spec is realised, even though the
+  authorized domains keep working.
 - If no domain is authorized any longer, a running server is re-rendered
   fail closed: Postfix rejects all recipients, submission is off, and the
   certificate keeps only the in-cluster Service name. A server that never
   had a data plane gets none.
 - The new configuration goes through the usual [validation
   gate](../decisions/0009-config-validation-gate.md): until its Job
-  passes, the previous configuration keeps running.
+  passes, the previous configuration keeps running. A revoked domain is
+  the exception: if the new configuration cannot be applied (it is still
+  validating or was rejected, or the directory, the users Secret or the
+  issuer is missing), a running server that still serves a revoked domain
+  gets the fail-closed configuration instead, so the remaining
+  domains of that server stop too until the problem is fixed.
 - Sender-address binding on submission is not enforced yet (backlog), so a
   login that still exists can use a revoked domain as sender address until
   the Phase 3 binding lands; there is no DKIM signing before Phase 5.

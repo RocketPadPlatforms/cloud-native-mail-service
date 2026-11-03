@@ -55,6 +55,13 @@ const (
 	// the cert-reload sidecar (D5).
 	ConfigHashAnnotation = "cnms.rpp.gmbh/config-hash"
 
+	// ServedDomainsAnnotation is set on the workload objects (not the
+	// pod templates, so it never rolls pods) and lists, comma
+	// separated and sorted, the domains the revision applied with it
+	// serves. The controller compares it with the authorized set to
+	// find out whether a revoked domain is still being served.
+	ServedDomainsAnnotation = "cnms.rpp.gmbh/served-domains"
+
 	// ManagedByLabel marks CNMS-managed resources. It is a label for
 	// listing and cleanup only: tenants can set it on their own pods,
 	// so no security decision may rest on it (ADR 0006).
@@ -205,6 +212,10 @@ func Build(req *render.RenderRequest, renders map[render.Component]*render.Rende
 		dovecotStatefulSet(server, renders[render.ComponentDovecot]),
 		rspamdDeployment(server, renders[render.ComponentRspamd]),
 		valkeyDeployment(server, renders[render.ComponentValkey]),
+	}
+	served := strings.Join(slices.Sorted(slices.Values(req.AuthorizedDomains)), ",")
+	for _, w := range dp.Workloads {
+		w.SetAnnotations(map[string]string{ServedDomainsAnnotation: served})
 	}
 	return dp, nil
 }

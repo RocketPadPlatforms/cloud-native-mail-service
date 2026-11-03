@@ -62,6 +62,9 @@ const postfixObjectName = "mail-postfix"
 // usersSecretName is the Phase 2 static-users Secret name.
 const usersSecretName = "users"
 
+// directoryName is the name of the MailDirectory of the test servers.
+const directoryName = "directory"
+
 // testServerName is the MailServer name of the gate and rollout specs.
 const testServerName = "mail"
 
@@ -101,7 +104,7 @@ func createNamespaceG(name string) {
 
 func createDirectoryG(ns string) {
 	dir := &cnmsv1alpha1.MailDirectory{
-		ObjectMeta: metav1.ObjectMeta{Name: "directory", Namespace: ns},
+		ObjectMeta: metav1.ObjectMeta{Name: directoryName, Namespace: ns},
 		Spec: cnmsv1alpha1.MailDirectorySpec{
 			Type: cnmsv1alpha1.DirectoryTypeLDAP,
 			LDAP: &cnmsv1alpha1.LDAP{
@@ -143,7 +146,7 @@ func newServerG(ns, name, domain string, mutate func(*cnmsv1alpha1.MailServer)) 
 	s := &cnmsv1alpha1.MailServer{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 		Spec: cnmsv1alpha1.MailServerSpec{
-			DirectoryRef: cnmsv1alpha1.NameReference{Name: "directory"},
+			DirectoryRef: cnmsv1alpha1.NameReference{Name: directoryName},
 			Outbound:     cnmsv1alpha1.Outbound{Direct: &cnmsv1alpha1.DirectOutbound{}},
 			Domains:      []cnmsv1alpha1.NameReference{{Name: domainLabel(domain)}},
 			TLS: cnmsv1alpha1.TLS{
@@ -164,9 +167,9 @@ func mutateServerG(ns string, fn func(*cnmsv1alpha1.MailServer)) {
 	Expect(k8sClient.Update(ctx, server)).To(Succeed())
 }
 
-func createUsersSecretG(ns, name, payload string) {
+func createUsersSecretG(ns, payload string) {
 	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+		ObjectMeta: metav1.ObjectMeta{Name: usersSecretName, Namespace: ns},
 		Data:       map[string][]byte{"users.yaml": []byte(payload)},
 	}
 	Expect(k8sClient.Create(ctx, secret)).To(Succeed())
@@ -617,7 +620,7 @@ var _ = Describe("MailServer controller", func() {
 		})
 
 		It("renders with a valid users Secret", func() {
-			createUsersSecretG(ns, usersSecretName, validUsers)
+			createUsersSecretG(ns, validUsers)
 			createServerG(ns, "mail", domain, func(s *cnmsv1alpha1.MailServer) {
 				s.Spec.Submission = &cnmsv1alpha1.Submission{
 					InsecureStaticUsers: &cnmsv1alpha1.InsecureStaticUsers{SecretName: usersSecretName},
@@ -642,7 +645,7 @@ var _ = Describe("MailServer controller", func() {
 		})
 
 		It("fails closed for an invalid password hash", func() {
-			createUsersSecretG(ns, usersSecretName,
+			createUsersSecretG(ns,
 				"users:\n  - username: testuser\n    passwordHash: plaintext\n    mailbox: testuser@example.org\n")
 			createServerG(ns, "mail", domain, func(s *cnmsv1alpha1.MailServer) {
 				s.Spec.Submission = &cnmsv1alpha1.Submission{
@@ -660,7 +663,7 @@ var _ = Describe("MailServer controller", func() {
 		})
 
 		It("fails closed without the feature flag", func() {
-			createUsersSecretG(ns, usersSecretName, validUsers)
+			createUsersSecretG(ns, validUsers)
 			createServerG(ns, "mail", domain, func(s *cnmsv1alpha1.MailServer) {
 				s.Spec.Submission = &cnmsv1alpha1.Submission{
 					InsecureStaticUsers: &cnmsv1alpha1.InsecureStaticUsers{SecretName: usersSecretName},

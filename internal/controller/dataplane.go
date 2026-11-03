@@ -200,6 +200,11 @@ func (r *MailServerReconciler) ensureJob(ctx context.Context, server *cnmsv1alph
 	existing := &batchv1.Job{}
 	err := r.Get(ctx, client.ObjectKeyFromObject(job), existing)
 	if err == nil {
+		// A Job of someone else (a tenant could pre-create one that
+		// "passed") must never count as the validation result.
+		if !metav1.IsControlledBy(existing, server) {
+			return nil, &ownershipConflictError{kind: kindName(job), name: job.Name}
+		}
 		return existing, nil
 	}
 	if !errors.IsNotFound(err) {
@@ -235,15 +240,26 @@ func jobOutcome(job *batchv1.Job) (passed bool, failure string) {
 }
 
 // createOwned creates obj with a controller reference to owner. An
-// existing object is success: the objects it is used for are
-// immutable and content-named, so the same name means the same
-// content.
+// existing object controlled by owner is success: the objects it is
+// used for are immutable and content-named, so the same name means the
+// same content. One that owner does not control (a tenant may create
+// objects in the namespace under the same name) is an
+// ownershipConflictError: its content is not ours.
 func createOwned(ctx context.Context, c client.Client, scheme *runtime.Scheme, owner, obj client.Object) error {
 	if err := controllerutil.SetControllerReference(owner, obj, scheme); err != nil {
 		return err
 	}
-	if err := c.Create(ctx, obj); err != nil && !errors.IsAlreadyExists(err) {
+	err := c.Create(ctx, obj)
+	if err == nil || !errors.IsAlreadyExists(err) {
 		return err
+	}
+	existing := obj.DeepCopyObject().(client.Object)
+	if err := c.Get(ctx, client.ObjectKeyFromObject(obj), existing); err != nil {
+		// Gone again, or not in the cache yet: the next pass decides.
+		return client.IgnoreNotFound(err)
+	}
+	if !metav1.IsControlledBy(existing, owner) {
+		return &ownershipConflictError{kind: kindName(obj), name: obj.GetName()}
 	}
 	return nil
 }
