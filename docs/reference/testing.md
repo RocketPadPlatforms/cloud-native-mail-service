@@ -1,12 +1,12 @@
 # Testing
 
-CNMS tests run in four layers, each with a different level of
+CNMS tests run in three layers, each with a different level of
 realism:
 
 | Layer | Tool | Covers |
 |-------|------|--------|
 | Unit | `go test` | Renderers (golden files), parsers, the domain-authorization evaluator |
-| Controller | envtest (`make test`) | Reconciliation: gates, fail-closed blocking, conditions, data-plane apply, optional-integration discovery |
+| Controller | envtest (`make test`) | Reconciliation: gates, fail-closed blocking, conditions, data-plane apply, optional-integration discovery; every file in `config/samples` is applied to the API server, so the samples cannot drift from the CRDs |
 | E2E | kind + swaks + Mailpit (`make test-e2e`) | The full data plane in a cluster: mail actually flows through Postfix, Rspamd and Dovecot |
 
 ## The e2e suite

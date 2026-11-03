@@ -20,7 +20,7 @@ Put this file in the repo as `AGENTS.md` (or your tool's equivalent) so it persi
 |---|---|
 | Name | Cloud Native Mail Service (CNMS) |
 | API group | `cnms.rpp.gmbh` (Kubebuilder: `--domain rpp.gmbh`, group `cnms`) |
-| Repository / Go module | `github.com/RocketpadPlatforms/cloud-native-mail-service` |
+| Repository / Go module | `github.com/RocketPadPlatforms/cloud-native-mail-service` |
 | License | Apache-2.0 |
 | Docs hosting | GitHub Pages at the default URL `https://rocketpadplatforms.github.io/cloud-native-mail-service/` (no custom domain for now) |
 | Key-value store | Valkey (not Redis; licensing, see section 9) |

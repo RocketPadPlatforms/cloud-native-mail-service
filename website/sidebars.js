@@ -35,6 +35,7 @@ module.exports = {
       link: { type: 'doc', id: 'reference/index' },
       items: [
         'reference/api',
+        'reference/status-conditions',
         'reference/testing',
         'reference/third-party-licenses',
         'reference/data-plane-licenses',
@@ -54,6 +55,8 @@ module.exports = {
         'decisions/network-policy-and-security-floor',
         'decisions/deployment-annotation-merge',
         'decisions/user-sources-and-service-accounts',
+        'decisions/config-validation-gate',
+        'decisions/storage-immutability-and-scale-down',
       ],
     },
     { type: 'doc', id: 'roadmap' },

@@ -21,8 +21,6 @@ spec:
     externalTrafficPolicy: Local
   submission:
     enabled: true
-    insecureStaticUsers:
-      secretName: sample-static-users
   mailboxes:
     enabled: true
     storage: 10Gi

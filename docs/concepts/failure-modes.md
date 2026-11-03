@@ -52,10 +52,11 @@ validator's output is in the Job's pod log.
 `milter_default_action = tempfail` with deliberate milter timeouts
 (ADR 0006) means an unreachable or timing-out filter makes Postfix
 queue the message and answer 4xx to remote senders, who retry —
-the mail is not accepted unsigned and not rejected. Locally
-generated mail (for example bounces) is filtered through
-`non_smtpd_milters`, so it is held the same way instead of skipping
-the filter. Once DKIM signing exists (Phase 5), a missing signature
+the mail is not accepted unsigned and not rejected. Mail that
+Postfix receives locally (`sendmail`, `postdrop`) is filtered through
+`non_smtpd_milters`, so it is held the same way. Mail that Postfix
+generates itself (bounces, notifications) skips the filter, because
+`internal_mail_filter_classes` is not set yet (backlog). Once DKIM signing exists (Phase 5), a missing signature
 must also result in a tempfail for authenticated senders, so an
 up-but-broken filter cannot release unsigned mail; that guard is not
 implemented yet.
@@ -104,7 +105,8 @@ Dovecot runs a single replica on a read-write-once volume (active/
 standby via rescheduling). After a node failure the volume can stay
 attached to the old node for minutes unless the node is
 tainted or removed — the realistic failover time, and how to speed
-it up, is in the operations runbook.
+it up, will be in the [operations](../operations/index.md) runbook (not
+written yet).
 
 ## Observing failures
 

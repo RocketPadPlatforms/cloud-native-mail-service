@@ -17,15 +17,19 @@ published for every release. The project plan and phase status are in
 [docs/roadmap.md](docs/roadmap.md).
 
 > **DKIM signing is not implemented yet** (Phase 5): outbound mail currently
-> leaves unsigned. Recipient validation only knows the static test users for
-> now; the directory (Phase 3) replaces them.
+> leaves unsigned. Users come only from the static test users (a test
+> feature); a `MailDirectory` is checked for existence but not queried until
+> Phase 3, so recipient validation and login know no other user. Do not send
+> production mail from a CNMS server yet.
 
 ## Key properties
 
 - Control plane and data plane are separate: if the operator is down, mail
   keeps flowing.
 - Reputation isolation between `MailServer`s: own instances, queues, IPs,
-  DKIM keys, and HELO names; own Rspamd and Valkey per `MailServer`.
+  DKIM keys, and HELO names; own Rspamd and Valkey per `MailServer`
+  (instances, queues, Rspamd and Valkey today; DKIM keys in Phase 5, sending
+  addresses in Phase 7).
 - No message content in etcd; no MTA is written by the operator.
 - Users come from an external directory (LDAP/SQL first, OIDC later) — the
   operator configures Postfix/Dovecot to query it. Environments without a
@@ -37,9 +41,11 @@ published for every release. The project plan and phase status are in
 ## Documentation
 
 Docs live in [`docs/`](docs/) (built by Docusaurus from [`website/`](website/)):
-[architecture decisions](docs/decisions/), [roadmap](docs/roadmap.md),
-[backlog](docs/backlog.md). Getting-started and how-to guides are written as
-the features land (see the roadmap).
+[concepts](docs/concepts/), [install and operate](docs/how-to/02-install-and-operate.md),
+[reference](docs/reference/) (API, status conditions), [architecture
+decisions](docs/decisions/), [roadmap](docs/roadmap.md) and
+[backlog](docs/backlog.md). The getting-started guide and the other how-to
+guides are written as the features land (see the roadmap).
 
 ## Development
 

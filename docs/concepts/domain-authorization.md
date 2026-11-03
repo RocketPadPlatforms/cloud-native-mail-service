@@ -7,6 +7,15 @@ cluster any tenant could therefore claim any domain — including one that
 belongs to another tenant — and damage its reputation or spoof it. CNMS
 authorizes domains with `MailDomainGrant`s.
 
+:::note
+API version `v1alpha1`. Today the `MailServer` controller evaluates the
+grants and enforces the result on the data plane. `MailDomain` has no
+controller yet, so everything that acts on a domain through it (DKIM
+keys, DNS records, the MTA-STS report, derived-name conflicts, the
+revocation grace period) arrives with Phase 5 and is marked as such
+below.
+:::
+
 ## The grant model
 
 A `MailDomainGrant` is a cluster-scoped resource owned by the platform
@@ -26,7 +35,8 @@ spec:
 - **One grant per exact domain.** The object name is the domain, so the
   API server guarantees a single owner per domain and normalizes the name
   (lowercase, no trailing dot, no underscores). A grant must have at least
-  two labels; public suffixes like `org` are rejected by the operator.
+  two labels. Rejecting public suffixes such as `co.uk` is planned for
+  Phase 5; until then the admin must not grant one.
 - **`includeSubdomains`** grants subdomains at any depth, HSTS-style. The
   apex is always covered; subdomains only when asked. A more specific
   grant (e.g. for `mail.example.org`) takes precedence over a
@@ -37,20 +47,22 @@ spec:
 ## How authorization is enforced
 
 The operator is the authoritative check, and it is fail closed: it
-re-evaluates grants on every reconcile. A `MailDomain` (and the
-`MailServer`s that reference it) only works for a domain when:
+re-evaluates grants on every reconcile. A `MailServer` only serves a
+domain of its `spec.domains` when:
 
 - a grant covers the domain and names the `MailDomain`'s own namespace
-  (`Authorized=True, reason=Granted`), or
+  (`DomainsAuthorized=True, reason=Authorized`), or
 - the operator runs with `--domain-authorization=unrestricted`
-  (single-tenant clusters; `Authorized=True,
+  (single-tenant clusters; `DomainsAuthorized=True,
   reason=AuthorizationDisabled`).
 
-Otherwise the domain is inactive: no certificate is requested, no DKIM key
-is published, no DNS records are written, no MTA-STS policy is reported, and
-nothing is signed for it. The condition explains why
-(`NotGranted`), and `kubectl get maildomaingrants` shows who owns a
-domain.
+Otherwise the domain is inactive: it is left out of the Postfix
+configuration and of the certificate's names. The condition
+explains why (`NotGranted`, `DuplicateDomain`, `DomainNotFound`; see
+the [status conditions](../reference/status-conditions.md)), and
+`kubectl get maildomaingrants` shows who owns a domain. Once the
+`MailDomain` controller exists (Phase 5), an inactive domain also gets no
+DKIM key, no DNS records and no MTA-STS report.
 
 Because the check is a pure function of the current grants and the
 claimed `MailDomain`s:
@@ -63,7 +75,7 @@ claimed `MailDomain`s:
   misconfiguration is fixed. A claim from a namespace without the grant
   is unauthorized on its own and never blocks the owner.
 
-### Derived names
+### Derived names (Phase 5)
 
 A domain also owns the names it writes: `mta-sts.<domain>`,
 `_mta-sts.<domain>`, `_smtp._tls.<domain>`, `_dmarc.<domain>`,
@@ -74,11 +86,13 @@ gets a `DerivedNameConflict`; the more specific name wins.
 
 ### Revocation
 
-When a grant stops covering a domain, the operator stops signing and
-accepting submission for it immediately, and removes the DNS records and
-the certificate after a short grace period (15 minutes, so a brief GitOps
-prune-and-recreate does not delete DKIM records worldwide). The DKIM
-secret is kept, so re-granting the domain does not rotate the key.
+When a grant stops covering a domain, the `MailServer` stops accepting
+mail and submission for it with its next validated rollout, as described
+below. With the `MailDomain` controller (Phase 5) the operator also
+removes the DNS records after a short grace period (15 minutes, so a
+brief GitOps prune-and-recreate does not delete DKIM records worldwide)
+and keeps the DKIM Secret, so re-granting the domain does not rotate the
+key. Neither exists today.
 
 For a `MailServer` this means:
 
@@ -109,8 +123,10 @@ For a `MailServer` this means:
 
 ## Wiring-level bypasses
 
-Policy engines are optional; the integrations are wired so that tenants
-cannot bypass CNMS even when they can create the underlying objects:
+Policy engines are optional. The integrations are meant to be wired so
+that tenants cannot bypass CNMS even when they can create the
+underlying objects. Only the ClusterIssuer rule is implemented; the
+rest is guidance for the Phase 5 integrations:
 
 - external-dns runs as a dedicated instance that only reads
   `DNSEndpoint`s from the operator's own namespace
@@ -120,7 +136,7 @@ cannot bypass CNMS even when they can create the underlying objects:
   `--allow-cluster-issuers` (a per-grant allow-list is on the backlog);
   tenant-created `Certificate`s are best contained with
   cert-manager approver-policy.
-- a documented Kyverno sample can give early rejection at admission time
+- a Kyverno sample (not shipped yet) can give early rejection at admission time
   and enforce rules the operator cannot (e.g. tenants creating
   `DNSEndpoint`s directly). It is a convenience layer, not the security
   boundary.
