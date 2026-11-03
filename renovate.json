@@ -2,129 +2,173 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "config:recommended",
+    "docker:pinDigests",
+    "helpers:pinGitHubActionDigests",
     ":disableDependencyDashboard"
   ],
+  "ignorePresets": [":ignoreModulesAndTests"],
+  "ignorePaths": ["**/node_modules/**", "**/vendor/**"],
   "prConcurrentLimit": 10,
   "packageRules": [
     {
-      "description": "Tooling (CI actions, docs tooling): patch and minor updates may be merged automatically.",
+      "description": "Tooling (CI actions, docs tooling): only patch updates may be merged automatically.",
       "matchManagers": ["github-actions", "npm"],
-      "matchUpdateTypes": ["patch", "minor"],
+      "matchUpdateTypes": ["patch"],
       "automerge": true,
       "autoApprove": true
     },
     {
-      "description": "Engine, Go module, and tool version updates always open a PR.",
-      "matchManagers": ["go.mod", "dockerfile", "regex"],
+      "description": "Go module, image, and tool version updates always open a PR.",
+      "matchManagers": ["gomod", "dockerfile", "devcontainer", "custom.regex"],
       "automerge": false
+    },
+    {
+      "description": "Engine updates always open a PR; golden-file tests and config validation must pass (AGENTS.md section 9).",
+      "matchPackageNames": [
+        "vdukhovni/postfix",
+        "rspamd/rspamd",
+        "dovecot/dovecot",
+        "valkey/valkey"
+      ],
+      "automerge": false,
+      "addLabels": ["engine"]
+    },
+    {
+      "description": "Major engine updates need an ADR on config compatibility.",
+      "matchPackageNames": [
+        "vdukhovni/postfix",
+        "rspamd/rspamd",
+        "dovecot/dovecot",
+        "valkey/valkey"
+      ],
+      "matchUpdateTypes": ["major"],
+      "addLabels": ["needs-adr"]
+    },
+    {
+      "description": "The Postfix tarball is verified by checksum and signature, which Renovate cannot update.",
+      "matchPackageNames": ["vdukhovni/postfix"],
+      "prBodyNotes": [
+        "Also update POSTFIX_SHA512 in images/postfix/Dockerfile and check the signing key (images/postfix/keys)."
+      ]
+    },
+    {
+      "description": "The kind binary is verified by checksum, which Renovate cannot update.",
+      "matchPackageNames": ["kubernetes-sigs/kind"],
+      "prBodyNotes": [
+        "Also update KIND_SHA256 in .github/workflows/test-e2e.yml (kind-linux-amd64.sha256sum of the release) and KIND_NODE_IMAGE in the Makefile to a node image listed in the release notes."
+      ]
     }
   ],
-  "regexManagers": [
+  "customManagers": [
     {
-      "fileMatch": ["^Makefile$"],
-      "matchStrings": ["KUSTOMIZE_VERSION\\s*=\\s*\\K(?<currentValue>\\S+)"],
-      "depName": "sigs.k8s.io/kustomize/kustomize/v5",
-      "datasource": "go",
-      "versioning": "semver"
+      "customType": "regex",
+      "description": "Tools installed by the Makefile with go install.",
+      "managerFilePatterns": ["/^Makefile$/"],
+      "matchStrings": ["KUSTOMIZE_VERSION\\s*\\??=\\s*(?<currentValue>\\S+)"],
+      "depNameTemplate": "sigs.k8s.io/kustomize/kustomize/v5",
+      "datasourceTemplate": "go",
+      "versioningTemplate": "semver"
     },
     {
-      "fileMatch": ["^Makefile$"],
-      "matchStrings": ["CONTROLLER_TOOLS_VERSION\\s*=\\s*\\K(?<currentValue>\\S+)"],
-      "depName": "sigs.k8s.io/controller-tools",
-      "datasource": "go",
-      "versioning": "semver"
+      "customType": "regex",
+      "managerFilePatterns": ["/^Makefile$/"],
+      "matchStrings": ["CONTROLLER_TOOLS_VERSION\\s*\\??=\\s*(?<currentValue>\\S+)"],
+      "depNameTemplate": "sigs.k8s.io/controller-tools",
+      "datasourceTemplate": "go",
+      "versioningTemplate": "semver"
     },
     {
-      "fileMatch": ["^Makefile$", "^\\.custom-gcl\\.yml$"],
+      "customType": "regex",
+      "description": "golangci-lint is pinned in the Makefile and in the custom build configuration.",
+      "managerFilePatterns": ["/^Makefile$/", "/^\\.custom-gcl\\.yml$/"],
       "matchStrings": [
-        "GOLANGCI_LINT_VERSION\\s*=\\s*\\K(?<currentValue>\\S+)",
-        "version:\\s*\\K(?<currentValue>v\\d+\\.\\d+\\.\\d+)"
+        "GOLANGCI_LINT_VERSION\\s*\\??=\\s*(?<currentValue>\\S+)",
+        "(?m)^version:\\s*(?<currentValue>v\\d+\\.\\d+\\.\\d+)\\s*$"
       ],
-      "depName": "github.com/golangci/golangci-lint/v2",
-      "datasource": "go",
-      "versioning": "semver"
+      "depNameTemplate": "github.com/golangci/golangci-lint/v2",
+      "datasourceTemplate": "go",
+      "versioningTemplate": "semver"
     },
     {
-      "fileMatch": ["^Makefile$"],
-      "matchStrings": ["GO_LICENSES_VERSION\\s*=\\s*\\K(?<currentValue>\\S+)"],
-      "depName": "github.com/google/go-licenses/v2",
-      "datasource": "go",
-      "versioning": "semver"
-    },
-    {
-      "fileMatch": ["^Makefile$"],
-      "matchStrings": ["CRD_REF_DOCS_VERSION\\s*=\\s*\\K(?<currentValue>\\S+)"],
-      "depName": "github.com/elastic/crd-ref-docs",
-      "datasource": "go",
-      "versioning": "semver"
-    },
-    {
-      "description": "CNMS data-plane image pins (ADR 0004 section 6): tag and digest.",
-      "fileMatch": ["^internal/images/images\\.go$"],
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.custom-gcl\\.yml$/"],
       "matchStrings": [
-        "Dovecot\\s*=\\s*\"dovecot/dovecot:(?<currentValue>[^\"@]+)@(?<currentDigest>sha256:[0-9a-f]+)\""
+        "module:\\s*\"sigs\\.k8s\\.io/logtools\"[\\s\\S]*?\\n\\s*version:\\s*(?<currentValue>\\S+)"
       ],
-      "depName": "dovecot/dovecot",
-      "datasource": "docker",
-      "versioning": "docker"
+      "depNameTemplate": "sigs.k8s.io/logtools",
+      "datasourceTemplate": "go",
+      "versioningTemplate": "semver"
     },
     {
-      "description": "CNMS data-plane image pins (ADR 0004 section 6): tag and digest.",
-      "fileMatch": ["^internal/images/images\\.go$"],
+      "customType": "regex",
+      "managerFilePatterns": ["/^Makefile$/"],
+      "matchStrings": ["GO_LICENSES_VERSION\\s*\\??=\\s*(?<currentValue>\\S+)"],
+      "depNameTemplate": "github.com/google/go-licenses/v2",
+      "datasourceTemplate": "go",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^Makefile$/"],
+      "matchStrings": ["CRD_REF_DOCS_VERSION\\s*\\??=\\s*(?<currentValue>\\S+)"],
+      "depNameTemplate": "github.com/elastic/crd-ref-docs",
+      "datasourceTemplate": "go",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "description": "Upstream images pinned by tag and digest in the images package (ADR 0004 section 6).",
+      "managerFilePatterns": ["/^internal/images/images\\.go$/"],
       "matchStrings": [
-        "Rspamd\\s*=\\s*\"rspamd/rspamd:(?<currentValue>[^\"@]+)@(?<currentDigest>sha256:[0-9a-f]+)\""
+        "\"(?<depName>[a-z0-9][a-z0-9./_-]*):(?<currentValue>[^\"@:]+)@(?<currentDigest>sha256:[a-f0-9]{64})\""
       ],
-      "depName": "rspamd/rspamd",
-      "datasource": "docker",
-      "versioning": "docker"
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "docker"
     },
     {
-      "description": "CNMS data-plane image pins (ADR 0004 section 6): tag and digest.",
-      "fileMatch": ["^internal/images/images\\.go$"],
+      "customType": "regex",
+      "description": "Postfix version: the source build argument and the tags of the CNMS images built from it (ADR 0004).",
+      "managerFilePatterns": [
+        "/^images/postfix/Dockerfile$/",
+        "/^Makefile$/",
+        "/^internal/images/images\\.go$/"
+      ],
       "matchStrings": [
-        "Valkey\\s*=\\s*\"valkey/valkey:(?<currentValue>[^\"@]+)@(?<currentDigest>sha256:[0-9a-f]+)\""
+        "ARG POSTFIX_VERSION=(?<currentValue>\\S+)",
+        "cnms-(?:postfix|e2e-client):(?<currentValue>\\d+\\.\\d+\\.\\d+)"
       ],
-      "depName": "valkey/valkey",
-      "datasource": "docker",
-      "versioning": "docker"
+      "depNameTemplate": "vdukhovni/postfix",
+      "datasourceTemplate": "github-tags",
+      "extractVersionTemplate": "^v(?<version>\\d+\\.\\d+\\.\\d+)$",
+      "versioningTemplate": "semver"
     },
     {
-      "description": "CNMS data-plane image pins (ADR 0004 section 6): tag and digest.",
-      "fileMatch": ["^internal/images/images\\.go$"],
+      "customType": "regex",
+      "description": "cert-manager release installed by the e2e suite.",
+      "managerFilePatterns": ["/^test/utils/utils\\.go$/"],
+      "matchStrings": ["certmanagerVersion\\s*=\\s*\"(?<currentValue>v[^\"]+)\""],
+      "depNameTemplate": "cert-manager/cert-manager",
+      "datasourceTemplate": "github-releases",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "description": "kind release installed by the e2e workflow.",
+      "managerFilePatterns": ["/^\\.github/workflows/test-e2e\\.yml$/"],
+      "matchStrings": ["KIND_VERSION:\\s*(?<currentValue>v\\S+)"],
+      "depNameTemplate": "kubernetes-sigs/kind",
+      "datasourceTemplate": "github-releases",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "description": "kind node image of the e2e cluster.",
+      "managerFilePatterns": ["/^Makefile$/"],
       "matchStrings": [
-        "RedisExporter\\s*=\\s*\"oliver006/redis_exporter:(?<currentValue>[^\"@]+)@(?<currentDigest>sha256:[0-9a-f]+)\""
+        "KIND_NODE_IMAGE\\s*\\??=\\s*(?<depName>kindest/node):(?<currentValue>[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]{64})"
       ],
-      "depName": "oliver006/redis_exporter",
-      "datasource": "docker",
-      "versioning": "docker"
-    },
-    {
-      "description": "CNMS e2e sink image pin (ADR 0004 section 7): tag and digest.",
-      "fileMatch": ["^internal/images/images\\.go$"],
-      "matchStrings": [
-        "Mailpit\\s*=\\s*\"axllent/mailpit:(?<currentValue>[^\"@]+)@(?<currentDigest>sha256:[0-9a-f]+)\""
-      ],
-      "depName": "axllent/mailpit",
-      "datasource": "docker",
-      "versioning": "docker"
-    },
-    {
-      "description": "CNMS-built image tags (synced with the Dockerfiles, ADR 0004).",
-      "fileMatch": ["^internal/images/images\\.go$"],
-      "matchStrings": ["Postfix\\s*=\\s*\"ghcr.io/rocketpadplatforms/cnms-postfix:(?<currentValue>[^\"]+)\""],
-      "depName": "ghcr.io/rocketpadplatforms/cnms-postfix",
-      "datasource": "docker",
-      "versioning": "semver",
-      "skipUnresolvable": true
-    },
-    {
-      "description": "CNMS-built image tags (synced with the Dockerfiles, ADR 0004).",
-      "fileMatch": ["^internal/images/images\\.go$"],
-      "matchStrings": ["E2EClient\\s*=\\s*\"ghcr.io/rocketpadplatforms/cnms-e2e-client:(?<currentValue>[^\"]+)\""],
-      "depName": "ghcr.io/rocketpadplatforms/cnms-e2e-client",
-      "datasource": "docker",
-      "versioning": "semver",
-      "skipUnresolvable": true
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "docker"
     }
   ]
 }

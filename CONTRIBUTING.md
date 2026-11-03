@@ -18,7 +18,7 @@ Common targets (run from the repository root):
 ```sh
 make test            # unit + envtest tests
 make lint            # golangci-lint (installs the pinned version into ./bin)
-make license-check   # dependency license check (fails on restricted/forbidden/unknown)
+make license-check   # dependency license check (fails on licenses outside the allow list)
 make license-report  # regenerate docs/reference/third-party-licenses.md
 make docs-build      # build the Docusaurus site under website/
 make test-e2e        # e2e on an isolated kind cluster (needs kind + docker)

@@ -36,7 +36,10 @@ Policy:
 - **Build/dev tools** (linters, doc generators, CI tooling): any OSI-approved
   license, recorded here when added.
 - Enforced in CI by `make license-check`
-  (`go-licenses check --disallowed_types=restricted,forbidden,unknown`).
+  (`go-licenses check --allowed_licenses=...`): only Apache-2.0,
+  BSD-2-Clause, BSD-3-Clause, ISC and MIT pass for Go modules, so every
+  other license fails the build until it has been reviewed and the
+  `ALLOWED_LICENSES` list in the Makefile is extended.
 - The third-party Go dependency report is generated with
   `make license-report` into `docs/reference/third-party-licenses.md`.
 - Container images are pinned by version; engine images are additionally
