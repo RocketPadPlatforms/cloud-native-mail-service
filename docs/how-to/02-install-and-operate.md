@@ -50,6 +50,87 @@ without an expiry.
 | `--allow-cluster-issuers` | `false` | Lets a `MailServer` reference a cert-manager `ClusterIssuer` in `spec.tls.issuerRef`. Without the flag such a server is fail-closed (`Ready=False, reason=ClusterIssuerNotAllowed`) and no `Certificate` is created; a namespaced `Issuer` is always allowed. A shared `ClusterIssuer` lets every tenant obtain certificates from it, so enable the flag only on clusters where that is intended. Add it to the manager `args` in `config/manager/manager.yaml` (Kustomize); the Helm chart will expose it as a value (Phase 10). |
 | `--enable-insecure-test-features` | `false` | Accepts `spec.submission.insecureStaticUsers` (Phase 2 test users from a Secret). For tests only: the operator logs a warning at startup when it is set. Without the flag a `MailServer` that sets the field is fail-closed (`Ready=False, reason=InsecureStaticUsersDisabled`). |
 
+## Pod Security admission
+
+The data-plane pods set a restricted-style security context: runtime
+default seccomp profile, all capabilities dropped, no privilege
+escalation and a read-only root filesystem. Rspamd and Valkey satisfy
+the Pod Security `restricted` profile. The Postfix master runs as root
+with seven capabilities (it binds the SMTP ports, chowns the queue and
+drops privileges), and Dovecot keeps `SYS_CHROOT`; the mailbox variant
+also allows privilege escalation, because the rootless image gets
+`chroot` through file capabilities that the kernel ignores under
+`no_new_privs`. A namespace that runs a `MailServer` therefore must not
+enforce `restricted`: label it `pod-security.kubernetes.io/enforce:
+baseline` (or weaker). The reasons per capability are in
+[ADR 0006](../decisions/0006-network-policy-and-security-floor.md).
+
+## Resources
+
+Every data-plane container, init container and validation Job has cpu
+and memory requests and limits, from constants in
+`internal/manifests/resources.go` (the `MailServer` API has no
+resources field yet, so they cannot be changed per server). The Postfix
+pod (live mail queue) and the Dovecot pod (single replica, slow RWO
+failover) have the **Guaranteed** QoS class: requests equal limits in
+all their containers, so they are among the last pods evicted under
+node pressure. The Rspamd and Valkey pods are **Burstable** with the
+memory request equal to the limit. The defaults suit a small server
+(Postfix 500m cpu and 256Mi, Dovecot 500m and 512Mi, Rspamd 250m to 1
+cpu and 768Mi, Valkey 50m to 500m cpu and 512Mi) and are starting
+points, not measurements.
+
+## Availability
+
+- **Topology spread:** each workload spreads its own replicas
+  (`spec.availability.topologySpread`, `ScheduleAnyway`); the
+  constraint counts the pods of that component only.
+- **Disruption budgets:** Postfix keeps `spec.availability.postfixMinAvailable`
+  pods (default 1); the `NodeDrainable` condition warns when that
+  value keeps all replicas and so blocks every node drain. Rspamd has a
+  budget with `maxUnavailable: 1`: a drain evicts one Rspamd pod at a
+  time and is never blocked by it, even with a single replica. Dovecot
+  and Valkey are single replicas and have no budget (it would block
+  drains); a drain restarts them.
+- **Valkey rollouts:** with `spec.valkey.persistence` the Deployment
+  uses the `Recreate` strategy, because a rolling update would start
+  the new pod while the old one still holds the ReadWriteOnce volume.
+  Valkey is briefly down during such a rollout; Rspamd keeps scanning
+  without its shared state (rate limits and some modules degrade, mail
+  still flows and is signed). Without persistence the default rolling
+  update is used.
+
+## Backup annotations (k8up)
+
+k8up is an optional integration: CNMS works without it and only sets
+annotations. With `spec.backup.enabled` (default `true`) the managed
+PersistentVolumeClaims carry `k8up.io/backup`, the annotation named in
+the k8up annotations reference (2.16; values `'true'` and `'false'`,
+valid on a Pod or a PVC):
+
+| Volume | Annotation | Why |
+|--------|------------|-----|
+| Dovecot mail volume (`mail`) | `k8up.io/backup: "true"` | the mailboxes; maildir is safe for a file-level backup of a live volume |
+| Postfix queue volumes (`postfix-queue`) | `k8up.io/backup: "false"` | a restored queue delivers stale or duplicate mail |
+| Valkey volume | `k8up.io/backup: "false"` | rebuildable state (trained Bayes data excepted, a backlog item) |
+
+k8up backs up every PVC unless it is annotated `false` (or the operator
+runs with `BACKUP_SKIP_WITHOUT_ANNOTATION=true`, where only annotated
+volumes are backed up, hence the explicit `true`). It backs up
+ReadWriteOnce volumes by running the backup pod on the node where the
+volume is mounted ("classic scheduling" of the k8up docs). The `Schedule`
+and the repository credentials are yours to create. Pods are not
+annotated: that is only needed for application-aware backups
+(`k8up.io/backupcommand`), which CNMS does not use yet.
+
+Kubernetes does not allow changing the `volumeClaimTemplates` of an
+existing StatefulSet, and the StatefulSet controller copies a template's
+labels and annotations only onto PVCs it creates. The annotations on
+the Postfix and Dovecot volumes therefore apply to a server created with
+this version; annotate the PVCs of an older server by hand
+(`kubectl annotate pvc <name> k8up.io/backup=false`). With
+`spec.backup.enabled: false` CNMS sets no annotation and removes none.
+
 ## Status conditions
 
 `kubectl get mailserver` shows a `Ready` rollup; the reasons explain

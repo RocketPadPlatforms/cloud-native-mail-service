@@ -73,9 +73,10 @@ func postfixStatefulSet(server *cnmsv1alpha1.MailServer, r *render.RenderResult)
 						// The queue volume is group-owned by the
 						// postfix group (postfixQueueGroup) so the
 						// daemons can write it.
-						FSGroup: new(postfixQueueGroup),
+						FSGroup:        new(postfixQueueGroup),
+						SeccompProfile: podSeccomp(),
 					},
-					TopologySpreadConstraints: topologySpreadConstraints(server),
+					TopologySpreadConstraints: topologySpreadConstraints(server, render.ComponentPostfix),
 					Volumes: []corev1.Volume{
 						configVolume(configMapName(server, render.ComponentPostfix, r)),
 						tlsVolume(TLSSecretName(server)),
@@ -83,9 +84,11 @@ func postfixStatefulSet(server *cnmsv1alpha1.MailServer, r *render.RenderResult)
 							Name:         postfixQueueVolume,
 							VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: postfixQueueVolume}},
 						},
+						emptyDirVolume(postfixDataVolume),
+						emptyDirVolume(tmpVolumeName),
 					},
 					Containers: []corev1.Container{{
-						Name:  "postfix",
+						Name:  postfixContainerName,
 						Image: images.Postfix, // default CMD: the entrypoint
 						Ports: append([]corev1.ContainerPort{{Name: "smtp", ContainerPort: render.PortPostfixInbound}}, submissionPorts...),
 						VolumeMounts: append(configSubPathMounts(),
@@ -93,15 +96,24 @@ func postfixStatefulSet(server *cnmsv1alpha1.MailServer, r *render.RenderResult)
 							// path (the sidecar's mount is a
 							// different filesystem).
 							tlsMount(),
-							queueMount()),
+							queueMount(),
+							corev1.VolumeMount{Name: postfixDataVolume, MountPath: postfixDataDir}),
+						// Root with the capabilities of postfixMainCaps
+						// (security.go): the master binds, chowns,
+						// drops privileges and signals its daemons. The
+						// root filesystem is read-only; the data
+						// directory is an emptyDir (checked with the
+						// pinned image: start, mail, reload and stop).
+						// Postfix warns at start that the emptyDir is
+						// not owned by postfix and is world-writable;
+						// the daemons can write it, so the warning is
+						// harmless.
+						SecurityContext: rootSecurity(postfixMainCaps...),
+						Resources:       postfixMainResources,
 						// The certificate is a plain (non-subPath)
 						// mount: cert-manager updates the Secret in
 						// place, and the cert-reload sidecar reacts
 						// to it (renewal => reload, not rollout).
-						// The root FS is a documented exception to
-						// read-only (the master maintains
-						// postfix-files and the data spool; the
-						// queue is the only volume with mail).
 						// The startup probe gives a slow first start
 						// (empty queue volume, map builds) up to 150s
 						// before liveness can kill the container.
@@ -121,11 +133,8 @@ func postfixStatefulSet(server *cnmsv1alpha1.MailServer, r *render.RenderResult)
 							Name:  "CNMS_QUEUE_METRICS_PORT",
 							Value: fmt.Sprintf("%d", render.PortPostfixMetrics),
 						}},
-						SecurityContext: &corev1.SecurityContext{
-							RunAsUser:    new(postfixUserUID),
-							RunAsGroup:   new(postfixQueueGroup),
-							RunAsNonRoot: new(true),
-						},
+						SecurityContext: nonRootSecurity(postfixUserUID, postfixQueueGroup),
+						Resources:       postfixMetricsResources,
 						Ports: []corev1.ContainerPort{{
 							Name:          "postfix-metrics",
 							ContainerPort: render.PortPostfixMetrics,
@@ -133,8 +142,9 @@ func postfixStatefulSet(server *cnmsv1alpha1.MailServer, r *render.RenderResult)
 						// postqueue needs the config (postconf) and
 						// the queue (read-only: it only talks to the
 						// showq socket); the certificate is not used.
+						// The script writes its metrics file to /tmp.
 						VolumeMounts: append(configSubPathMounts(),
-							readOnlyMount(queueMount())),
+							readOnlyMount(queueMount()), tmpMount()),
 					}, {
 						// Certificate reload sidecar: polls the
 						// mounted certificate and runs `postfix
@@ -142,6 +152,10 @@ func postfixStatefulSet(server *cnmsv1alpha1.MailServer, r *render.RenderResult)
 						Name:    "cert-reload",
 						Image:   images.Postfix,
 						Command: certReloadLoop(postfixTLSDir+"/"+TLSCertFile, r.ReloadCommand),
+						// Root (`postfix reload` is superuser-only) with
+						// the two capabilities it needs (security.go).
+						SecurityContext: rootSecurity(postfixReloadCaps...),
+						Resources:       postfixReloadResources,
 						VolumeMounts: append(configSubPathMounts(),
 							tlsMount(),
 							// `postfix reload` talks to the master
@@ -151,7 +165,10 @@ func postfixStatefulSet(server *cnmsv1alpha1.MailServer, r *render.RenderResult)
 				},
 			},
 			VolumeClaimTemplates: []corev1.PersistentVolumeClaim{{
-				ObjectMeta: metav1.ObjectMeta{Name: postfixQueueVolume},
+				// The queue is transient: a restored queue delivers stale
+				// or duplicate mail (project plan, backup section), so
+				// k8up must not back it up.
+				ObjectMeta: volumeClaimMeta(server, render.ComponentPostfix, postfixQueueVolume, false),
 				Spec: corev1.PersistentVolumeClaimSpec{
 					AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
 					Resources: corev1.VolumeResourceRequirements{
@@ -188,7 +205,10 @@ func dovecotStatefulSet(server *cnmsv1alpha1.MailServer, r *render.RenderResult)
 			corev1.ContainerPort{Name: "imap", ContainerPort: render.PortDovecotIMAPListen},
 			corev1.ContainerPort{Name: "imaps", ContainerPort: render.PortDovecotIMAPSListen})
 		volumeClaimTemplates = []corev1.PersistentVolumeClaim{{
-			ObjectMeta: metav1.ObjectMeta{Name: dovecotMailVolume},
+			// The mail volume is the backup target (k8up backs up
+			// PVCs unless excluded; the explicit "true" also holds
+			// when k8up only backs up annotated volumes).
+			ObjectMeta: volumeClaimMeta(server, render.ComponentDovecot, dovecotMailVolume, true),
 			Spec: corev1.PersistentVolumeClaimSpec{
 				AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
 				Resources: corev1.VolumeResourceRequirements{
@@ -221,17 +241,17 @@ func dovecotStatefulSet(server *cnmsv1alpha1.MailServer, r *render.RenderResult)
 						// The image runs rootless as vmail; fsGroup
 						// group-owns the emptyDir runtime and the
 						// mail volume (dovecotVmailID).
-						FSGroup: new(dovecotVmailID),
+						FSGroup:        new(dovecotVmailID),
+						SeccompProfile: podSeccomp(),
 					},
-					TopologySpreadConstraints: topologySpreadConstraints(server),
+					TopologySpreadConstraints: topologySpreadConstraints(server, render.ComponentDovecot),
 					Volumes: []corev1.Volume{
 						configVolume(configMapName(server, render.ComponentDovecot, r)),
 						usersVolume(secretName(server, render.ComponentDovecot, r)),
 						tlsVolume(TLSSecretName(server)),
-						{
-							Name:         "run",
-							VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
-						},
+						emptyDirVolume(runVolumeName),
+						// doveconf writes its binary configuration here.
+						emptyDirVolume(tmpVolumeName),
 					},
 					// Dovecot 2.4.5 cannot start without the certificate
 					// files (fatal at startup, whatever ssl says), and
@@ -240,18 +260,22 @@ func dovecotStatefulSet(server *cnmsv1alpha1.MailServer, r *render.RenderResult)
 					// the pod stays in Init until cert-manager has
 					// issued the Secret instead of crash-looping.
 					InitContainers: []corev1.Container{{
-						Name:         waitTLSContainerName,
-						Image:        images.Postfix, // busybox sh and sleep
-						Command:      waitForTLSFiles(dovecotSSLDir()),
-						VolumeMounts: []corev1.VolumeMount{{Name: tlsVolumeName, MountPath: dovecotSSLDir(), ReadOnly: true}},
+						Name:            waitTLSContainerName,
+						Image:           images.Postfix, // busybox sh and sleep
+						Command:         waitForTLSFiles(dovecotSSLDir()),
+						VolumeMounts:    []corev1.VolumeMount{{Name: tlsVolumeName, MountPath: dovecotSSLDir(), ReadOnly: true}},
+						SecurityContext: nonRootSecurity(nobodyID, nobodyID),
+						Resources:       dovecotWaitTLSResources,
 					}},
 					Containers: []corev1.Container{{
-						Name:           "dovecot",
-						Image:          images.Dovecot, // default CMD: tini + dovecot -F
-						Ports:          ports,
-						VolumeMounts:   dovecotMounts(mailboxes),
-						ReadinessProbe: portProbe(probePort),
-						LivenessProbe:  portProbe(probePort),
+						Name:            dovecotContainerName,
+						Image:           images.Dovecot, // default CMD: tini + dovecot -F
+						Ports:           ports,
+						VolumeMounts:    dovecotMounts(mailboxes),
+						SecurityContext: dovecotSecurity(mailboxes),
+						Resources:       dovecotMainResources,
+						ReadinessProbe:  portProbe(probePort),
+						LivenessProbe:   portProbe(probePort),
 					}, {
 						// The loop needs coreutils (sleep,
 						// sha256sum), which the minimal Dovecot
@@ -262,7 +286,8 @@ func dovecotStatefulSet(server *cnmsv1alpha1.MailServer, r *render.RenderResult)
 						// shared runtime directory.
 						Name:            "cert-reload",
 						Image:           images.Postfix,
-						SecurityContext: &corev1.SecurityContext{RunAsUser: new(dovecotVmailID)},
+						SecurityContext: nonRootSecurity(dovecotVmailID, dovecotVmailID),
+						Resources:       dovecotReloadResources,
 						Command: certReloadLoop(dovecotSSLDir()+"/"+TLSCertFile,
 							[]string{"kill", "-HUP", "$(cat " + dovecotRunDir + "/master.pid)"}),
 						// Only the certificate and the pidfile; the
@@ -306,9 +331,10 @@ func rspamdDeployment(server *cnmsv1alpha1.MailServer, r *render.RenderResult) *
 				},
 				Spec: corev1.PodSpec{
 					SecurityContext: &corev1.PodSecurityContext{
-						FSGroup: new(rspamdGroupID),
+						FSGroup:        new(rspamdGroupID),
+						SeccompProfile: podSeccomp(),
 					},
-					TopologySpreadConstraints: topologySpreadConstraints(server),
+					TopologySpreadConstraints: topologySpreadConstraints(server, render.ComponentRspamd),
 					Volumes: []corev1.Volume{
 						configVolume(configMapName(server, render.ComponentRspamd, r)),
 						{
@@ -325,8 +351,10 @@ func rspamdDeployment(server *cnmsv1alpha1.MailServer, r *render.RenderResult) *
 						},
 					},
 					Containers: []corev1.Container{{
-						Name:  "rspamd",
-						Image: images.Rspamd, // default CMD: rspamd -f
+						Name:            "rspamd",
+						SecurityContext: nonRootSecurity(rspamdUserID, rspamdGroupID),
+						Resources:       rspamdMainResources,
+						Image:           images.Rspamd, // default CMD: rspamd -f
 						// The controller port is for the probes and
 						// loopback clients only; no Service exposes it.
 						Ports:          []corev1.ContainerPort{{Name: "milter", ContainerPort: render.PortRspamdMilter}, {Name: "controller", ContainerPort: render.PortRspamdController}},
@@ -339,19 +367,13 @@ func rspamdDeployment(server *cnmsv1alpha1.MailServer, r *render.RenderResult) *
 						// it on 9151. It runs in the Postfix image
 						// for busybox (wget, httpd), which the Rspamd
 						// image lacks.
-						Name:    rspamdMetricsContainer,
-						Image:   images.Postfix,
-						Command: rspamdMetricsLoop(render.PortRspamdMetrics, render.PortRspamdController),
-						SecurityContext: &corev1.SecurityContext{
-							RunAsUser:                new(nobodyID),
-							RunAsGroup:               new(nobodyID),
-							RunAsNonRoot:             new(true),
-							ReadOnlyRootFilesystem:   new(true),
-							AllowPrivilegeEscalation: new(false),
-							Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
-						},
-						Ports:        []corev1.ContainerPort{{Name: rspamdMetricsContainer, ContainerPort: render.PortRspamdMetrics}},
-						VolumeMounts: []corev1.VolumeMount{{Name: tmpVolumeName, MountPath: "/tmp"}},
+						Name:            rspamdMetricsContainer,
+						Image:           images.Postfix,
+						Command:         rspamdMetricsLoop(render.PortRspamdMetrics, render.PortRspamdController),
+						SecurityContext: nonRootSecurity(nobodyID, nobodyID),
+						Resources:       rspamdMetricsResources,
+						Ports:           []corev1.ContainerPort{{Name: rspamdMetricsContainer, ContainerPort: render.PortRspamdMetrics}},
+						VolumeMounts:    []corev1.VolumeMount{tmpMount()},
 					}},
 				},
 			},
@@ -380,10 +402,20 @@ func valkeyDeployment(server *cnmsv1alpha1.MailServer, r *render.RenderResult) *
 			VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
 		}
 	}
+	// A rolling update starts the new pod before it stops the old one,
+	// and the new pod cannot attach the ReadWriteOnce data volume while
+	// the old one holds it (on another node), so the rollout would hang.
+	// With persistence the old pod is stopped first; without it the
+	// default rolling update is fine (emptyDir, no volume to hand over).
+	var strategy appsv1.DeploymentStrategy
+	if valkeyPersistence(server) {
+		strategy.Type = appsv1.RecreateDeploymentStrategyType
+	}
 	return &appsv1.Deployment{
 		ObjectMeta: objectMeta(server, name, render.ComponentValkey),
 		Spec: appsv1.DeploymentSpec{
 			Replicas: &replicas,
+			Strategy: strategy,
 			Selector: componentSelector(server, render.ComponentValkey),
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
@@ -391,23 +423,34 @@ func valkeyDeployment(server *cnmsv1alpha1.MailServer, r *render.RenderResult) *
 					Annotations: podAnnotations(render.ComponentValkey, r),
 				},
 				Spec: corev1.PodSpec{
-					TopologySpreadConstraints: topologySpreadConstraints(server),
+					SecurityContext: &corev1.PodSecurityContext{
+						// The container runs as the valkey user, not as
+						// root dropping to it, so the volume has to be
+						// group-writable for it.
+						FSGroup:        new(valkeyID),
+						SeccompProfile: podSeccomp(),
+					},
+					TopologySpreadConstraints: topologySpreadConstraints(server, render.ComponentValkey),
 					Volumes: []corev1.Volume{
 						configVolume(configMapName(server, render.ComponentValkey, r)),
 						dataVolume,
 					},
 					Containers: []corev1.Container{{
-						Name:           "valkey",
-						Image:          images.Valkey, // default entrypoint; the conf path is the arg
-						Args:           []string{"/etc/valkey/valkey.conf"},
-						Ports:          []corev1.ContainerPort{{Name: valkeyPortName, ContainerPort: render.PortValkey}},
-						VolumeMounts:   []corev1.VolumeMount{{Name: configVolumeName, MountPath: "/etc/valkey", ReadOnly: true}, {Name: valkeyDataVolume, MountPath: "/data"}},
-						ReadinessProbe: portProbe(render.PortValkey),
-						LivenessProbe:  portProbe(render.PortValkey),
+						Name:            "valkey",
+						Image:           images.Valkey, // default entrypoint; the conf path is the arg
+						SecurityContext: nonRootSecurity(valkeyID, valkeyID),
+						Resources:       valkeyMainResources,
+						Args:            []string{"/etc/valkey/valkey.conf"},
+						Ports:           []corev1.ContainerPort{{Name: valkeyPortName, ContainerPort: render.PortValkey}},
+						VolumeMounts:    []corev1.VolumeMount{{Name: configVolumeName, MountPath: "/etc/valkey", ReadOnly: true}, {Name: valkeyDataVolume, MountPath: "/data"}},
+						ReadinessProbe:  portProbe(render.PortValkey),
+						LivenessProbe:   portProbe(render.PortValkey),
 					}, {
 						// Metrics sidecar (ADR 0005).
-						Name:  "redis-exporter",
-						Image: images.RedisExporter,
+						Name:            "redis-exporter",
+						Image:           images.RedisExporter,
+						SecurityContext: nonRootSecurity(nobodyID, nobodyID),
+						Resources:       valkeyExporterResources,
 						Args: []string{
 							// The flag is redis.addr (not
 							// redis.address) in the pinned exporter.
@@ -429,8 +472,12 @@ func valkeyDeployment(server *cnmsv1alpha1.MailServer, r *render.RenderResult) *
 func valkeyPersistentVolumeClaim(server *cnmsv1alpha1.MailServer) *corev1.PersistentVolumeClaim {
 	name := render.ServiceName(server.Name, render.ComponentValkey)
 	storage := quantityValue(server.Spec.Valkey.Storage, resource.MustParse("1Gi"))
+	meta := objectMeta(server, name+"-"+valkeyDataVolume, render.ComponentValkey)
+	// Excluded from k8up: the state is rebuildable (except trained
+	// Bayes data; an opt-in with a consistent dump is the backlog).
+	meta.Annotations = backupAnnotations(server, false)
 	return &corev1.PersistentVolumeClaim{
-		ObjectMeta: objectMeta(server, name+"-"+valkeyDataVolume, render.ComponentValkey),
+		ObjectMeta: meta,
 		Spec: corev1.PersistentVolumeClaimSpec{
 			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
 			Resources: corev1.VolumeResourceRequirements{
@@ -443,6 +490,19 @@ func valkeyPersistentVolumeClaim(server *cnmsv1alpha1.MailServer) *corev1.Persis
 }
 
 // shared volume and mount helpers.
+
+// volumeClaimMeta is the metadata of a StatefulSet volumeClaimTemplate:
+// the name, the managed labels and the k8up annotation. The
+// StatefulSet controller copies both onto the PVCs it creates; the
+// templates of an existing StatefulSet cannot change, so the labels
+// and annotations reach only PVCs created after the StatefulSet.
+func volumeClaimMeta(server *cnmsv1alpha1.MailServer, c render.Component, name string, backup bool) metav1.ObjectMeta {
+	return metav1.ObjectMeta{
+		Name:        name,
+		Labels:      objectLabels(server, c),
+		Annotations: backupAnnotations(server, backup),
+	}
+}
 
 func objectMeta(server *cnmsv1alpha1.MailServer, name string, c render.Component) metav1.ObjectMeta {
 	return metav1.ObjectMeta{
@@ -541,6 +601,7 @@ func dovecotMounts(withMailVolume bool) []corev1.VolumeMount {
 		{Name: usersVolumeName, MountPath: render.DovecotUsersDir, ReadOnly: true},
 		{Name: tlsVolumeName, MountPath: dovecotSSLDir(), ReadOnly: true},
 		{Name: runVolumeName, MountPath: dovecotRunDir},
+		tmpMount(),
 	}
 	if withMailVolume {
 		mounts = append(mounts, corev1.VolumeMount{Name: dovecotMailVolume, MountPath: "/srv/mail"})

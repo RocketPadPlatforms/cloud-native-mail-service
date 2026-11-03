@@ -32,6 +32,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -82,6 +83,14 @@ const (
 	// managed-by app label of CNMS-managed resources.
 	ManagedByValue = "cnms"
 
+	// K8upBackupAnnotation includes ("true") or excludes ("false") a
+	// PersistentVolumeClaim from k8up file-level backups. Verified
+	// against the k8up documentation (Annotations Reference and Backup
+	// how-to, 2.16): `k8up.io/backup` takes the strings 'true' and
+	// 'false' on a Pod or PVC; without it k8up backs up every PVC
+	// unless the operator runs with BACKUP_SKIP_WITHOUT_ANNOTATION.
+	K8upBackupAnnotation = "k8up.io/backup"
+
 	// ServerLabel carries the MailServer name on all its objects.
 	ServerLabel = "cnms.rpp.gmbh/mailserver"
 
@@ -108,6 +117,9 @@ const (
 	queueMetricsContainerName = "queue-metrics"
 	certReloadContainerName   = "cert-reload"
 	waitTLSContainerName      = "wait-tls"
+	postfixContainerName      = "postfix"
+	dovecotContainerName      = "dovecot"
+	tmpDir                    = "/tmp"
 	rspamdMetricsContainer    = "rspamd-metrics"
 	tmpVolumeName             = "tmp"
 	configVolumeName          = "config"
@@ -121,6 +133,11 @@ const (
 	// postfixTLSDir is the Postfix certificate directory (matches the
 	// rendered main.cf, ADR 0004).
 	postfixTLSDir = "/etc/postfix/tls"
+	// postfixDataVolume and postfixDataDir are the Postfix data_directory
+	// (master lock, TLS PRNG state) on an emptyDir: the root filesystem
+	// is read-only.
+	postfixDataVolume = "postfix-data"
+	postfixDataDir    = "/var/lib/postfix"
 	// rspamdStateDir is the Rspamd on-disk module state directory
 	// (ADR 0004: emptyDir; shared state lives in Valkey).
 	rspamdStateDir = "/var/lib/rspamd"
@@ -135,9 +152,15 @@ const (
 	// vmail): the pod fsGroup for /var/run/dovecot and the mail
 	// volume.
 	dovecotVmailID int64 = 1000
-	// Rspamd user GID (the image runs as _rspamd, uid/gid 11333):
-	// the pod fsGroup for the state emptyDir.
+	// Rspamd user and group (the image runs as _rspamd, uid/gid
+	// 11333): the group is the pod fsGroup for the state emptyDir.
+	rspamdUserID  int64 = 11333
 	rspamdGroupID int64 = 11333
+	// Valkey user and group (the image's valkey account, uid/gid 999):
+	// the container runs as this user directly and the pod fsGroup
+	// makes the data volume writable for it (the image entrypoint
+	// would chown it as root).
+	valkeyID int64 = 999
 	// nobodyID is the unprivileged user of the Rspamd metrics sidecar.
 	nobodyID int64 = 65534
 )
@@ -208,7 +231,7 @@ func Build(req *render.RenderRequest, renders map[render.Component]*render.Rende
 	dp.Base = append(dp.Base, certificate(req))
 	// Network policies and the disruption budget (ADR 0006).
 	dp.Base = append(dp.Base, networkPolicies(server)...)
-	dp.Base = append(dp.Base, postfixPodDisruptionBudget(server))
+	dp.Base = append(dp.Base, postfixPodDisruptionBudget(server), rspamdPodDisruptionBudget(server))
 	dp.Workloads = []client.Object{
 		postfixStatefulSet(server, renders[render.ComponentPostfix]),
 		dovecotStatefulSet(server, renders[render.ComponentDovecot]),
@@ -433,6 +456,28 @@ func quantityValue(p *resource.Quantity, def resource.Quantity) resource.Quantit
 
 // component helpers.
 
+// backupEnabled reports whether the managed volumes carry k8up
+// annotations (spec.backup.enabled, default true).
+func backupEnabled(server *cnmsv1alpha1.MailServer) bool {
+	if server.Spec.Backup == nil {
+		return true // API default
+	}
+	return boolValue(server.Spec.Backup.Enabled, true)
+}
+
+// backupAnnotations is the k8up annotation set of a volume: nil when
+// the MailServer does not manage them, else include says whether the
+// volume is backed up. Only PVCs are annotated: pods would need the
+// annotation for application-aware backups (k8up.io/backupcommand),
+// which CNMS does not use yet, and a pod annotation would roll the
+// pods whenever spec.backup.enabled changes.
+func backupAnnotations(server *cnmsv1alpha1.MailServer, include bool) map[string]string {
+	if !backupEnabled(server) {
+		return nil
+	}
+	return map[string]string{K8upBackupAnnotation: strconv.FormatBool(include)}
+}
+
 func submissionEnabled(server *cnmsv1alpha1.MailServer) bool {
 	if server.Spec.Submission == nil {
 		return true // API default
@@ -455,9 +500,12 @@ func valkeyPersistence(server *cnmsv1alpha1.MailServer) bool {
 }
 
 // topologySpreadConstraints builds the constraints from
-// spec.availability.topologySpread (or the API defaults) for all
-// data-plane pods of the MailServer.
-func topologySpreadConstraints(server *cnmsv1alpha1.MailServer) []corev1.TopologySpreadConstraint {
+// spec.availability.topologySpread (or the API defaults) for the pods
+// of one component. The selector counts only the pods of that
+// component: with the whole MailServer, the skew would be measured
+// across Postfix, Rspamd, Dovecot and Valkey together, which spreads
+// the replicas of one component badly.
+func topologySpreadConstraints(server *cnmsv1alpha1.MailServer, c render.Component) []corev1.TopologySpreadConstraint {
 	var maxSkew int32 = 1
 	var topologyKey = "kubernetes.io/hostname"
 	if server.Spec.Availability != nil && server.Spec.Availability.TopologySpread != nil {
@@ -469,7 +517,7 @@ func topologySpreadConstraints(server *cnmsv1alpha1.MailServer) []corev1.Topolog
 		MaxSkew:           maxSkew,
 		TopologyKey:       topologyKey,
 		WhenUnsatisfiable: corev1.ScheduleAnyway,
-		LabelSelector:     serverSelector(server),
+		LabelSelector:     componentSelector(server, c),
 	}}
 }
 

@@ -186,6 +186,7 @@ func TestBuildObjectSet(t *testing.T) {
 		{kindNetworkPolicy, n + "-egress-smtp"},
 		{kindNetworkPolicy, n + "-egress-rspamd"},
 		{kindPodDisruptionBudget, n + "-postfix"},
+		{kindPodDisruptionBudget, n + "-rspamd"},
 		{kindCertificate, n},
 	}
 	for _, wk := range want {
@@ -374,23 +375,24 @@ func TestDovecotStatefulSet(t *testing.T) {
 	if hasPort(svc, "imap") || hasPort(svc, "imaps") {
 		t.Error("dovecot service exposes IMAP without mailboxes")
 	}
+}
 
-	// With mailboxes.
-	objs = build(t, func(s *cnmsv1alpha1.MailServer) {
+func TestDovecotStatefulSetWithMailboxes(t *testing.T) {
+	objs := build(t, func(s *cnmsv1alpha1.MailServer) {
 		s.Spec.Mailboxes = &cnmsv1alpha1.Mailboxes{Enabled: new(true)}
 	})
-	sts = mustFind[*appsv1.StatefulSet](t, find(t, objs, kindStatefulSet, testName+"-dovecot"), testName+"-dovecot")
+	sts := mustFind[*appsv1.StatefulSet](t, find(t, objs, kindStatefulSet, testName+"-dovecot"), testName+"-dovecot")
 	if len(sts.Spec.VolumeClaimTemplates) != 1 || sts.Spec.VolumeClaimTemplates[0].Name != dovecotMailVolume {
 		t.Fatalf("volumeClaimTemplates = %v", sts.Spec.VolumeClaimTemplates)
 	}
 	if q := sts.Spec.VolumeClaimTemplates[0].Spec.Resources.Requests[corev1.ResourceStorage]; q.Cmp(resource.MustParse("10Gi")) != 0 {
 		t.Errorf("mail storage = %v, want 10Gi (default)", q)
 	}
-	main = sts.Spec.Template.Spec.Containers[0]
+	main := sts.Spec.Template.Spec.Containers[0]
 	if !hasMount(main.VolumeMounts, dovecotMailVolume, "/srv/mail") {
 		t.Error("dovecot main container misses the mail mount")
 	}
-	svc = mustFind[*corev1.Service](t, find(t, objs, kindService, testName+"-dovecot"), testName+"-dovecot")
+	svc := mustFind[*corev1.Service](t, find(t, objs, kindService, testName+"-dovecot"), testName+"-dovecot")
 	if !hasPort(svc, "imap") || !hasPort(svc, "imaps") {
 		t.Error("dovecot service must expose IMAP with mailboxes")
 	}
@@ -464,7 +466,7 @@ func assertRspamdMetricsSidecar(t *testing.T, dep *appsv1.Deployment, objs []cli
 	if len(side.Ports) != 1 || side.Ports[0].ContainerPort != render.PortRspamdMetrics || side.Ports[0].Name != rspamdMetricsContainer {
 		t.Errorf("sidecar ports = %v", side.Ports)
 	}
-	if !hasMount(side.VolumeMounts, tmpVolumeName, "/tmp") {
+	if !hasMount(side.VolumeMounts, tmpVolumeName, tmpDir) {
 		t.Error("sidecar misses the /tmp scratch mount")
 	}
 	script := side.Command[2]
@@ -1065,7 +1067,7 @@ func TestGeneratedNamesFitLimit(t *testing.T) {
 }
 
 func TestCertReloadLoopBaselinesBeforeLoop(t *testing.T) {
-	script := certReloadLoop("/tls/tls.crt", []string{"postfix", "reload"})[2]
+	script := certReloadLoop("/tls/tls.crt", []string{postfixContainerName, "reload"})[2]
 	baseline := strings.Index(script, "last=$(sum)")
 	loop := strings.Index(script, "while :")
 	if baseline < 0 || loop < 0 || baseline > loop {
@@ -1194,5 +1196,101 @@ func TestDovecotWaitsForTheCertificate(t *testing.T) {
 				t.Error("the certificate Secret volume must stay optional")
 			}
 		}
+	}
+}
+
+// The topology spread counts the pods of the workload's own component
+// only: its selector is the component selector, which the pod
+// template labels satisfy, and it excludes the other components.
+func TestTopologySpreadSelectsOwnComponent(t *testing.T) {
+	for _, pc := range allPods(t, true) {
+		if pc.validation {
+			continue
+		}
+		if len(pc.pod.TopologySpreadConstraints) != 1 {
+			t.Fatalf("%s: topology spread constraints = %v", pc.name, pc.pod.TopologySpreadConstraints)
+		}
+		sel := pc.pod.TopologySpreadConstraints[0].LabelSelector.MatchLabels
+		component := strings.TrimPrefix(pc.name, testName+"-")
+		if sel[componentLabel] != component || sel[ServerLabel] != testName {
+			t.Errorf("%s: spread selector = %v, want the %s component of %s", pc.name, sel, component, testName)
+		}
+	}
+}
+
+// A persistent Valkey volume is ReadWriteOnce: a rolling update would
+// start the new pod while the old one still holds the volume, so the
+// Deployment recreates instead.
+func TestValkeyRecreatesWithPersistence(t *testing.T) {
+	strategy := func(persistence bool) appsv1.DeploymentStrategyType {
+		objs := build(t, func(s *cnmsv1alpha1.MailServer) {
+			s.Spec.Valkey = &cnmsv1alpha1.Valkey{Persistence: new(persistence)}
+			if persistence {
+				s.Spec.Valkey.Storage = new(resource.MustParse("1Gi"))
+			}
+		})
+		dep := mustFind[*appsv1.Deployment](t, find(t, objs, kindDeployment, testName+"-valkey"), "valkey")
+		return dep.Spec.Strategy.Type
+	}
+	if got := strategy(true); got != appsv1.RecreateDeploymentStrategyType {
+		t.Errorf("persistent Valkey strategy = %q, want Recreate", got)
+	}
+	if got := strategy(false); got == appsv1.RecreateDeploymentStrategyType {
+		t.Errorf("ephemeral Valkey strategy = %q, want the default rolling update", got)
+	}
+}
+
+// The Rspamd budget allows one eviction at a time and never blocks a
+// drain, whatever the replica count: maxUnavailable 1 allows an
+// eviction even with a single replica (minAvailable 1 would not).
+func TestRspamdPodDisruptionBudget(t *testing.T) {
+	for _, replicas := range []int32{1, 2, 5} {
+		objs := build(t, func(s *cnmsv1alpha1.MailServer) {
+			s.Spec.Rspamd = &cnmsv1alpha1.Rspamd{Replicas: &replicas}
+		})
+		pdb := mustFind[*policyv1.PodDisruptionBudget](t, find(t, objs, kindPodDisruptionBudget, testName+"-rspamd"), "rspamd pdb")
+		if pdb.Spec.MaxUnavailable == nil || pdb.Spec.MaxUnavailable.IntVal != 1 || pdb.Spec.MinAvailable != nil {
+			t.Errorf("replicas=%d: PDB = %+v, want maxUnavailable 1 only", replicas, pdb.Spec)
+		}
+		sel := pdb.Spec.Selector.MatchLabels
+		if sel[componentLabel] != string(render.ComponentRspamd) || sel[ServerLabel] != testName {
+			t.Errorf("PDB selector = %v, want the Rspamd pods of %s", sel, testName)
+		}
+	}
+}
+
+// k8up annotations (spec.backup.enabled, default on): the Postfix
+// queue and the Valkey volume are excluded, the Dovecot mail volume
+// is included; with backup disabled no annotation is set. The managed
+// labels are on the claim templates too.
+func TestK8upAnnotations(t *testing.T) {
+	annotations := func(backup *cnmsv1alpha1.Backup) (queue, mail, data map[string]string) {
+		objs := build(t, func(s *cnmsv1alpha1.MailServer) {
+			s.Spec.Backup = backup
+			s.Spec.Mailboxes = &cnmsv1alpha1.Mailboxes{Enabled: new(true)}
+			s.Spec.Valkey = &cnmsv1alpha1.Valkey{Persistence: new(true), Storage: new(resource.MustParse("1Gi"))}
+		})
+		pf := mustFind[*appsv1.StatefulSet](t, find(t, objs, kindStatefulSet, testName+"-postfix"), "postfix")
+		dv := mustFind[*appsv1.StatefulSet](t, find(t, objs, kindStatefulSet, testName+"-dovecot"), "dovecot")
+		pvc := mustFind[*corev1.PersistentVolumeClaim](t, find(t, objs, kindPersistentVolumeClaim, testName+"-valkey-"+valkeyDataVolume), "valkey pvc")
+		for _, tpl := range []corev1.PersistentVolumeClaim{pf.Spec.VolumeClaimTemplates[0], dv.Spec.VolumeClaimTemplates[0]} {
+			if tpl.Labels[ManagedByLabel] != ManagedByValue || tpl.Labels[ServerLabel] != testName {
+				t.Errorf("claim template %s misses the managed labels: %v", tpl.Name, tpl.Labels)
+			}
+		}
+		return pf.Spec.VolumeClaimTemplates[0].Annotations, dv.Spec.VolumeClaimTemplates[0].Annotations, pvc.Annotations
+	}
+
+	for name, backup := range map[string]*cnmsv1alpha1.Backup{
+		"default": nil, "enabled": {Enabled: new(true)}, "unset": {},
+	} {
+		queue, mail, data := annotations(backup)
+		if queue[K8upBackupAnnotation] != "false" || data[K8upBackupAnnotation] != "false" || mail[K8upBackupAnnotation] != "true" {
+			t.Errorf("%s: queue=%v mail=%v valkey=%v, want queue and valkey excluded, mail included", name, queue, mail, data)
+		}
+	}
+	queue, mail, data := annotations(&cnmsv1alpha1.Backup{Enabled: new(false)})
+	if len(queue) != 0 || len(mail) != 0 || len(data) != 0 {
+		t.Errorf("backup disabled: annotations queue=%v mail=%v valkey=%v, want none", queue, mail, data)
 	}
 }

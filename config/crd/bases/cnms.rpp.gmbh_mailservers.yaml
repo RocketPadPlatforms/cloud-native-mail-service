@@ -89,12 +89,17 @@ spec:
                     type: object
                 type: object
               backup:
-                description: Backup settings (k8up annotations on managed resources).
+                description: Backup settings (k8up annotations on the managed volumes).
                 properties:
                   enabled:
                     default: true
-                    description: Annotate managed volumes and pods for k8up. Defaults
-                      to true.
+                    description: |-
+                      Annotate the managed PersistentVolumeClaims for k8up
+                      (k8up.io/backup): the Dovecot mail volume is included, the
+                      Postfix queue volumes and the Valkey volume are excluded.
+                      Kubernetes cannot change the claim templates of an existing
+                      StatefulSet, so the annotation reaches the Postfix and Dovecot
+                      volumes created after the StatefulSet. Defaults to true.
                     type: boolean
                 type: object
               directoryRef:

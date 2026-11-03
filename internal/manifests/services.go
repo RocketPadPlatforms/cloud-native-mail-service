@@ -331,6 +331,23 @@ func postfixPodDisruptionBudget(server *cnmsv1alpha1.MailServer) *policyv1.PodDi
 	}
 }
 
+// rspamdPodDisruptionBudget lets a node drain evict one Rspamd pod at
+// a time. maxUnavailable 1 (not minAvailable 1) so the budget never
+// blocks a drain: it always allows one eviction, even with a single
+// replica, and with two or more replicas at least all but one stay
+// available.
+func rspamdPodDisruptionBudget(server *cnmsv1alpha1.MailServer) *policyv1.PodDisruptionBudget {
+	return &policyv1.PodDisruptionBudget{
+		ObjectMeta: objectMeta(server, render.ServiceName(server.Name, render.ComponentRspamd), render.ComponentRspamd),
+		Spec: policyv1.PodDisruptionBudgetSpec{
+			MaxUnavailable: new(intstr.FromInt32(1)),
+			Selector: &metav1.LabelSelector{
+				MatchLabels: componentSelector(server, render.ComponentRspamd).MatchLabels,
+			},
+		},
+	}
+}
+
 // certificate renders the cert-manager Certificate for the MailServer
 // (unstructured, so the operator works without the cert-manager
 // CRDs, principle 10). Unauthorized domains are dropped from the SANs

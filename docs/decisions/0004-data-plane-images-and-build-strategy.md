@@ -32,9 +32,10 @@ container image with a known user, writable paths, and a log path
    submission listener; LDAP and SQLite for the Phase 3 directory
    lookups; LMDB as the default map store). The entrypoint runs the
    master as root; the master drops privileges to the `postfix` user
-   for all daemons, and the queue lives on a per-replica volume (the
-   root FS is a documented exception to read-only for the master's
-   runtime files). Logging goes through postlog with
+   for all daemons, and the queue lives on a per-replica volume. The
+   root FS is read-only; the data directory (`/var/lib/postfix`) is an
+   `emptyDir` (ADR 0006 lists the capabilities the root master keeps).
+   Logging goes through postlog with
    `maillog_file = /dev/stdout`; the master must run with `-s`
    (`postfix start-fg`) to keep stdout open — a plain `postfix start`
    runs `master -w`, which discards the master's stdout to `/dev/null`

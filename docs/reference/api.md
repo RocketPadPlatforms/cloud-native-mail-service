@@ -37,7 +37,7 @@ _Appears in:_
 
 
 
-Backup configures backup annotations (k8up) on managed resources.
+Backup configures backup annotations (k8up) on the managed volumes.
 
 
 
@@ -46,7 +46,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `enabled` _boolean_ | Annotate managed volumes and pods for k8up. Defaults to true. | true | Optional: \{\} <br /> |
+| `enabled` _boolean_ | Annotate the managed PersistentVolumeClaims for k8up<br />(k8up.io/backup): the Dovecot mail volume is included, the<br />Postfix queue volumes and the Valkey volume are excluded.<br />Kubernetes cannot change the claim templates of an existing<br />StatefulSet, so the annotation reaches the Postfix and Dovecot<br />volumes created after the StatefulSet. Defaults to true. | true | Optional: \{\} <br /> |
 
 
 #### DKIM
@@ -539,7 +539,7 @@ _Appears in:_
 | `valkey` _[Valkey](#valkey)_ | Valkey (Rspamd state) settings. |  | Optional: \{\} <br /> |
 | `availability` _[Availability](#availability)_ | Availability settings (disruption budget, topology spread). |  | Optional: \{\} <br /> |
 | `observability` _[Observability](#observability)_ | Observability settings. |  | Optional: \{\} <br /> |
-| `backup` _[Backup](#backup)_ | Backup settings (k8up annotations on managed resources). |  | Optional: \{\} <br /> |
+| `backup` _[Backup](#backup)_ | Backup settings (k8up annotations on the managed volumes). |  | Optional: \{\} <br /> |
 
 
 #### MailServerStatus

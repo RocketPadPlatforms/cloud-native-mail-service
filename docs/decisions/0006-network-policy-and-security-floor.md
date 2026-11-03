@@ -137,6 +137,42 @@ narrowing of port-25 egress arrives with Phase 7.
    `kustomize build` on it and runs in the lint workflow. That does not
    validate the Cilium schema or the policy's effect.
 
+6. **Pod security floor** (`internal/manifests/security.go`, asserted
+   by unit tests on every rendered pod): all pods use the runtime's
+   default seccomp profile; every container drops all capabilities,
+   forbids privilege escalation and has a read-only root filesystem
+   (scratch paths are `emptyDir` mounts). Capabilities were found by
+   running the pinned images with `--cap-drop ALL` and removing the
+   added ones one at a time.
+    - **Restricted:** Rspamd, Valkey, the exporter and metrics
+      sidecars, the `wait-tls` init container and the validation Jobs of
+      Rspamd, Dovecot and Valkey run as an unprivileged user with no
+      added capability and satisfy the Pod Security `restricted`
+      profile on their own.
+    - **Exception, Postfix:** the master runs as root and keeps
+      `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `SETUID`, `SETGID`, `KILL` and
+      `NET_BIND_SERVICE`. Without `CHOWN`, `DAC_OVERRIDE`, `FOWNER`,
+      `SETUID` or `SETGID` it does not start; `NET_BIND_SERVICE` is
+      needed to bind 25 and 587 where the node does not lower
+      `net.ipv4.ip_unprivileged_port_start`; `KILL` lets the root master
+      signal the daemons it runs as `postfix` (Postfix source
+      `master_delete_children` waits for children it signalled). The
+      cert-reload sidecar keeps `SETUID` and `SETGID` for `postfix
+      reload`; the validation Job keeps the first five. The queue
+      metrics sidecar runs as the postfix user.
+    - **Exception, Dovecot:** the rootless image gets `chroot` through
+      file capabilities (`cap_sys_chroot` on anvil and the login
+      processes), so `SYS_CHROOT` stays in the bounding set. The
+      kernel ignores file capabilities under `no_new_privs`: with
+      mailboxes `imap-login` fails on `chroot` when
+      `allowPrivilegeEscalation` is false, so that pod allows it (the
+      auth-only pod does not).
+    - **Consequence:** the Postfix and Dovecot pods are rejected in a
+      namespace that enforces `restricted`. A namespace that runs a
+      `MailServer` has to enforce at most `baseline` (all added
+      capabilities are in the baseline allow list). Validated with unit
+      tests, not with a Pod Security admission controller.
+
 ## Consequences
 
 - The floor is not configurable in the v1 API (working agreement:

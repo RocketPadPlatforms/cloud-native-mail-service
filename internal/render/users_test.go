@@ -262,12 +262,15 @@ func userDocJSON(t *testing.T, username, hash, mailbox string) []byte {
 	return doc
 }
 
-const goodHash = "{SHA512-CRYPT}$6$salt$hash"
+const (
+	goodHash    = "{SHA512-CRYPT}$6$salt$hash"
+	testMailbox = "u@example.com"
+)
 
 func TestParseStaticUsersUsernames(t *testing.T) {
 	for _, name := range []string{"a", "a.b", "a_b-c", "0abc", "_x", "-x", "a..b"} {
 		wantOK := name != "a..b"
-		_, err := ParseStaticUsers(userDocJSON(t, name, goodHash, "u@example.com"))
+		_, err := ParseStaticUsers(userDocJSON(t, name, goodHash, testMailbox))
 		if (err == nil) != wantOK {
 			t.Errorf("username %q: err = %v, want ok = %v", name, err, wantOK)
 		}
@@ -275,7 +278,7 @@ func TestParseStaticUsersUsernames(t *testing.T) {
 	for _, name := range []string{
 		"a/b", "../x", "..", ".hidden", "a b", "a\\b", "a:b", "a\nb", "a\x00b", "ü", "a%b", "a;b",
 	} {
-		_, err := ParseStaticUsers(userDocJSON(t, name, goodHash, "u@example.com"))
+		_, err := ParseStaticUsers(userDocJSON(t, name, goodHash, testMailbox))
 		if err == nil {
 			t.Errorf("username %q accepted, want an error", name)
 		}
@@ -286,12 +289,12 @@ func TestParseStaticUsersForbiddenFieldChars(t *testing.T) {
 	tests := []struct {
 		name, username, hash, mailbox string
 	}{
-		{"colon in hash", "u", "{SHA512-CRYPT}a:b", "u@example.com"},
+		{"colon in hash", "u", "{SHA512-CRYPT}a:b", testMailbox},
 		{"colon in mailbox", "u", goodHash, "u:x@example.com"},
-		{"newline in hash", "u", "{SHA512-CRYPT}a\nv:x", "u@example.com"},
+		{"newline in hash", "u", "{SHA512-CRYPT}a\nv:x", testMailbox},
 		{"newline in mailbox", "u", goodHash, "u@example.com\nx"},
 		{"tab in mailbox", "u", goodHash, "u@exa\tmple.com"},
-		{"nul in hash", "u", "{SHA512-CRYPT}a\x00b", "u@example.com"},
+		{"nul in hash", "u", "{SHA512-CRYPT}a\x00b", testMailbox},
 		{"delete in mailbox", "u", goodHash, "u@example.com\x7f"},
 	}
 	for _, tt := range tests {
@@ -309,7 +312,7 @@ func TestParseStaticUsersPlaintextSchemes(t *testing.T) {
 		"{PLAIN}secret", "{CLEAR}secret", "{CLEARTEXT}secret", "{plain}secret", "{ClearText}secret",
 		"{PLAIN-TRUNC}secret", "{PLAIN-MD5}5ebe2294ecd0e0f08eab7690d2a6ee69", "{PLAIN-MD4}x",
 	} {
-		_, err := ParseStaticUsers(userDocJSON(t, "u", h, "u@example.com"))
+		_, err := ParseStaticUsers(userDocJSON(t, "u", h, testMailbox))
 		if err == nil {
 			t.Errorf("hash %q accepted, want an error", h)
 		}
@@ -318,7 +321,7 @@ func TestParseStaticUsersPlaintextSchemes(t *testing.T) {
 	for _, h := range []string{
 		goodHash, "{SSHA512}x", "{ARGON2ID}$argon2id$v=19$x", "{BLF-CRYPT}$2y$05$x", "$6$salt$hash", "{PBKDF2}$1$x",
 	} {
-		if _, err := ParseStaticUsers(userDocJSON(t, "u", h, "u@example.com")); err != nil {
+		if _, err := ParseStaticUsers(userDocJSON(t, "u", h, testMailbox)); err != nil {
 			t.Errorf("hash %q rejected: %v", h, err)
 		}
 	}

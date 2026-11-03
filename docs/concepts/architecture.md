@@ -60,9 +60,11 @@ namespace — nothing is shared between servers
 | Valkey | one instance per server | Rspamd state (rate limits, reputation, Bayes) |
 | Dovecot | StatefulSet, single replica | IMAP, LMTP delivery from Postfix, SASL authentication for submission |
 
-Every workload runs as non-root with a read-only root FS where the
-engine image allows it, logs to stdout, and serves its metrics on a
-named port with a Service (sources and caveats: ADR 0005).
+Every container drops all capabilities and has a read-only root FS;
+Rspamd, Valkey and the exporters run as non-root, while the Postfix
+master keeps a few capabilities and Dovecot keeps `SYS_CHROOT` (ADR
+0006). Workloads log to stdout and serve their metrics on a named port
+with a Service (sources and caveats: ADR 0005).
 
 ## Rendering and rollout
 
