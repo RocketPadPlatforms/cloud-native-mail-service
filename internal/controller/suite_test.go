@@ -80,6 +80,11 @@ var _ = BeforeSuite(func() {
 		ErrorIfCRDPathMissing: true,
 	}
 
+	// The default service range holds about 250 addresses and envtest
+	// runs no namespace controller, so the Services of all specs pile
+	// up; widen it so the suite does not run out of ClusterIPs.
+	testEnv.ControlPlane.GetAPIServer().Configure().Set("service-cluster-ip-range", "10.0.0.0/16")
+
 	// Retrieve the first found binary directory to allow running tests from IDEs
 	if getFirstFoundEnvTestBinaryDir() != "" {
 		testEnv.BinaryAssetsDirectory = getFirstFoundEnvTestBinaryDir()

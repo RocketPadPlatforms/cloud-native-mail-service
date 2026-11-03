@@ -195,7 +195,13 @@ not by policy engines:
   A shared `ClusterIssuer` is allowed only through a future grant field
   (`allowedClusterIssuers`); clusters where tenants can create
   `Certificate`s themselves should additionally run cert-manager
-  approver-policy.
+  approver-policy. Until that grant field exists, the operator flag
+  `--allow-cluster-issuers` (default `false`) is the interim gate: without
+  it a `MailServer` whose `tls.issuerRef.kind` is `ClusterIssuer` is
+  `Ready=False` with reason `ClusterIssuerNotAllowed` and no `Certificate`
+  is created. The flag is all-or-nothing for the cluster, which is the
+  deliberate deviation from the per-grant model; it is removed when the
+  grant field lands.
 - **Multi-domain certificates:** if one of several domains on a
   `MailServer` is not authorized, that domain is left out of the
   certificate's SANs instead of failing the whole certificate.

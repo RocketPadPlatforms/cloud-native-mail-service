@@ -1,0 +1,63 @@
+# Denies outbound SMTP (TCP 25 to destinations outside the cluster) for every
+# pod except the CNMS Postfix pods, so no other workload can send mail from a
+# node address and damage the shared sending reputation (ADR 0006).
+#
+# This is an EXAMPLE for Cilium; it is not installed with the operator. Copy it
+# and replace the placeholder namespaces (tenant-a, tenant-b) in BOTH rules
+# with every namespace that runs a MailServer. See
+# docs/how-to/block-direct-smtp-egress.md for the design, the verification
+# steps and the residual limitations.
+#
+# - A deny rule beats any allow rule (Cilium and Kubernetes NetworkPolicies
+#   alike), so an exemption can only be expressed by not selecting the pod.
+# - enableDefaultDeny keeps the selected pods out of default-deny: the policy
+#   only removes port 25 and changes nothing else.
+# - Rule 1 selects all pods outside the listed namespaces. Rule 2 selects the
+#   pods of the listed namespaces that are not Postfix pods. The selectors are
+#   ORed, so only Postfix pods in a listed namespace are exempt.
+# - Pod-to-pod traffic inside the cluster stays untouched (toEntities: world).
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: cnms-deny-smtp-egress
+specs:
+  - description: Deny outbound SMTP for pods outside the namespaces that run a MailServer.
+    endpointSelector:
+      matchExpressions:
+        - key: k8s:io.kubernetes.pod.namespace
+          operator: NotIn
+          values:
+            - tenant-a
+            - tenant-b
+    enableDefaultDeny:
+      egress: false
+      ingress: false
+    egressDeny:
+      - toEntities:
+          - world
+        toPorts:
+          - ports:
+              - port: "25"
+                protocol: TCP
+  - description: Deny outbound SMTP for the pods of a MailServer namespace that are not Postfix pods.
+    endpointSelector:
+      matchExpressions:
+        - key: k8s:io.kubernetes.pod.namespace
+          operator: In
+          values:
+            - tenant-a
+            - tenant-b
+        - key: k8s:app.kubernetes.io/component
+          operator: NotIn
+          values:
+            - postfix
+    enableDefaultDeny:
+      egress: false
+      ingress: false
+    egressDeny:
+      - toEntities:
+          - world
+        toPorts:
+          - ports:
+              - port: "25"
+                protocol: TCP

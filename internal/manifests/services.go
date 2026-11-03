@@ -155,9 +155,12 @@ func serverInboundTrafficPolicyPtr(server *cnmsv1alpha1.MailServer) *string {
 //   - "<server>-egress-smtp": port-25 egress for the Postfix pods
 //     only (Phase 2: any destination; Phase 7 narrows this via the
 //     Cilium egress gateway).
-//   - "cnms-no-port25-egress": namespace-wide deny of port-25 egress
-//     for non-CNMS pods, so foreign pods cannot send mail from node
-//     IPs (reputation damage).
+//   - "<server>-egress-rspamd": TCP 443 and UDP 11335 to public
+//     addresses for the Rspamd pods only (fuzzy storage and maps).
+//
+// The deny of port-25 egress for other pods cannot be expressed in a
+// NetworkPolicy; it ships as a static CiliumClusterwideNetworkPolicy
+// example (config/network-policy, ADR 0006).
 func networkPolicies(server *cnmsv1alpha1.MailServer) []client.Object {
 	componentPorts := []int32{render.PortRspamdMilter, render.PortDovecotLMTP, render.PortDovecotAuth, render.PortValkey}
 	metricsPorts := []int32{render.PortPostfixMetrics, render.PortRspamdMetrics, render.PortValkeyMetrics}
@@ -171,6 +174,21 @@ func networkPolicies(server *cnmsv1alpha1.MailServer) []client.Object {
 			IPBlock: &networkingv1.IPBlock{CIDR: "::/0"},
 		}
 	}
+	// Cilium CIDR rules never match cluster endpoints, so in-cluster
+	// peers need selector peers next to the ipBlocks (ADR 0006).
+	anyPod := networkingv1.NetworkPolicyPeer{
+		NamespaceSelector: &metav1.LabelSelector{},
+	}
+	// namespaceSelector and podSelector in one peer are ANDed: only
+	// the kube-dns pods of kube-system.
+	kubeDNS := networkingv1.NetworkPolicyPeer{
+		NamespaceSelector: &metav1.LabelSelector{
+			MatchLabels: map[string]string{"kubernetes.io/metadata.name": "kube-system"},
+		},
+		PodSelector: &metav1.LabelSelector{
+			MatchLabels: map[string]string{"k8s-app": "kube-dns"},
+		},
+	}
 	sameServer := networkingv1.NetworkPolicyPeer{
 		PodSelector: &metav1.LabelSelector{
 			MatchLabels: serverSelector(server).MatchLabels,
@@ -182,6 +200,10 @@ func networkPolicies(server *cnmsv1alpha1.MailServer) []client.Object {
 	ingressPorts := []networkingv1.NetworkPolicyPort{portOf(render.PortPostfixInbound)}
 	if submissionEnabled(server) {
 		ingressPorts = append(ingressPorts, portOf(render.PortPostfixSubmission))
+	}
+	if mailboxesEnabled(server) {
+		ingressPorts = append(ingressPorts,
+			portOf(render.PortDovecotIMAP), portOf(render.PortDovecotIMAPS))
 	}
 	componentPortSpecs := make([]networkingv1.NetworkPolicyPort, 0, len(componentPorts))
 	for _, p := range componentPorts {
@@ -206,7 +228,7 @@ func networkPolicies(server *cnmsv1alpha1.MailServer) []client.Object {
 			Ingress: []networkingv1.NetworkPolicyIngressRule{
 				{Ports: ingressPorts}, // from anywhere
 				{From: []networkingv1.NetworkPolicyPeer{sameServer}, Ports: componentPortSpecs},
-				{From: []networkingv1.NetworkPolicyPeer{anywhere(), anywhereV6()}, Ports: metricsPortSpecs},
+				{From: []networkingv1.NetworkPolicyPeer{anyPod, anywhere(), anywhereV6()}, Ports: metricsPortSpecs},
 			},
 		},
 	}
@@ -219,7 +241,7 @@ func networkPolicies(server *cnmsv1alpha1.MailServer) []client.Object {
 			},
 			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
 			Egress: []networkingv1.NetworkPolicyEgressRule{
-				{To: []networkingv1.NetworkPolicyPeer{anywhere(), anywhereV6()}, Ports: dnsPorts},
+				{To: []networkingv1.NetworkPolicyPeer{kubeDNS, anywhere(), anywhereV6()}, Ports: dnsPorts},
 				{To: []networkingv1.NetworkPolicyPeer{sameServer}, Ports: componentPortSpecs},
 			},
 		},
@@ -238,41 +260,35 @@ func networkPolicies(server *cnmsv1alpha1.MailServer) []client.Object {
 		},
 	}
 
-	// Non-CNMS pods: everything except TCP port 25 egress. The
-	// complement ranges (1-24, 26-65535) express "all TCP except 25"
-	// in the allow-only NetworkPolicy semantics; UDP is fully allowed
-	// (SMTP is TCP).
-	noPort25 := &networkingv1.NetworkPolicy{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "cnms-no-port25-egress",
-			Namespace: server.Namespace,
-			Labels: map[string]string{
-				appLabel:       appValue,
-				ManagedByLabel: managedByValue,
-			},
-		},
+	// Rspamd reaches its public services on purpose: the shipped
+	// fuzzy_check module talks to fuzzy.rspamd.com (UDP 11335) and the
+	// shipped maps are fetched from https://maps.rspamd.com (TCP 443).
+	// Private, link-local (cloud metadata) and unique-local ranges are
+	// excluded, so the allow does not open in-cluster services.
+	external := func(cidr string, except ...string) networkingv1.NetworkPolicyPeer {
+		return networkingv1.NetworkPolicyPeer{IPBlock: &networkingv1.IPBlock{CIDR: cidr, Except: except}}
+	}
+	egressRspamd := &networkingv1.NetworkPolicy{
+		ObjectMeta: objectMeta(server, server.Name+"-egress-rspamd", render.ComponentRspamd),
 		Spec: networkingv1.NetworkPolicySpec{
 			PodSelector: metav1.LabelSelector{
-				MatchExpressions: []metav1.LabelSelectorRequirement{{
-					Key:      ManagedByLabel,
-					Operator: metav1.LabelSelectorOpNotIn,
-					Values:   []string{managedByValue},
-				}},
+				MatchLabels: componentSelector(server, render.ComponentRspamd).MatchLabels,
 			},
 			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
 			Egress: []networkingv1.NetworkPolicyEgressRule{{
-				// Ranges are Port + EndPort; NetworkPolicyPort.Port
-				// itself only accepts an integer or a named port.
+				To: []networkingv1.NetworkPolicyPeer{
+					external("0.0.0.0/0", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"),
+					external("::/0", "fc00::/7", "fe80::/10"),
+				},
 				Ports: []networkingv1.NetworkPolicyPort{
-					{Protocol: new(corev1.ProtocolTCP), Port: new(intstr.FromInt32(1)), EndPort: new(int32(24))},
-					{Protocol: new(corev1.ProtocolTCP), Port: new(intstr.FromInt32(26)), EndPort: new(int32(65535))},
-					{Protocol: new(corev1.ProtocolUDP), Port: new(intstr.FromInt32(1)), EndPort: new(int32(65535))},
+					{Protocol: new(corev1.ProtocolTCP), Port: new(intstr.FromInt32(443))},
+					{Protocol: new(corev1.ProtocolUDP), Port: new(intstr.FromInt32(render.PortRspamdFuzzy))},
 				},
 			}},
 		},
 	}
 
-	return []client.Object{ingress, egress, egressSMTP, noPort25}
+	return []client.Object{ingress, egress, egressSMTP, egressRspamd}
 }
 
 // postfixPodDisruptionBudget is the Postfix disruption budget

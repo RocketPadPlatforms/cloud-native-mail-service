@@ -34,6 +34,7 @@ const (
 	PortRspamdController int32 = 11334 // controller worker (incl. GET /metrics), loopback clients only
 	PortRspamdMetrics    int32 = 9151  // metrics sidecar: loopback copy of the controller /metrics (ADR-0005)
 	PortRspamdNormal     int32 = 11333 // normal (scanner) worker, pod-internal: the proxy worker forwards to it
+	PortRspamdFuzzy      int32 = 11335 // outbound only: the fuzzy storage of rspamd.com (UDP, SRV _fuzzy._tcp.rspamd.com)
 
 	// Dovecot.
 	PortDovecotLMTP  int32 = 24   // LMTP for Postfix virtual_transport

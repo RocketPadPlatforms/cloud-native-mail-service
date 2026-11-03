@@ -184,7 +184,7 @@ func TestBuildObjectSet(t *testing.T) {
 		{kindNetworkPolicy, n + "-ingress"},
 		{kindNetworkPolicy, n + "-egress"},
 		{kindNetworkPolicy, n + "-egress-smtp"},
-		{kindNetworkPolicy, "cnms-no-port25-egress"},
+		{kindNetworkPolicy, n + "-egress-rspamd"},
 		{kindPodDisruptionBudget, n + "-postfix"},
 		{kindCertificate, n},
 	}
@@ -536,9 +536,13 @@ func TestNetworkPolicies(t *testing.T) {
 	if len(ingress.Spec.Ingress[1].From) != 1 || ingress.Spec.Ingress[1].From[0].PodSelector == nil {
 		t.Error("ingress rule 1 must come from the same server")
 	}
-	// Rule 3: metrics ports from the cluster.
-	if len(ingress.Spec.Ingress[2].From) != 2 {
-		t.Errorf("ingress rule 2 from = %v, want IPv4+IPv6 any", ingress.Spec.Ingress[2].From)
+	// Rule 3: metrics ports from the cluster. Cilium CIDR rules do not
+	// match cluster endpoints, so an any-pod peer comes with the
+	// IPv4 and IPv6 ipBlocks.
+	from := ingress.Spec.Ingress[2].From
+	if len(from) != 3 || from[0].NamespaceSelector == nil || len(from[0].NamespaceSelector.MatchLabels) != 0 ||
+		from[0].PodSelector != nil || from[1].IPBlock == nil || from[2].IPBlock == nil {
+		t.Errorf("ingress rule 2 from = %v, want any pod + IPv4 + IPv6 any", from)
 	}
 	if !portSet(ingress.Spec.Ingress[2].Ports, []int32{render.PortPostfixMetrics, render.PortRspamdMetrics, render.PortValkeyMetrics}) {
 		t.Errorf("ingress rule 2 ports = %v", ingress.Spec.Ingress[2].Ports)
@@ -553,8 +557,18 @@ func TestNetworkPolicies(t *testing.T) {
 	if len(egress.Spec.Egress) != 2 {
 		t.Fatalf("egress rules = %d, want 2", len(egress.Spec.Egress))
 	}
-	// DNS to anywhere; port 25 egress must NOT be in the general egress
-	// rule (it is granted only to the Postfix pods).
+	// DNS: the kube-dns pods (namespace AND pod selector in ONE peer)
+	// plus the ipBlocks for resolvers outside the cluster. Port 25
+	// egress must NOT be in the general egress rule (it is granted
+	// only to the Postfix pods).
+	dns := egress.Spec.Egress[0].To
+	if len(dns) != 3 || dns[1].IPBlock == nil || dns[2].IPBlock == nil {
+		t.Fatalf("dns peers = %v, want kube-dns + IPv4 + IPv6", dns)
+	}
+	if dns[0].NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"] != "kube-system" ||
+		dns[0].PodSelector == nil || dns[0].PodSelector.MatchLabels["k8s-app"] != "kube-dns" {
+		t.Errorf("kube-dns peer = %+v", dns[0])
+	}
 	if portPresent(egress.Spec.Egress[0].Ports, render.PortPostfixInbound) {
 		t.Error("general egress allows port 25; only the Postfix pods may send")
 	}
@@ -564,28 +578,54 @@ func TestNetworkPolicies(t *testing.T) {
 	if comp != string(render.ComponentPostfix) {
 		t.Errorf("egress-smtp podSelector component = %q", comp)
 	}
+}
 
-	noPort25 := mustFind[*networkingv1.NetworkPolicy](t, find(t, objs, kindNetworkPolicy, "cnms-no-port25-egress"), "cnms-no-port25-egress")
-	reqs := noPort25.Spec.PodSelector.MatchExpressions
-	if len(reqs) != 1 || reqs[0].Key != ManagedByLabel || reqs[0].Operator != "NotIn" {
-		t.Errorf("no-port25 podSelector = %+v", noPort25.Spec.PodSelector)
+// The public Rspamd services (fuzzy storage, maps) are allowed for the
+// Rspamd pods only, to public addresses only.
+func TestRspamdEgressPolicy(t *testing.T) {
+	objs := build(t, nil)
+	rspamdNP := mustFind[*networkingv1.NetworkPolicy](t, find(t, objs, kindNetworkPolicy, testName+"-egress-rspamd"), "egress-rspamd")
+	if rspamdNP.Spec.PodSelector.MatchLabels[componentLabel] != string(render.ComponentRspamd) {
+		t.Errorf("egress-rspamd podSelector = %+v", rspamdNP.Spec.PodSelector)
 	}
-	ports := noPort25.Spec.Egress[0].Ports
-	if portPresent(ports, render.PortPostfixInbound) {
-		t.Error("no-port25 egress must not allow TCP 25")
+	rule := rspamdNP.Spec.Egress[0]
+	if len(rule.Ports) != 2 || rule.Ports[0].Port.IntVal != 443 || *rule.Ports[0].Protocol != corev1.ProtocolTCP ||
+		rule.Ports[1].Port.IntVal != render.PortRspamdFuzzy || *rule.Ports[1].Protocol != corev1.ProtocolUDP {
+		t.Errorf("egress-rspamd ports = %+v, want TCP 443 and UDP 11335", rule.Ports)
 	}
-	var tcpRanges []string
-	for _, p := range ports {
-		if p.Protocol == nil || *p.Protocol == corev1.ProtocolTCP {
-			r := p.Port.String()
-			if p.EndPort != nil {
-				r += fmt.Sprintf("-%d", *p.EndPort)
+	if len(rule.To) != 2 || rule.To[0].IPBlock.CIDR != "0.0.0.0/0" || rule.To[1].IPBlock.CIDR != "::/0" ||
+		!slices.Contains(rule.To[0].IPBlock.Except, "169.254.0.0/16") {
+		t.Errorf("egress-rspamd peers = %+v", rule.To)
+	}
+}
+
+// Only the server's own pods are selected: a policy that selects other
+// pods would be additive to their policies (ADR 0006).
+func TestNetworkPoliciesSelectOnlyOwnPods(t *testing.T) {
+	objs := build(t, nil)
+	for _, o := range objs {
+		if np, ok := o.(*networkingv1.NetworkPolicy); ok {
+			if np.Spec.PodSelector.MatchLabels[ServerLabel] != testName {
+				t.Errorf("NetworkPolicy %s selects pods of other servers or namespaces: %+v", np.Name, np.Spec.PodSelector)
 			}
-			tcpRanges = append(tcpRanges, r)
 		}
 	}
-	if !slices.Contains(tcpRanges, "1-24") || !slices.Contains(tcpRanges, "26-65535") {
-		t.Errorf("no-port25 TCP ranges = %v, want the complement of 25", tcpRanges)
+}
+
+// IMAP is only reachable when the Dovecot mailboxes exist.
+func TestIngressOpensIMAPOnlyWithMailboxes(t *testing.T) {
+	imap := func(objs []client.Object) bool {
+		np := mustFind[*networkingv1.NetworkPolicy](t, find(t, objs, kindNetworkPolicy, testName+"-ingress"), "ingress")
+		return portPresent(np.Spec.Ingress[0].Ports, render.PortDovecotIMAP) &&
+			portPresent(np.Spec.Ingress[0].Ports, render.PortDovecotIMAPS)
+	}
+	if imap(build(t, nil)) {
+		t.Error("IMAP ports are open without mailboxes")
+	}
+	if !imap(build(t, func(s *cnmsv1alpha1.MailServer) {
+		s.Spec.Mailboxes = &cnmsv1alpha1.Mailboxes{Enabled: new(true)}
+	})) {
+		t.Error("IMAP ports are closed with mailboxes enabled")
 	}
 }
 

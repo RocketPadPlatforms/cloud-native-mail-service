@@ -1,0 +1,5 @@
+# Example only, not part of config/default. Edit the namespace lists in the
+# policy first (see the comments there), then:
+#   kubectl apply -k config/network-policy/smtp-egress-deny
+resources:
+- ciliumclusterwidenetworkpolicy.yaml

@@ -10,7 +10,10 @@ module.exports = {
       type: 'category',
       label: 'How-to guides',
       link: { type: 'doc', id: 'how-to/index' },
-      items: ['how-to/install-and-operate'],
+      items: [
+        'how-to/install-and-operate',
+        'how-to/block-direct-smtp-egress',
+      ],
     },
     {
       type: 'category',

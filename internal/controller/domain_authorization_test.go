@@ -26,6 +26,14 @@ import (
 	cnmsv1alpha1 "github.com/RocketPadPlatforms/cloud-native-mail-service/api/v1alpha1"
 )
 
+// Fixture names of the evaluator tests.
+const (
+	domA    = "a.example.org"
+	domB    = "b.example.org"
+	domC    = "c.example.org"
+	tenantA = "tenant-a"
+)
+
 func testServerForAuth(ns string, refs ...string) *cnmsv1alpha1.MailServer {
 	server := &cnmsv1alpha1.MailServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "server", Namespace: ns},
@@ -66,27 +74,27 @@ func TestAuthorizationEvaluate(t *testing.T) {
 	}{
 		{
 			name:        "granted apex",
-			server:      testServerForAuth("tenant-a", testDomain),
-			grants:      []cnmsv1alpha1.MailDomainGrant{grant(testDomain, "tenant-a", false)},
-			domains:     []cnmsv1alpha1.MailDomain{domain("tenant-a", testDomain, testDomain)},
+			server:      testServerForAuth(tenantA, testDomain),
+			grants:      []cnmsv1alpha1.MailDomainGrant{grant(testDomain, tenantA, false)},
+			domains:     []cnmsv1alpha1.MailDomain{domain(tenantA, testDomain, testDomain)},
 			mode:        AuthorizationAllowlist,
 			wantDomains: []string{testDomain},
 			wantReason:  ReasonAuthorized,
 		},
 		{
 			name:        "subdomain granted via includeSubdomains",
-			server:      testServerForAuth("tenant-a", "mail.example.org"),
-			grants:      []cnmsv1alpha1.MailDomainGrant{grant(testDomain, "tenant-a", true)},
-			domains:     []cnmsv1alpha1.MailDomain{domain("tenant-a", "mail.example.org", "mail.example.org")},
+			server:      testServerForAuth(tenantA, "mail.example.org"),
+			grants:      []cnmsv1alpha1.MailDomainGrant{grant(testDomain, tenantA, true)},
+			domains:     []cnmsv1alpha1.MailDomain{domain(tenantA, "mail.example.org", "mail.example.org")},
 			mode:        AuthorizationAllowlist,
 			wantDomains: []string{"mail.example.org"},
 			wantReason:  ReasonAuthorized,
 		},
 		{
 			name:       "subdomain without includeSubdomains",
-			server:     testServerForAuth("tenant-a", "mail.example.org"),
-			grants:     []cnmsv1alpha1.MailDomainGrant{grant(testDomain, "tenant-a", false)},
-			domains:    []cnmsv1alpha1.MailDomain{domain("tenant-a", "mail.example.org", "mail.example.org")},
+			server:     testServerForAuth(tenantA, "mail.example.org"),
+			grants:     []cnmsv1alpha1.MailDomainGrant{grant(testDomain, tenantA, false)},
+			domains:    []cnmsv1alpha1.MailDomain{domain(tenantA, "mail.example.org", "mail.example.org")},
 			mode:       AuthorizationAllowlist,
 			wantReason: ReasonNotGranted,
 			wantNotOK:  true,
@@ -95,7 +103,7 @@ func TestAuthorizationEvaluate(t *testing.T) {
 			name:   "more specific grant wins",
 			server: testServerForAuth("tenant-b", "mail.example.org"),
 			grants: []cnmsv1alpha1.MailDomainGrant{
-				grant(testDomain, "tenant-a", true),
+				grant(testDomain, tenantA, true),
 				grant("mail.example.org", "tenant-b", false),
 			},
 			domains:     []cnmsv1alpha1.MailDomain{domain("tenant-b", "mail.example.org", "mail.example.org")},
@@ -106,7 +114,7 @@ func TestAuthorizationEvaluate(t *testing.T) {
 		{
 			name:       "broad grant does not cover sibling namespace",
 			server:     testServerForAuth("tenant-b", testDomain),
-			grants:     []cnmsv1alpha1.MailDomainGrant{grant(testDomain, "tenant-a", true)},
+			grants:     []cnmsv1alpha1.MailDomainGrant{grant(testDomain, tenantA, true)},
 			domains:    []cnmsv1alpha1.MailDomain{domain("tenant-b", testDomain, testDomain)},
 			mode:       AuthorizationAllowlist,
 			wantReason: ReasonNotGranted,
@@ -114,10 +122,10 @@ func TestAuthorizationEvaluate(t *testing.T) {
 		},
 		{
 			name:   "foreign claim without grant does not block the owner",
-			server: testServerForAuth("tenant-a", testDomain),
-			grants: []cnmsv1alpha1.MailDomainGrant{grant(testDomain, "tenant-a", false)},
+			server: testServerForAuth(tenantA, testDomain),
+			grants: []cnmsv1alpha1.MailDomainGrant{grant(testDomain, tenantA, false)},
 			domains: []cnmsv1alpha1.MailDomain{
-				domain("tenant-a", testDomain, testDomain),
+				domain(tenantA, testDomain, testDomain),
 				domain("tenant-b", "example.org-copy", testDomain),
 			},
 			mode:        AuthorizationAllowlist,
@@ -127,9 +135,9 @@ func TestAuthorizationEvaluate(t *testing.T) {
 		{
 			name:   "foreign claimant is not granted, not a duplicate",
 			server: testServerForAuth("tenant-b", "example.org-copy"),
-			grants: []cnmsv1alpha1.MailDomainGrant{grant(testDomain, "tenant-a", false)},
+			grants: []cnmsv1alpha1.MailDomainGrant{grant(testDomain, tenantA, false)},
 			domains: []cnmsv1alpha1.MailDomain{
-				domain("tenant-a", testDomain, testDomain),
+				domain(tenantA, testDomain, testDomain),
 				domain("tenant-b", "example.org-copy", testDomain),
 			},
 			mode:       AuthorizationAllowlist,
@@ -149,11 +157,11 @@ func TestAuthorizationEvaluate(t *testing.T) {
 		},
 		{
 			name:   "duplicate claim in one namespace",
-			server: testServerForAuth("tenant-a", testDomain),
-			grants: []cnmsv1alpha1.MailDomainGrant{grant(testDomain, "tenant-a", false)},
+			server: testServerForAuth(tenantA, testDomain),
+			grants: []cnmsv1alpha1.MailDomainGrant{grant(testDomain, tenantA, false)},
 			domains: []cnmsv1alpha1.MailDomain{
-				domain("tenant-a", testDomain, testDomain),
-				domain("tenant-a", "example.org-b", testDomain),
+				domain(tenantA, testDomain, testDomain),
+				domain(tenantA, "example.org-b", testDomain),
 			},
 			mode:       AuthorizationAllowlist,
 			wantReason: ReasonDuplicateDomain,
@@ -161,25 +169,25 @@ func TestAuthorizationEvaluate(t *testing.T) {
 		},
 		{
 			name:       "referenced MailDomain missing",
-			server:     testServerForAuth("tenant-a", testDomain),
-			grants:     []cnmsv1alpha1.MailDomainGrant{grant(testDomain, "tenant-a", false)},
+			server:     testServerForAuth(tenantA, testDomain),
+			grants:     []cnmsv1alpha1.MailDomainGrant{grant(testDomain, tenantA, false)},
 			mode:       AuthorizationAllowlist,
 			wantReason: ReasonDomainNotFound,
 			wantNotOK:  true,
 		},
 		{
 			name:        "unrestricted without grant",
-			server:      testServerForAuth("tenant-a", testDomain),
-			domains:     []cnmsv1alpha1.MailDomain{domain("tenant-a", testDomain, testDomain)},
+			server:      testServerForAuth(tenantA, testDomain),
+			domains:     []cnmsv1alpha1.MailDomain{domain(tenantA, testDomain, testDomain)},
 			mode:        AuthorizationUnrestricted,
 			wantDomains: []string{testDomain},
 			wantReason:  ReasonAuthorizationDisabled,
 		},
 		{
 			name:   "unrestricted still enforces uniqueness",
-			server: testServerForAuth("tenant-a", testDomain),
+			server: testServerForAuth(tenantA, testDomain),
 			domains: []cnmsv1alpha1.MailDomain{
-				domain("tenant-a", testDomain, testDomain),
+				domain(tenantA, testDomain, testDomain),
 				domain("tenant-b", "example.org-copy", testDomain),
 			},
 			mode:       AuthorizationUnrestricted,
@@ -189,44 +197,44 @@ func TestAuthorizationEvaluate(t *testing.T) {
 		{
 			// One revoked domain must not take the granted one down.
 			name:   "partial authorization keeps the granted subset",
-			server: testServerForAuth("tenant-a", "a.example.org", "b.example.org", "c.example.org"),
+			server: testServerForAuth(tenantA, domA, domB, domC),
 			grants: []cnmsv1alpha1.MailDomainGrant{
-				grant("a.example.org", "tenant-a", false),
-				grant("c.example.org", "tenant-a", false),
+				grant(domA, tenantA, false),
+				grant(domC, tenantA, false),
 			},
 			domains: []cnmsv1alpha1.MailDomain{
-				domain("tenant-a", "a.example.org", "a.example.org"),
-				domain("tenant-a", "b.example.org", "b.example.org"),
-				domain("tenant-a", "c.example.org", "c.example.org"),
+				domain(tenantA, domA, domA),
+				domain(tenantA, domB, domB),
+				domain(tenantA, domC, domC),
 			},
 			mode:        AuthorizationAllowlist,
-			wantDomains: []string{"a.example.org", "c.example.org"},
+			wantDomains: []string{domA, domC},
 			wantReason:  ReasonPartiallyAuthorized,
 		},
 		{
 			name:   "partial authorization with a missing MailDomain",
-			server: testServerForAuth("tenant-a", "a.example.org", "gone"),
-			grants: []cnmsv1alpha1.MailDomainGrant{grant("a.example.org", "tenant-a", false)},
+			server: testServerForAuth(tenantA, domA, "gone"),
+			grants: []cnmsv1alpha1.MailDomainGrant{grant(domA, tenantA, false)},
 			domains: []cnmsv1alpha1.MailDomain{
-				domain("tenant-a", "a.example.org", "a.example.org"),
+				domain(tenantA, domA, domA),
 			},
 			mode:        AuthorizationAllowlist,
-			wantDomains: []string{"a.example.org"},
+			wantDomains: []string{domA},
 			wantReason:  ReasonPartiallyAuthorized,
 		},
 		{
 			name:   "multiple domains sorted with first as primary",
-			server: testServerForAuth("tenant-a", "b.example.org", "a.example.org"),
+			server: testServerForAuth(tenantA, domB, domA),
 			grants: []cnmsv1alpha1.MailDomainGrant{
-				grant("a.example.org", "tenant-a", false),
-				grant("b.example.org", "tenant-a", false),
+				grant(domA, tenantA, false),
+				grant(domB, tenantA, false),
 			},
 			domains: []cnmsv1alpha1.MailDomain{
-				domain("tenant-a", "b.example.org", "b.example.org"),
-				domain("tenant-a", "a.example.org", "a.example.org"),
+				domain(tenantA, domB, domB),
+				domain(tenantA, domA, domA),
 			},
 			mode:        AuthorizationAllowlist,
-			wantDomains: []string{"a.example.org", "b.example.org"},
+			wantDomains: []string{domA, domB},
 			wantReason:  ReasonAuthorized,
 		},
 	}
@@ -262,16 +270,16 @@ func TestAuthorizationEvaluate(t *testing.T) {
 
 func TestAuthorizationConditionListsEveryFailure(t *testing.T) {
 	e := &authorizationEvaluator{
-		server: testServerForAuth("tenant-a", "a.example.org", "b.example.org", "gone"),
+		server: testServerForAuth(tenantA, domA, domB, "gone"),
 		grants: grantRefs(&cnmsv1alpha1.MailDomainGrantList{Items: []cnmsv1alpha1.MailDomainGrant{{
-			ObjectMeta: metav1.ObjectMeta{Name: "a.example.org"},
-			Spec:       cnmsv1alpha1.MailDomainGrantSpec{Namespace: "tenant-a"},
+			ObjectMeta: metav1.ObjectMeta{Name: domA},
+			Spec:       cnmsv1alpha1.MailDomainGrantSpec{Namespace: tenantA},
 		}}}),
 		claims: domainClaims(&cnmsv1alpha1.MailDomainList{Items: []cnmsv1alpha1.MailDomain{
-			{ObjectMeta: metav1.ObjectMeta{Name: "a.example.org", Namespace: "tenant-a"},
-				Spec: cnmsv1alpha1.MailDomainSpec{Domain: "a.example.org"}},
-			{ObjectMeta: metav1.ObjectMeta{Name: "b.example.org", Namespace: "tenant-a"},
-				Spec: cnmsv1alpha1.MailDomainSpec{Domain: "b.example.org"}},
+			{ObjectMeta: metav1.ObjectMeta{Name: domA, Namespace: tenantA},
+				Spec: cnmsv1alpha1.MailDomainSpec{Domain: domA}},
+			{ObjectMeta: metav1.ObjectMeta{Name: domB, Namespace: tenantA},
+				Spec: cnmsv1alpha1.MailDomainSpec{Domain: domB}},
 		}}),
 		mode: AuthorizationAllowlist,
 	}
