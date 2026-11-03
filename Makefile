@@ -1,7 +1,8 @@
 # Image URL to use all building/pushing image targets
 IMG ?= controller:latest
 # YEAR defines the year value used for substituting the YEAR placeholder in the boilerplate header.
-YEAR ?= $(shell date +%Y)
+# It is fixed so that regenerating the code in a later year does not change the headers.
+YEAR ?= 2026
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -70,6 +71,9 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 # CertManager is installed by default; skip with:
 # - CERT_MANAGER_INSTALL_SKIP=true
 KIND_CLUSTER ?= cloud-native-mail-service-test-e2e
+# Node image of the e2e cluster (the default of the pinned kind release),
+# pinned by digest.
+KIND_NODE_IMAGE ?= kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
 
 .PHONY: setup-test-e2e
 setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
@@ -77,18 +81,19 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 		echo "Kind is not installed. Please install Kind manually."; \
 		exit 1; \
 	}
-	@case "$$($(KIND) get clusters)" in \
-		*"$(KIND_CLUSTER)"*) \
-			echo "Kind cluster '$(KIND_CLUSTER)' already exists. Skipping creation." ;; \
-		*) \
-			echo "Creating Kind cluster '$(KIND_CLUSTER)'..."; \
-			$(KIND) create cluster --name $(KIND_CLUSTER) ;; \
-	esac
+	@if $(KIND) get clusters | grep -qxF "$(KIND_CLUSTER)"; then \
+		echo "Kind cluster '$(KIND_CLUSTER)' already exists. Skipping creation."; \
+	else \
+		echo "Creating Kind cluster '$(KIND_CLUSTER)'..."; \
+		$(KIND) create cluster --name $(KIND_CLUSTER) --image $(KIND_NODE_IMAGE); \
+	fi
 
 .PHONY: test-e2e
 test-e2e: setup-test-e2e manifests generate fmt vet docker-build-data-plane ## Run the e2e tests. Expected an isolated environment using Kind.
-	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) go test -tags=e2e -timeout=30m ./test/e2e/ -v -ginkgo.v
-	$(MAKE) cleanup-test-e2e
+	@status=0; \
+	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) go test -tags=e2e -timeout=30m ./test/e2e/ -v -ginkgo.v || status=$$?; \
+	$(MAKE) cleanup-test-e2e; \
+	exit $$status
 
 .PHONY: cleanup-test-e2e
 cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
@@ -155,11 +160,14 @@ PLATFORMS ?= linux/arm64,linux/amd64,linux/s390x,linux/ppc64le
 docker-buildx: ## Build and push docker image for the manager for cross-platform support
 	# copy existing Dockerfile and insert --platform=${BUILDPLATFORM} into Dockerfile.cross, and preserve the original Dockerfile
 	sed -e '1 s/\(^FROM\)/FROM --platform=\$$\{BUILDPLATFORM\}/; t' -e ' 1,// s//FROM --platform=\$$\{BUILDPLATFORM\}/' Dockerfile > Dockerfile.cross
-	- $(CONTAINER_TOOL) buildx create --name cloud-native-mail-service-builder
+	$(CONTAINER_TOOL) buildx inspect cloud-native-mail-service-builder >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name cloud-native-mail-service-builder
 	$(CONTAINER_TOOL) buildx use cloud-native-mail-service-builder
-	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) $(if $(BASE_IMAGE),--build-arg BASE_IMAGE=$(BASE_IMAGE)) --tag ${IMG} -f Dockerfile.cross .
-	- $(CONTAINER_TOOL) buildx rm cloud-native-mail-service-builder
-	rm Dockerfile.cross
+	@# Clean up the builder and Dockerfile.cross, but still fail when the build fails.
+	@status=0; \
+	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) $(if $(BASE_IMAGE),--build-arg BASE_IMAGE=$(BASE_IMAGE)) --tag ${IMG} -f Dockerfile.cross . || status=$$?; \
+	$(CONTAINER_TOOL) buildx rm cloud-native-mail-service-builder; \
+	rm -f Dockerfile.cross; \
+	exit $$status
 
 .PHONY: build-installer
 build-installer: manifests generate kustomize ## Generate a consolidated YAML with CRDs and deployment.
@@ -230,9 +238,14 @@ CRD_REF_DOCS_VERSION ?= v0.3.0
 GO_LICENSES ?= $(LOCALBIN)/go-licenses
 CRD_REF_DOCS ?= $(LOCALBIN)/crd-ref-docs
 
+# Go modules are linked into the operator binary, so only permissive licenses
+# are allowed (AGENTS.md section 9). Every other license (GPL, AGPL, SSPL,
+# BSL, unknown, ...) fails the check; extend the list only after review.
+ALLOWED_LICENSES ?= Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC,MIT
+
 .PHONY: license-check
-license-check: $(GO_LICENSES) ## Check dependency licenses; fails on restricted, forbidden or unknown.
-	"$(GO_LICENSES)" check --include_tests ./... --disallowed_types=restricted,forbidden,unknown
+license-check: $(GO_LICENSES) ## Check dependency licenses; fails on any license outside ALLOWED_LICENSES.
+	"$(GO_LICENSES)" check --include_tests ./... --allowed_licenses=$(ALLOWED_LICENSES)
 
 .PHONY: license-report
 license-report: $(GO_LICENSES) ## Generate the third-party license report under docs/.
