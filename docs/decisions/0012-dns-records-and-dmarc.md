@@ -97,10 +97,12 @@ API comment on `testing` ("evaluated but not enforced") is corrected to
 the RFC 9989 meaning, and the docs state that the pinned Rspamd ignores
 `t` on inbound records.
 
-If a DMARC or TLS-RPT address is in another organizational domain than
+If a DMARC `rua` or `ruf` address is in another organizational domain than
 the policy domain (public suffix list from `golang.org/x/net/publicsuffix`),
 the status carries a `ReportAuthorization` warning naming the record the
-receiver has to publish. CNMS neither publishes nor verifies it.
+receiver has to publish. CNMS neither publishes nor verifies it. TLS-RPT
+has no such mechanism (RFC 8460 defines no authorization record), so a
+TLS-RPT address in another domain gets no warning.
 
 **MTA-STS** stays report-only. The policy text is
 
@@ -210,7 +212,7 @@ ignored):
 
 | Record | Verified when |
 |---|---|
-| DKIM | a record parses as tag-value pairs with `v=DKIM1` (or no `v`), the key type (`k`, default `rsa`) equals the expected one, and the **decoded** `p` bytes equal the expected public key (whitespace removed from the base64, so provider re-wrapping does not matter); extra tags are allowed |
+| DKIM | exactly one record at the name parses as a DKIM key record (tag-value pairs with a `p` tag and `v=DKIM1` or no `v`; several give an undefined result, RFC 6376 section 3.6.2.2), and its key type (`k`, default `rsa`) equals the expected one and its **decoded** `p` bytes equal the expected public key (whitespace removed from the base64, so provider re-wrapping does not matter); extra tags are allowed |
 | DMARC, TLS-RPT, MTA-STS | exactly one record starts with the expected version tag (RFC 8460 and RFC 8461 treat a number other than one as no policy; Rspamd 4.2.3 treats several valid DMARC records as a permanent error), and after normalization (whitespace around `;` and `=`, trailing `;`, tag names compared case-insensitively) its tag-value pairs equal the expected ones |
 | SPF | exactly one `v=spf1` record exists (several are a `permerror` for receivers) and its normalized text equals the expected text; a different SPF record is reported with the value found |
 
