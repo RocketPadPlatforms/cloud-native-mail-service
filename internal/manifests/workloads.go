@@ -177,13 +177,16 @@ func dovecotStatefulSet(server *cnmsv1alpha1.MailServer, r *render.RenderResult)
 		storage = quantityValue(server.Spec.Mailboxes.Storage, storage)
 	}
 
-	var imapPorts []corev1.ContainerPort
+	// Auth-only mode listens on the auth port only; the probes use it.
+	ports := []corev1.ContainerPort{{Name: "auth", ContainerPort: render.PortDovecotAuth}}
+	probePort := render.PortDovecotAuth
 	var volumeClaimTemplates []corev1.PersistentVolumeClaim
 	if mailboxes {
-		imapPorts = []corev1.ContainerPort{
-			{Name: "imap", ContainerPort: render.PortDovecotIMAP},
-			{Name: "imaps", ContainerPort: render.PortDovecotIMAPS},
-		}
+		probePort = render.PortDovecotLMTPListen
+		ports = append(ports,
+			corev1.ContainerPort{Name: "lmtp", ContainerPort: render.PortDovecotLMTPListen},
+			corev1.ContainerPort{Name: "imap", ContainerPort: render.PortDovecotIMAPListen},
+			corev1.ContainerPort{Name: "imaps", ContainerPort: render.PortDovecotIMAPSListen})
 		volumeClaimTemplates = []corev1.PersistentVolumeClaim{{
 			ObjectMeta: metav1.ObjectMeta{Name: dovecotMailVolume},
 			Spec: corev1.PersistentVolumeClaimSpec{
@@ -230,22 +233,25 @@ func dovecotStatefulSet(server *cnmsv1alpha1.MailServer, r *render.RenderResult)
 							VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
 						},
 					},
+					// Dovecot 2.4.5 cannot start without the certificate
+					// files (fatal at startup, whatever ssl says), and
+					// it cannot serve without TLS anyway (ssl =
+					// required). Wait for them in an init container:
+					// the pod stays in Init until cert-manager has
+					// issued the Secret instead of crash-looping.
+					InitContainers: []corev1.Container{{
+						Name:         waitTLSContainerName,
+						Image:        images.Postfix, // busybox sh and sleep
+						Command:      waitForTLSFiles(dovecotSSLDir()),
+						VolumeMounts: []corev1.VolumeMount{{Name: tlsVolumeName, MountPath: dovecotSSLDir(), ReadOnly: true}},
+					}},
 					Containers: []corev1.Container{{
-						Name:         "dovecot",
-						Image:        images.Dovecot, // default CMD: tini + dovecot -F
-						Ports:        append([]corev1.ContainerPort{{Name: "lmtp", ContainerPort: render.PortDovecotLMTP}, {Name: "auth", ContainerPort: render.PortDovecotAuth}}, imapPorts...),
-						VolumeMounts: dovecotMounts(mailboxes),
-						SecurityContext: &corev1.SecurityContext{
-							// vmail (non-root) binds the LMTP (24)
-							// and IMAP (143) ports below 1024.
-							Capabilities: &corev1.Capabilities{
-								Add: []corev1.Capability{"NET_BIND_SERVICE"},
-							},
-						},
-						// The LMTP listener (24) is present in both
-						// variants (mail storage and auth-only).
-						ReadinessProbe: portProbe(render.PortDovecotLMTP),
-						LivenessProbe:  portProbe(render.PortDovecotLMTP),
+						Name:           "dovecot",
+						Image:          images.Dovecot, // default CMD: tini + dovecot -F
+						Ports:          ports,
+						VolumeMounts:   dovecotMounts(mailboxes),
+						ReadinessProbe: portProbe(probePort),
+						LivenessProbe:  portProbe(probePort),
 					}, {
 						// The loop needs coreutils (sleep,
 						// sha256sum), which the minimal Dovecot
@@ -472,8 +478,11 @@ func configVolume(name string) corev1.Volume {
 }
 
 // tlsVolume is the (optional) certificate Secret volume. Optional so
-// the pods can run before cert-manager has issued the certificate
-// (degraded mode, documented).
+// the pods can start before cert-manager has issued the certificate:
+// Postfix then starts without TLS (smtpd logs "disabling TLS
+// support", submission refuses AUTH until the cert-reload sidecar
+// reloads the new certificate), and the Dovecot pod waits in its
+// init container (waitForTLSFiles).
 func tlsVolume(secretName string) corev1.Volume {
 	return corev1.Volume{
 		Name: tlsVolumeName,

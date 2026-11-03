@@ -54,6 +54,9 @@ scoped; nothing here is committed.
   access to them. Phases 3 and 5 re-scaffold them with
   `kubebuilder create api --group cnms --version v1alpha1 --kind <Kind>
   --controller --resource=false` and add the RBAC they actually use.
+- Publish the CNMS-built images (`cnms-postfix`, `cnms-e2e-client`) to
+  `ghcr.io/rocketpadplatforms` from CI and pin them by digest in
+  `internal/images/images.go` (tag only today, ADR 0004).
 - Tracing.
 - Webmail/UI, billing, multi-cluster federation.
 - IMAP horizontal scaling.

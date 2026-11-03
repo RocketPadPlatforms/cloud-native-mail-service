@@ -25,7 +25,7 @@ var (
 	// upstreamRe is name:tag@sha256:<64 hex> (ADR 0004, section 6).
 	upstreamRe = regexp.MustCompile(`^[a-z0-9]+(?:\.[a-z0-9-]+)*/[a-z0-9._/-]+:[^@"]+@sha256:[0-9a-f]{64}$`)
 	// localRe is name:tag without digest (CNMS-built images).
-	localRe = regexp.MustCompile(`^cnms/[a-z0-9-]+:\d+\.\d+\.\d+$`)
+	localRe = regexp.MustCompile(`^ghcr\.io/rocketpadplatforms/cnms-[a-z0-9-]+:\d+\.\d+\.\d+$`)
 )
 
 func TestUpstreamPinsAreTagAndDigest(t *testing.T) {
@@ -48,7 +48,7 @@ func TestLocalPinsAreTagOnly(t *testing.T) {
 		"E2EClient": E2EClient,
 	} {
 		if !localRe.MatchString(ref) {
-			t.Errorf("%s: %q is not cnms/<name>:<semver>", name, ref)
+			t.Errorf("%s: %q is not ghcr.io/rocketpadplatforms/cnms-<name>:<semver>", name, ref)
 		}
 	}
 }

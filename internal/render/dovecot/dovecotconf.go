@@ -45,7 +45,7 @@ const (
 // set is exactly the one rendered here. Every setting and its
 // runtime effect was verified against the running 2.4.5 image
 // (doveconf -n plus live protocol probes on ports 24, 143, 993,
-// 4190 and LMTP/IMAP deliveries).
+// 12345 and LMTP/IMAP deliveries).
 func renderDovecotConf(req *render.RenderRequest) string {
 	var b strings.Builder
 	b.WriteString("# CNMS-rendered Dovecot dovecot.conf -- do not edit.\n")
@@ -62,16 +62,22 @@ func renderDovecotConf(req *render.RenderRequest) string {
 	if mailboxesEnabled(req) {
 		b.WriteString("protocols = lmtp imap\n")
 	} else {
-		b.WriteString("# Mailboxes disabled: auth-only mode (no IMAP, no mail\n")
-		b.WriteString("# storage). The lmtp listener stays for config uniformity;\n")
-		b.WriteString("# Postfix in send-only mode does not LMTP-deliver (ADR 0004).\n")
-		b.WriteString("protocols = lmtp\n")
+		b.WriteString("# Mailboxes disabled: auth-only mode. No protocol, so no\n")
+		b.WriteString("# IMAP and no LMTP listener (Postfix in send-only mode does\n")
+		b.WriteString("# not LMTP-deliver, ADR 0004); only the auth service runs\n")
+		b.WriteString("# (\"starting up without any protocols\"; verified).\n")
+		b.WriteString("protocols =\n")
 	}
 	b.WriteString("log_path = /dev/stdout\n")
 	b.WriteString("base_dir = /var/run/dovecot\n")
 	b.WriteString("state_dir = /var/run/dovecot\n")
 	b.WriteString("default_internal_user = vmail\n")
 	b.WriteString("default_internal_group = vmail\n")
+	b.WriteString("# The rootless image has no dovenull account and its non-root\n")
+	b.WriteString("# master cannot switch users: any other login user is fatal\n")
+	b.WriteString("# (\"fchown() failed ... Operation not permitted\"; verified).\n")
+	b.WriteString("# The login processes therefore run as vmail; their chroot is\n")
+	b.WriteString("# the only separation from the mail store.\n")
 	b.WriteString("default_login_user = vmail\n")
 	b.WriteString("mail_uid = vmail\n")
 	b.WriteString("mail_gid = vmail\n")
@@ -100,23 +106,26 @@ func renderDovecotConf(req *render.RenderRequest) string {
 	fmt.Fprintf(&b, "    port = %d\n", render.PortDovecotAuth)
 	b.WriteString("  }\n")
 	b.WriteString("}\n")
-	b.WriteString("# Internal LMTP hop (Postfix virtual_transport): plain TCP by\n")
-	b.WriteString("# design (ADR 0006). `ssl = no` keeps the listener exempt from\n")
-	b.WriteString("# the global `ssl = required` (without it 2.4 forces implicit\n")
-	b.WriteString("# TLS on the listener; verified).\n")
-	b.WriteString("service lmtp {\n")
-	b.WriteString("  inet_listener lmtp {\n")
-	fmt.Fprintf(&b, "    port = %d\n", render.PortDovecotLMTP)
-	b.WriteString("    ssl = no\n")
-	b.WriteString("  }\n")
-	b.WriteString("}\n")
 	if mailboxesEnabled(req) {
+		b.WriteString("# Internal LMTP hop (Postfix virtual_transport): plain TCP by\n")
+		b.WriteString("# design (ADR 0006). `ssl = no` keeps the listener exempt from\n")
+		b.WriteString("# the global `ssl = required` (without it 2.4 forces implicit\n")
+		b.WriteString("# TLS on the listener; verified). Listens on an unprivileged\n")
+		b.WriteString("# port (the Service maps 24).\n")
+		b.WriteString("service lmtp {\n")
+		b.WriteString("  inet_listener lmtp {\n")
+		fmt.Fprintf(&b, "    port = %d\n", render.PortDovecotLMTPListen)
+		b.WriteString("    ssl = no\n")
+		b.WriteString("  }\n")
+		b.WriteString("}\n")
+		b.WriteString("# Unprivileged listen ports: the non-root image cannot bind\n")
+		b.WriteString("# 143/993; the Service maps them (ADR 0006).\n")
 		b.WriteString("service imap-login {\n")
 		b.WriteString("  inet_listener imap {\n")
-		fmt.Fprintf(&b, "    port = %d\n", render.PortDovecotIMAP)
+		fmt.Fprintf(&b, "    port = %d\n", render.PortDovecotIMAPListen)
 		b.WriteString("  }\n")
 		b.WriteString("  inet_listener imaps {\n")
-		fmt.Fprintf(&b, "    port = %d\n", render.PortDovecotIMAPS)
+		fmt.Fprintf(&b, "    port = %d\n", render.PortDovecotIMAPSListen)
 		b.WriteString("  }\n")
 		b.WriteString("}\n")
 	}

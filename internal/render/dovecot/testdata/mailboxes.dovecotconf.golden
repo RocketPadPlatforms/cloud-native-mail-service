@@ -16,6 +16,11 @@ base_dir = /var/run/dovecot
 state_dir = /var/run/dovecot
 default_internal_user = vmail
 default_internal_group = vmail
+# The rootless image has no dovenull account and its non-root
+# master cannot switch users: any other login user is fatal
+# ("fchown() failed ... Operation not permitted"; verified).
+# The login processes therefore run as vmail; their chroot is
+# the only separation from the mail store.
 default_login_user = vmail
 mail_uid = vmail
 mail_gid = vmail
@@ -41,25 +46,28 @@ ssl_server {
 # names "auth-master" and "auth-userdb" select other protocols.
 service auth {
   inet_listener auth {
-    port = 4190
+    port = 12345
   }
 }
 # Internal LMTP hop (Postfix virtual_transport): plain TCP by
 # design (ADR 0006). `ssl = no` keeps the listener exempt from
 # the global `ssl = required` (without it 2.4 forces implicit
-# TLS on the listener; verified).
+# TLS on the listener; verified). Listens on an unprivileged
+# port (the Service maps 24).
 service lmtp {
   inet_listener lmtp {
-    port = 24
+    port = 31024
     ssl = no
   }
 }
+# Unprivileged listen ports: the non-root image cannot bind
+# 143/993; the Service maps them (ADR 0006).
 service imap-login {
   inet_listener imap {
-    port = 143
+    port = 31143
   }
   inet_listener imaps {
-    port = 993
+    port = 31993
   }
 }
 # Phase 2 test source: the passwd-file rendered into this same

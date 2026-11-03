@@ -334,9 +334,27 @@ func TestDovecotStatefulSet(t *testing.T) {
 		t.Error("dovecot pod must share the process namespace for the cert-reload sidecar")
 	}
 	main := sts.Spec.Template.Spec.Containers[0]
-	if main.SecurityContext == nil || main.SecurityContext.Capabilities == nil ||
-		!slices.Contains(main.SecurityContext.Capabilities.Add, corev1.Capability("NET_BIND_SERVICE")) {
-		t.Error("dovecot main container needs NET_BIND_SERVICE (ports 24/143)")
+	// The non-root image cannot bind below 1024: the containers listen
+	// on unprivileged ports and the Service maps the well-known ones.
+	for _, p := range main.Ports {
+		if p.ContainerPort < 1024 {
+			t.Errorf("dovecot port %s listens on privileged port %d", p.Name, p.ContainerPort)
+		}
+	}
+	// Auth-only mode has no LMTP listener: the Service, the container
+	// ports and the probes only know the auth port.
+	svc0 := mustFind[*corev1.Service](t, find(t, objs, kindService, testName+"-dovecot"), testName+"-dovecot")
+	if hasPort(svc0, "lmtp") {
+		t.Errorf("auth-only dovecot service exposes LMTP: %v", svc0.Spec.Ports)
+	}
+	for _, p := range main.Ports {
+		if p.Name == "lmtp" {
+			t.Errorf("auth-only dovecot container exposes LMTP: %v", main.Ports)
+		}
+	}
+	if main.ReadinessProbe.TCPSocket.Port.IntVal != render.PortDovecotAuth ||
+		main.LivenessProbe.TCPSocket.Port.IntVal != render.PortDovecotAuth {
+		t.Error("auth-only dovecot probes must target the auth port")
 	}
 	for i := range sts.Spec.Template.Spec.Containers {
 		c := &sts.Spec.Template.Spec.Containers[i]
@@ -375,6 +393,21 @@ func TestDovecotStatefulSet(t *testing.T) {
 	svc = mustFind[*corev1.Service](t, find(t, objs, kindService, testName+"-dovecot"), testName+"-dovecot")
 	if !hasPort(svc, "imap") || !hasPort(svc, "imaps") {
 		t.Error("dovecot service must expose IMAP with mailboxes")
+	}
+	if !servicePortMaps(svc, "lmtp", render.PortDovecotLMTP, render.PortDovecotLMTPListen) {
+		t.Errorf("dovecot service must map lmtp %d to %d: %v", render.PortDovecotLMTP, render.PortDovecotLMTPListen, svc.Spec.Ports)
+	}
+	if main.ReadinessProbe.TCPSocket.Port.IntVal != render.PortDovecotLMTPListen {
+		t.Error("dovecot probes must target the LMTP listen port with mailboxes")
+	}
+	if !servicePortMaps(svc, "imap", render.PortDovecotIMAP, render.PortDovecotIMAPListen) ||
+		!servicePortMaps(svc, "imaps", render.PortDovecotIMAPS, render.PortDovecotIMAPSListen) {
+		t.Errorf("dovecot service must map the IMAP ports to the listen ports: %v", svc.Spec.Ports)
+	}
+	for _, p := range sts.Spec.Template.Spec.Containers[0].Ports {
+		if p.ContainerPort < 1024 {
+			t.Errorf("dovecot port %s listens on privileged port %d", p.Name, p.ContainerPort)
+		}
 	}
 }
 
@@ -629,8 +662,8 @@ func TestNetworkPoliciesSelectOnlyOwnPods(t *testing.T) {
 func TestIngressOpensIMAPOnlyWithMailboxes(t *testing.T) {
 	imap := func(objs []client.Object) bool {
 		np := mustFind[*networkingv1.NetworkPolicy](t, find(t, objs, kindNetworkPolicy, testName+"-ingress"), "ingress")
-		return portPresent(np.Spec.Ingress[0].Ports, render.PortDovecotIMAP) &&
-			portPresent(np.Spec.Ingress[0].Ports, render.PortDovecotIMAPS)
+		return portPresent(np.Spec.Ingress[0].Ports, render.PortDovecotIMAPListen) &&
+			portPresent(np.Spec.Ingress[0].Ports, render.PortDovecotIMAPSListen)
 	}
 	if imap(build(t, nil)) {
 		t.Error("IMAP ports are open without mailboxes")
@@ -1081,4 +1114,85 @@ func portPresent(ports []networkingv1.NetworkPolicyPort, want int32) bool {
 		}
 	}
 	return false
+}
+
+// Auth-only mode has no LMTP listener, so no policy allows it.
+func TestAuthOnlyPolicyHasNoLMTPPort(t *testing.T) {
+	objs := build(t, nil)
+	for _, name := range []string{testName + "-ingress", testName + "-egress"} {
+		np := mustFind[*networkingv1.NetworkPolicy](t, find(t, objs, kindNetworkPolicy, name), name)
+		var ports []networkingv1.NetworkPolicyPort
+		if len(np.Spec.Ingress) > 1 {
+			ports = np.Spec.Ingress[1].Ports
+		} else {
+			ports = np.Spec.Egress[1].Ports
+		}
+		if portPresent(ports, render.PortDovecotLMTPListen) || !portPresent(ports, render.PortDovecotAuth) {
+			t.Errorf("%s component ports must hold the auth port and no LMTP port: %v", name, ports)
+		}
+	}
+}
+
+// servicePortMaps reports whether the named Service port maps port to
+// the target port.
+func servicePortMaps(svc *corev1.Service, name string, port, target int32) bool {
+	for _, p := range svc.Spec.Ports {
+		if p.Name == name {
+			return p.Port == port && p.TargetPort.IntVal == target
+		}
+	}
+	return false
+}
+
+// A NetworkPolicy matches the port behind the Service, so the
+// same-server allow lists the Dovecot listen port, not the Service
+// port.
+func TestComponentPolicyUsesDovecotListenPorts(t *testing.T) {
+	objs := build(t, func(s *cnmsv1alpha1.MailServer) {
+		s.Spec.Mailboxes = &cnmsv1alpha1.Mailboxes{Enabled: new(true)}
+	})
+	for _, name := range []string{testName + "-ingress", testName + "-egress"} {
+		np := mustFind[*networkingv1.NetworkPolicy](t, find(t, objs, kindNetworkPolicy, name), name)
+		var ports []networkingv1.NetworkPolicyPort
+		if len(np.Spec.Ingress) > 1 {
+			ports = np.Spec.Ingress[1].Ports
+		} else {
+			ports = np.Spec.Egress[1].Ports
+		}
+		if !portPresent(ports, render.PortDovecotLMTPListen) || portPresent(ports, render.PortDovecotLMTP) {
+			t.Errorf("%s component ports must hold the LMTP listen port only: %v", name, ports)
+		}
+	}
+}
+
+// Dovecot cannot start without its certificate files: an init
+// container waits for them, so the pod does not crash-loop before
+// cert-manager has issued the Secret. The Secret volume stays optional
+// so the pod can start at all.
+func TestDovecotWaitsForTheCertificate(t *testing.T) {
+	for _, mailboxes := range []bool{false, true} {
+		objs := build(t, func(s *cnmsv1alpha1.MailServer) {
+			s.Spec.Mailboxes = &cnmsv1alpha1.Mailboxes{Enabled: new(mailboxes)}
+		})
+		sts := mustFind[*appsv1.StatefulSet](t, find(t, objs, kindStatefulSet, testName+"-dovecot"), "sts")
+		pod := sts.Spec.Template.Spec
+		if len(pod.InitContainers) != 1 || pod.InitContainers[0].Name != waitTLSContainerName {
+			t.Fatalf("mailboxes=%v: init containers = %v, want %s", mailboxes, pod.InitContainers, waitTLSContainerName)
+		}
+		init := pod.InitContainers[0]
+		script := strings.Join(init.Command, " ")
+		for _, f := range []string{dovecotSSLDir() + "/" + TLSCertFile, dovecotSSLDir() + "/" + TLSKeyFile} {
+			if !strings.Contains(script, f) {
+				t.Errorf("wait script does not check %s: %s", f, script)
+			}
+		}
+		if !hasMount(init.VolumeMounts, tlsVolumeName, dovecotSSLDir()) {
+			t.Error("wait-tls misses the certificate mount")
+		}
+		for _, v := range pod.Volumes {
+			if v.Name == tlsVolumeName && (v.Secret == nil || v.Secret.Optional == nil || !*v.Secret.Optional) {
+				t.Error("the certificate Secret volume must stay optional")
+			}
+		}
+	}
 }

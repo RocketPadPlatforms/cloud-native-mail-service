@@ -24,8 +24,11 @@ narrowing of port-25 egress arrives with Phase 7.
       mailboxes are enabled) from anywhere; the component ports
       (postfix→rspamd milter 11332, postfix→dovecot 24 and the auth
       port, rspamd→valkey 6379) only between the pods of the same
-      `MailServer`; the metrics ports (ADR-0005: Postfix 9150, Rspamd
-      9151, Valkey 9121) from the cluster (documented: v1 allows
+      `MailServer` (the Dovecot entries are the container ports
+      behind the Service: LMTP 31024, IMAP 31143, IMAPS 31993, because
+      the non-root image cannot bind below 1024); the metrics ports
+      (ADR-0005: Postfix 9150, Rspamd 9151, Valkey 9121) from the
+      cluster (documented: v1 allows
       in-cluster scraping without extra configuration). The "cluster"
       peer is an any-namespace `namespaceSelector: {}` next to the
       `0.0.0.0/0` and `::/0` ipBlocks: Cilium CIDR rules never match
@@ -119,7 +122,7 @@ narrowing of port-25 egress arrives with Phase 7.
    global `ssl = required` with `ssl_min_protocol = TLSv1.2`.
    Verified 2.4 behaviour: the listener named `imaps` does implicit
    TLS; on the `imap` listener AUTH is only possible after STARTTLS;
-   the auth protocol listener (4190) is not affected by `ssl` and
+   the auth protocol listener (12345) is not affected by `ssl` and
    stays plain TCP, reachable only from the Postfix pods of the same
    `MailServer`. The internal LMTP listener is exempt from
    `ssl = required` via a per-listener `ssl = no` (without it, 2.4

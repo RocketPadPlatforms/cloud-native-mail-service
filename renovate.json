@@ -111,8 +111,8 @@
     {
       "description": "CNMS-built image tags (synced with the Dockerfiles, ADR 0004).",
       "fileMatch": ["^internal/images/images\\.go$"],
-      "matchStrings": ["Postfix\\s*=\\s*\"cnms/postfix:(?<currentValue>[^\"]+)\""],
-      "depName": "cnms/postfix",
+      "matchStrings": ["Postfix\\s*=\\s*\"ghcr.io/rocketpadplatforms/cnms-postfix:(?<currentValue>[^\"]+)\""],
+      "depName": "ghcr.io/rocketpadplatforms/cnms-postfix",
       "datasource": "docker",
       "versioning": "semver",
       "skipUnresolvable": true
@@ -120,8 +120,8 @@
     {
       "description": "CNMS-built image tags (synced with the Dockerfiles, ADR 0004).",
       "fileMatch": ["^internal/images/images\\.go$"],
-      "matchStrings": ["E2EClient\\s*=\\s*\"cnms/e2e-client:(?<currentValue>[^\"]+)\""],
-      "depName": "cnms/e2e-client",
+      "matchStrings": ["E2EClient\\s*=\\s*\"ghcr.io/rocketpadplatforms/cnms-e2e-client:(?<currentValue>[^\"]+)\""],
+      "depName": "ghcr.io/rocketpadplatforms/cnms-e2e-client",
       "datasource": "docker",
       "versioning": "semver",
       "skipUnresolvable": true

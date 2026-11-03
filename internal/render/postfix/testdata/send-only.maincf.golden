@@ -26,7 +26,7 @@ mydestination =
 
 # --- submission: Dovecot is the SASL backend (ADR 0004) ---
 smtpd_sasl_type = dovecot
-smtpd_sasl_path = inet:mail-dovecot.tenant1.svc.cluster.local:4190
+smtpd_sasl_path = inet:mail-dovecot.tenant1.svc.cluster.local:12345
 smtpd_sasl_security_options = noanonymous
 
 # --- TLS (ADR 0006 floor: AUTH only over TLS, TLS >= 1.2) ---

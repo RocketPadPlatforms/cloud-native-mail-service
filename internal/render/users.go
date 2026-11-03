@@ -18,10 +18,17 @@ package render
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"sigs.k8s.io/yaml"
 )
+
+// usernameRE is the form of a (lower-cased) username: it becomes a path
+// component of the Dovecot home directory and the first field of a
+// passwd-file line, so only a plain file-name alphabet is accepted;
+// a leading dot is excluded (hidden or relative names).
+var usernameRE = regexp.MustCompile(`^[a-z0-9_-][a-z0-9._-]*$`)
 
 // usersDoc is the schema of the users.yaml payload in the
 // insecureStaticUsers Secret (see
@@ -49,9 +56,14 @@ type userDoc struct {
 // A document without a users key is valid and yields zero users.
 // Each field is validated fail-closed so a typo cannot produce an
 // unusable or overly permissive user entry:
-//   - username is a non-empty local part (no "@"), at most 64 chars;
+//   - username is a non-empty file-name-safe local part ([a-z0-9._-]
+//     after lower-casing, no leading dot, no ".."), at most 64 chars;
 //   - passwordHash must be a crypt(3) hash (a "{SCHEME}..."
-//     dovecot scheme or a "$..." crypt magic), never plaintext;
+//     dovecot scheme or a "$..." crypt magic), never plaintext: the
+//     plaintext schemes (PLAIN, CLEAR, CLEARTEXT) and the unsalted
+//     PLAIN-* schemes are refused;
+//   - no field contains ":" (the passwd-file separator) or a control
+//     character;
 //   - username and mailbox are lower-cased (Dovecot lower-cases logins);
 //   - mailbox is a full address with exactly one "@";
 //   - usernames and mailboxes are unique, compared case-insensitively.
@@ -62,14 +74,14 @@ func ParseStaticUsers(data []byte) ([]StaticUser, error) {
 	}
 	users := make([]StaticUser, 0, len(doc.Users))
 	for i, u := range doc.Users {
-		if err := validateUserDoc(u); err != nil {
-			return nil, fmt.Errorf("users.yaml: users[%d]: %w", i, err)
-		}
 		// Postfix lower-cases the recipient lookup and Dovecot 2.4
 		// lower-cases logins by default, so both are stored lower-case:
 		// a mixed-case username would never match a login.
 		u.Username = strings.ToLower(u.Username)
 		u.Mailbox = strings.ToLower(u.Mailbox)
+		if err := validateUserDoc(u); err != nil {
+			return nil, fmt.Errorf("users.yaml: users[%d]: %w", i, err)
+		}
 		for _, prev := range users {
 			if prev.Username == u.Username {
 				return nil, fmt.Errorf("users.yaml: users[%d]: duplicate username %q (case-insensitive)", i, u.Username)
@@ -83,6 +95,23 @@ func ParseStaticUsers(data []byte) ([]StaticUser, error) {
 	return users, nil
 }
 
+// hasForbiddenChar reports whether s contains the passwd-file field
+// separator or a control character (a newline would start a new line,
+// i.e. a new user).
+func hasForbiddenChar(s string) bool {
+	return strings.ContainsFunc(s, func(r rune) bool { return r == ':' || r < 0x20 || r == 0x7f })
+}
+
+// plaintextScheme reports whether a dovecot password scheme name keeps
+// the password readable or unsalted: PLAIN, CLEAR and CLEARTEXT, and
+// the PLAIN-* family (PLAIN-TRUNC, PLAIN-MD4, PLAIN-MD5); verified
+// against `doveadm pw -l` of Dovecot 2.4.5, where names are
+// case-insensitive.
+func plaintextScheme(name string) bool {
+	name = strings.ToUpper(name)
+	return name == "PLAIN" || name == "CLEAR" || name == "CLEARTEXT" || strings.HasPrefix(name, "PLAIN-")
+}
+
 func validateUserDoc(u userDoc) error {
 	if u.Username == "" {
 		return fmt.Errorf("username must not be empty")
@@ -93,8 +122,19 @@ func validateUserDoc(u userDoc) error {
 	if strings.Contains(u.Username, "@") {
 		return fmt.Errorf("username %q must not contain @", u.Username)
 	}
+	if !usernameRE.MatchString(u.Username) || strings.Contains(u.Username, "..") {
+		return fmt.Errorf("username %q must consist of [a-z0-9._-], not start with a dot and not contain ..", u.Username)
+	}
+	if hasForbiddenChar(u.PasswordHash) || hasForbiddenChar(u.Mailbox) {
+		return fmt.Errorf("passwordHash and mailbox must not contain : or control characters")
+	}
 	if !looksLikeCryptHash(u.PasswordHash) {
 		return fmt.Errorf("passwordHash must be a crypt(3) hash ({SCHEME}... or $...), never plaintext")
+	}
+	if strings.HasPrefix(u.PasswordHash, "{") {
+		if scheme, _, _ := strings.Cut(u.PasswordHash[1:], "}"); plaintextScheme(scheme) {
+			return fmt.Errorf("passwordHash scheme {%s} is not allowed: it is plaintext or unsalted", scheme)
+		}
 	}
 	local, domain, ok := strings.Cut(u.Mailbox, "@")
 	if !ok || local == "" || domain == "" || strings.Contains(domain, "@") || strings.ContainsAny(u.Mailbox, " \t") {

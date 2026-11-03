@@ -6,7 +6,7 @@
 # verified against Wietse's GPG signature (key in keys/wietse.pgp,
 # fingerprint 622C 7C01 2254 C186 6774 69C5 0C0B 590E 80CA 15A7).
 #
-# Build:  docker build -t cnms/postfix:3.11.7 images/postfix
+# Build:  docker build -t ghcr.io/rocketpadplatforms/cnms-postfix:3.11.7 images/postfix
 #
 # Runtime contract (used by the CNMS operator):
 #   - main container:  runs as root; /usr/local/bin/cnms-postfix-entrypoint.sh

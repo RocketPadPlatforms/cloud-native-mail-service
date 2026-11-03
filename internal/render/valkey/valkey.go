@@ -50,10 +50,18 @@ func (r *Renderer) Render(req *render.RenderRequest) (*render.RenderResult, erro
 	// server with the rendered configuration, pings it and shuts
 	// it down. Verified against the running image: exit 0 for a
 	// valid, 1 for an invalid configuration. D4: a bad config
-	// must never replace a working one.
-	validateCmd := fmt.Sprintf(
-		"valkey-server %s --daemonize yes --pidfile /tmp/cnms-valkey.pid && sleep 1 && [ \"$(valkey-cli -p %d ping 2>/dev/null)\" = PONG ] && valkey-cli -p %d shutdown nosave",
-		valkeyConfPath, render.PortValkey, render.PortValkey)
+	// must never replace a working one. The ping is polled (up to
+	// 10s) instead of waiting a fixed second: a slow node would
+	// otherwise reject a valid configuration.
+	validateCmd := fmt.Sprintf(`valkey-server %[1]s --daemonize yes --pidfile /tmp/cnms-valkey.pid || exit 1
+i=0
+until [ "$(valkey-cli -p %[2]d ping 2>/dev/null)" = PONG ]; do
+  i=$((i + 1))
+  [ "$i" -le 50 ] || { echo "Valkey did not answer PING within 10s" >&2; exit 1; }
+  sleep 0.2
+done
+valkey-cli -p %[2]d shutdown nosave`,
+		valkeyConfPath, render.PortValkey)
 	return &render.RenderResult{
 		ConfigData: map[string]string{
 			"valkey.conf": renderValkeyConf(req),
