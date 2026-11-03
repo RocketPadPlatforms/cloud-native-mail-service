@@ -28,10 +28,16 @@ import (
 // and whether a lookup verified it.
 type MailDomainSpec struct {
 	// Domain name, e.g. "example.org". Lowercase DNS name with at
-	// least two labels (A-labels only, no trailing dot).
+	// least two labels of up to 63 characters (A-labels only, no
+	// trailing dot). The last label starts with a letter, so an IP
+	// address is not a domain. The same rule applies to the name of a
+	// MailDomainGrant; keep the two patterns in sync. Immutable:
+	// DKIM keys, DNS records and the domain authorization belong to
+	// one domain; create a new MailDomain for another one.
 	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="domain is immutable; create a new MailDomain for another domain"
 	// +kubebuilder:validation:MaxLength=253
-	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$`
+	// +kubebuilder:validation:Pattern=`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?[.])+[a-z]([a-z0-9-]{0,61}[a-z0-9])?$`
 	Domain string `json:"domain"`
 
 	// DNS mode: "manual" (default) reports the required records in
@@ -80,14 +86,20 @@ type DKIM struct {
 }
 
 // DKIMRotation configures DKIM key rotation.
+//
+// +kubebuilder:validation:XValidation:rule="duration(self.interval) >= duration('24h') && (!has(self.overlap) || duration(self.overlap) < duration(self.interval))",message="interval must be at least 24h and longer than the overlap (default 24h)"
 type DKIMRotation struct {
-	// Interval after which the key is rotated.
+	// Interval after which the key is rotated. At least 24h.
 	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Type=string
+	// +kubebuilder:validation:MaxLength=32
 	Interval metav1.Duration `json:"interval"`
 
 	// Overlap during which the old and the new selector are both
-	// valid. Defaults to 24h.
+	// valid. Defaults to 24h; must be shorter than the interval.
 	// +optional
+	// +kubebuilder:validation:Type=string
+	// +kubebuilder:validation:MaxLength=32
 	// +kubebuilder:default="24h0m0s"
 	Overlap *metav1.Duration `json:"overlap,omitempty"`
 }
@@ -100,14 +112,22 @@ type DMARC struct {
 	// +kubebuilder:default=none
 	Policy *string `json:"policy,omitempty"`
 
-	// Reporting address for aggregate reports (rua).
+	// Reporting address for aggregate reports (rua): a plain email
+	// address without the "mailto:" scheme, which the renderer adds.
+	// Characters that would end the URI or the tag (":", ";", ",", quotes,
+	// "!", whitespace) are rejected.
 	// +optional
 	// +kubebuilder:validation:MaxLength=254
+	// +kubebuilder:validation:Pattern=`^[^\x00-\x20\x7f:;,"'!@<>?%\\]+@[a-zA-Z0-9]([-a-zA-Z0-9]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([-a-zA-Z0-9]{0,61}[a-zA-Z0-9])?)+$`
 	Rua *string `json:"rua,omitempty"`
 
-	// Reporting address for failure reports (ruf).
+	// Reporting address for failure reports (ruf): a plain email
+	// address without the "mailto:" scheme, which the renderer adds.
+	// Characters that would end the URI or the tag (":", ";", ",", quotes,
+	// "!", whitespace) are rejected.
 	// +optional
 	// +kubebuilder:validation:MaxLength=254
+	// +kubebuilder:validation:Pattern=`^[^\x00-\x20\x7f:;,"'!@<>?%\\]+@[a-zA-Z0-9]([-a-zA-Z0-9]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([-a-zA-Z0-9]{0,61}[a-zA-Z0-9])?)+$`
 	Ruf *string `json:"ruf,omitempty"`
 
 	// Testing mode: the t= tag is set, so policies are evaluated but
@@ -119,10 +139,13 @@ type DMARC struct {
 
 // MTAStS configures MTA-STS for the domain.
 type MTAStS struct {
-	// Publish an MTA-STS policy for this domain. Defaults to false.
-	// The policy endpoint (`https://mta-sts.<domain>/.well-known/
-	// mta-sts.txt`) is served by the CNMS policy server and requires a
-	// valid public certificate for the domain.
+	// Report the MTA-STS policy for this domain. Defaults to false.
+	// MTA-STS is report-only: CNMS does not serve the policy. The
+	// status holds the exact policy text, its id and the required
+	// "_mta-sts" TXT record; the policy has to be served by the
+	// operator of the domain at
+	// `https://mta-sts.<domain>/.well-known/mta-sts.txt` with a valid
+	// public certificate.
 	// +optional
 	// +kubebuilder:default=false
 	Enabled *bool `json:"enabled,omitempty"`
@@ -135,9 +158,13 @@ type TLSRPT struct {
 	// +kubebuilder:default=false
 	Enabled *bool `json:"enabled,omitempty"`
 
-	// Reporting address. Defaults to the DMARC rua when set.
+	// Reporting address: a plain email address without the "mailto:"
+	// scheme, which the renderer adds. Characters that would end the
+	// URI or the tag (":", ";", ",", quotes, "!", whitespace) are
+	// rejected. Defaults to the DMARC rua when set.
 	// +optional
 	// +kubebuilder:validation:MaxLength=254
+	// +kubebuilder:validation:Pattern=`^[^\x00-\x20\x7f:;,"'!@<>?%\\]+@[a-zA-Z0-9]([-a-zA-Z0-9]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([-a-zA-Z0-9]{0,61}[a-zA-Z0-9])?)+$`
 	Rua *string `json:"rua,omitempty"`
 }
 
@@ -148,9 +175,11 @@ type MailDomainStatus struct {
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
 	// Records lists every DNS record required by this domain and
-	// whether a lookup verified it.
-	// +listType=map
-	// +listMapKey=name
+	// whether a lookup verified it. The list is atomic: neither the
+	// name nor name and type identify a record, because one name can
+	// hold several records of the same type (MX, A).
+	// +listType=atomic
+	// +kubebuilder:validation:MaxItems=64
 	// +optional
 	Records []DNSRecord `json:"records,omitempty"`
 
@@ -215,10 +244,13 @@ type DKIMStatus struct {
 
 // MTAStSStatus reports the MTA-STS policy state.
 type MTAStSStatus struct {
-	// Monotonically increasing policy id. It changes whenever the
-	// policy content changes.
+	// Policy id of the "_mta-sts" TXT record. It is derived from the
+	// policy content (a truncated SHA-256), so it changes exactly
+	// when the policy changes and can be re-derived without status.
 	// +optional
-	PolicyID *int64 `json:"policyId,omitempty"`
+	// +kubebuilder:validation:MaxLength=32
+	// +kubebuilder:validation:Pattern=`^[a-zA-Z0-9]+$`
+	PolicyID string `json:"policyId,omitempty"`
 
 	// Exact policy content to publish at the policy endpoint.
 	// +optional

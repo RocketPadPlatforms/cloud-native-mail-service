@@ -40,10 +40,9 @@ const postfixTerminationGrace int64 = 120
 // readiness (k8s default for StatefulSets) plus the PDB.
 func postfixStatefulSet(server *cnmsv1alpha1.MailServer, r *render.RenderResult) *appsv1.StatefulSet {
 	name := render.ServiceName(server.Name, render.ComponentPostfix)
-	replicas := int32(2)
+	replicas := PostfixReplicas(server)
 	queueStorage := resource.MustParse("1Gi")
 	if server.Spec.Postfix != nil {
-		replicas = int32Value(server.Spec.Postfix.Replicas, replicas)
 		queueStorage = quantityValue(server.Spec.Postfix.QueueStorage, queueStorage)
 	}
 

@@ -62,7 +62,9 @@ type MailDomainGrantStatus struct {
 // +kubebuilder:printcolumn:name="Namespace",type="string",JSONPath=".spec.namespace"
 // +kubebuilder:printcolumn:name="Subdomains",type="boolean",JSONPath=".spec.includeSubdomains"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
-// +kubebuilder:validation:XValidation:rule="self.metadata.name.matches('^[a-z0-9]([a-z0-9-]*[a-z0-9])?([.][a-z0-9]([a-z0-9-]*[a-z0-9])?)+$')",message="name must be a domain with at least two labels, e.g. example.org"
+// The name rule is the pattern of MailDomainSpec.Domain; keep the
+// two in sync.
+// +kubebuilder:validation:XValidation:rule="self.metadata.name.matches('^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?[.])+[a-z]([a-z0-9-]{0,61}[a-z0-9])?$')",message="name must be a domain with at least two labels of up to 63 characters, the last one starting with a letter, e.g. example.org"
 
 // MailDomainGrant grants one namespace the right to use one domain for
 // mail: sending, receiving, DKIM signing, certificates and DNS records.

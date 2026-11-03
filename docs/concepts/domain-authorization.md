@@ -47,7 +47,7 @@ re-evaluates grants on every reconcile. A `MailDomain` (and the
   reason=AuthorizationDisabled`).
 
 Otherwise the domain is inactive: no certificate is requested, no DKIM key
-is published, no DNS records are written, no MTA-STS policy is served, and
+is published, no DNS records are written, no MTA-STS policy is reported, and
 nothing is signed for it. The condition explains why
 (`NotGranted`), and `kubectl get maildomaingrants` shows who owns a
 domain.
