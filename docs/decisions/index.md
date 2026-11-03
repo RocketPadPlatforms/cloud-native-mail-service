@@ -31,4 +31,7 @@ See [TEMPLATE.md](TEMPLATE.md).
 | [0008](0008-user-sources-and-service-accounts.md) | Operator-managed users and service accounts | Accepted |
 | [0009](0009-config-validation-gate.md) | Config validation gate with immutable configuration | Accepted |
 | [0010](0010-storage-immutability-and-scale-down.md) | Immutable storage sizes and no Postfix scale-down yet | Accepted |
+| [0011](0011-dkim-keys-and-rotation.md) | DKIM keys, signing configuration and rotation | Proposed |
+| [0012](0012-dns-records-and-dmarc.md) | DNS records, DMARC and DNS verification | Proposed |
+| [0013](0013-never-unsigned-guard.md) | Never-unsigned guard | Proposed |
 
