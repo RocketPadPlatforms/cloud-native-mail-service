@@ -38,9 +38,8 @@ committed.
   (`internal_mail_filter_classes = bounce, notify`): revisit with a Postfix
   that sets `{postfix_internal_origin}`, so the guard can tell them from
   `sendmail` mail (ADR 0013).
-- Run the guard test table against the pinned Rspamd image in CI, and test
-  that a re-injected message (`postsuper -r`, queue rescue) is guarded
-  correctly (ADR 0013, section 6).
+- Test that a re-injected message (`postsuper -r`, queue rescue) is
+  guarded correctly (ADR 0013, section 6).
 - DNS TXT proof of control on `MailDomainGrant` (`verification.dnsTXT`), for
   self-service domain onboarding (see ADR 0003).
 - Additive `MailDomainGrant` fields: `allowedClusterIssuers`,

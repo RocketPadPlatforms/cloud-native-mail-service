@@ -1,12 +1,13 @@
 # Testing
 
-CNMS tests run in three layers, each with a different level of
+CNMS tests run in four layers, each with a different level of
 realism:
 
 | Layer | Tool | Covers |
 |-------|------|--------|
 | Unit | `go test` | Renderers (golden files), parsers, the domain-authorization evaluator |
 | Controller | envtest (`make test`) | Reconciliation: gates, fail-closed blocking, conditions, data-plane apply, optional-integration discovery; every file below `config/samples` (including `full-setup/`) is applied to the API server with strict field validation, and the docs embed those files, so examples cannot drift from the CRDs |
+| Guard matrix | Docker + `rspamc` (`make test-rspamd-guard`) | The never-unsigned guard and DKIM signing in the pinned Rspamd image, with the configuration the renderer produces |
 | E2E | kind + swaks + Mailpit (`make test-e2e`) | The full data plane in a cluster: mail actually flows through Postfix, Rspamd and Dovecot |
 
 The envtest suite installs the optional integration CRDs only on request:
@@ -16,6 +17,48 @@ The envtest suite installs the optional integration CRDs only on request:
 both and with both, so every integration is exercised present and
 absent. The `MailDomain` specs use a fake clock and a fake DNS resolver;
 they never touch real DNS.
+
+## The guard matrix
+
+`hack/test-rspamd-guard.sh` runs the case table of
+[ADR 0013](../decisions/0013-never-unsigned-guard.md) against the real
+engine. It needs `docker`, `go` and `jq`:
+
+1. `hack/render-rspamd-fixture` renders the Rspamd configuration of a
+   test `MailServer` with the production renderer (so the script never
+   holds a copy of the golden files) and generates throwaway RSA-2048 and
+   Ed25519 keys for six served domains: RSA and Ed25519, RSA only, one of
+   two keys missing, a key missing, a key the Rspamd user cannot read,
+   and no key.
+2. The pinned Rspamd image (read from `internal/images/images.go`) starts
+   the way the manifests start it: read-only root file system, the
+   Rspamd user, no capabilities, and no network, so no DNS lookup or map
+   download makes a run slow or different.
+3. Messages are scanned through the normal worker with `rspamc`, with
+   `--ip`, `--user` and `--from` set like Postfix's milter does. Each
+   case compares the action, the message, the `DKIM_SIGNED` options and
+   the algorithms of the `DKIM-Signature` headers.
+
+The matrix covers: authenticated mail signed with every active key; a
+missing, unreadable or absent key, and a served domain without keys,
+answered with a soft reject (`DKIM signing unavailable, try again
+later`); unauthenticated mail from Internet and pod addresses, mail of an
+unserved domain and of a subdomain left untouched and never deferred;
+loopback mail (Postfix's own non-SMTP mail) signed, deferred without a
+key, and exempt when the envelope sender is empty; a message that is
+rejected anyway stays a reject; a message with several `From` addresses,
+one of them in a served domain (in one header or in two), is rejected
+(`multiple From addresses cannot be DKIM signed`), also from loopback,
+and left alone when no address is served, when there is no login, and
+when there is no `From` header; an error inside the guard defers
+authenticated mail and loopback mail with a sender, leaves everything
+else alone and is logged; an error in the source detection defers
+authenticated mail only. `rspamadm configtest` is run for the good
+configuration (exit 0, also with missing keys), a guard with a syntax
+error and a guard that fails at load time (exit 1 each).
+
+A run takes under ten seconds once the image is present, can be repeated
+at will, and removes its containers and temporary files on exit.
 
 ## The e2e suite
 
@@ -78,11 +121,12 @@ documentation address ranges are used throughout.
 ```console
 make test        # unit + envtest (PROMETHEUS_CRDS=1 also runs the
                  # optional Prometheus Operator integration leg)
+make test-rspamd-guard  # guard and signing matrix (needs docker, go, jq)
 make test-e2e    # e2e on kind (needs kind, docker and kubectl);
                  # PROMETHEUS_CRDS=1 installs the ServiceMonitor CRD
                  # first and expects the operator to create monitors
 ```
 
 CI runs `make test` and `make test-e2e` on kind with and without the
-ServiceMonitor CRDs, the linter, the license check, and a check that
-the generated files are up to date.
+ServiceMonitor CRDs, the guard matrix, the linter, the license check, and
+a check that the generated files are up to date.
