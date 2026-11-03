@@ -48,6 +48,28 @@ prune the old field names.
   `spec.postfix.replicas` is rejected. Resize the PersistentVolumeClaims
   by hand ([ADR 0010](../decisions/0010-storage-immutability-and-scale-down.md)).
 
+### MailDomain controller
+
+- **A `MailDomain` is reconciled now.** An authorized domain gets an
+  immutable DKIM key Secret `<name>-dkim-<selector>` (labelled
+  `cnms.rpp.gmbh/maildomain`, no owner reference, kept when the
+  `MailDomain` is deleted) and the annotation `cnms.rpp.gmbh/rotation`.
+  Tell your GitOps tool to ignore that annotation. An unauthorized
+  domain gets neither. Its status lists the required DNS records; the
+  data plane does not sign with the keys yet.
+- **New operator flag `--dns-resolver=host:port`** (default: the system
+  resolver of the pod) for the verification of the records.
+- **New RBAC:** `patch` on `maildomains` (the annotation), and, for the
+  optional `externalDNS` mode, `get`, `list`, `watch`, `create`,
+  `update`, `patch` and `delete` on `dnsendpoints.externaldns.k8s.io`.
+  The Secret permissions are the ones of the `MailServer` controller.
+  Update the CRDs together with the operator: `status.dkim.active`
+  allows 8 entries and `kubectl get maildomains` has an `Authorized`
+  column.
+- **`externalDNS` mode needs `--managed-record-types=TXT`** on the
+  external-dns instance and a tenant-proof setup, see
+  [DKIM keys and DNS records](../how-to/dkim-keys-and-dns-records.mdx).
+
 ### Data plane
 
 - **Dovecot listens on the container ports 31024 (LMTP), 31143 (IMAP)

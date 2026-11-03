@@ -22,12 +22,14 @@ How domain authorization works is explained in
 ## The four resources
 
 :::note
-Not every resource has a controller yet. `MailServer` and
-`MailDomainGrant` are reconciled. `MailDomain` and `MailDirectory` are
-API only: the `MailServer` controller reads them (the domain claims, the
-existence of the directory), but nothing generates DKIM keys, writes DNS
-records or queries a directory, and their status stays empty. See the
-[roadmap](../roadmap.md) for the phase of each part.
+Not every resource has a controller yet. `MailServer`, `MailDomain` and
+`MailDomainGrant` are reconciled. `MailDomain` generates and rotates DKIM
+keys and lists and verifies its DNS records
+([how-to](../how-to/dkim-keys-and-dns-records.mdx)); the data plane does
+not sign with the keys yet. `MailDirectory` is API only: the `MailServer`
+controller reads its existence, but nothing queries a directory and its
+status stays empty. See the [roadmap](../roadmap.md) for the phase of
+each part.
 :::
 
 ### `MailDomainGrant`

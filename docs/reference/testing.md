@@ -9,6 +9,14 @@ realism:
 | Controller | envtest (`make test`) | Reconciliation: gates, fail-closed blocking, conditions, data-plane apply, optional-integration discovery; every file below `config/samples` (including `full-setup/`) is applied to the API server with strict field validation, and the docs embed those files, so examples cannot drift from the CRDs |
 | E2E | kind + swaks + Mailpit (`make test-e2e`) | The full data plane in a cluster: mail actually flows through Postfix, Rspamd and Dovecot |
 
+The envtest suite installs the optional integration CRDs only on request:
+`PROMETHEUS_CRDS=1` adds a minimal `ServiceMonitor` CRD
+(`hack/crds/prometheus-operator`) and `DNSENDPOINT_CRDS=1` a minimal
+`DNSEndpoint` CRD (`hack/crds/external-dns`). CI runs the suite without
+both and with both, so every integration is exercised present and
+absent. The `MailDomain` specs use a fake clock and a fake DNS resolver;
+they never touch real DNS.
+
 ## The e2e suite
 
 The e2e suite (`test/e2e`) creates an isolated kind cluster and
