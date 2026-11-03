@@ -1,0 +1,71 @@
+name: Images
+
+# Pull requests build the multi-arch images; pushes to main and version tags
+# publish them to ghcr.io with an SBOM and a provenance attestation.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - Dockerfile
+      - images/**
+      - go.mod
+      - go.sum
+      - api/**
+      - cmd/**
+      - internal/**
+      - .github/workflows/image-build.yml
+      - .github/workflows/images.yml
+
+permissions: {}
+
+jobs:
+  build:
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+    name: Build ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: cnms-operator
+            context: .
+          - image: cnms-postfix
+            context: images/postfix
+            postfix-tag: true
+          - image: cnms-e2e-client
+            context: images/e2e-client
+            postfix-tag: true
+    uses: ./.github/workflows/image-build.yml
+    with:
+      image: ${{ matrix.image }}
+      context: ${{ matrix.context }}
+      postfix-tag: ${{ matrix.postfix-tag || false }}
+      push: false
+
+  publish:
+    if: github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      packages: write
+    name: Publish ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: cnms-operator
+            context: .
+          - image: cnms-postfix
+            context: images/postfix
+            postfix-tag: true
+          - image: cnms-e2e-client
+            context: images/e2e-client
+            postfix-tag: true
+    uses: ./.github/workflows/image-build.yml
+    with:
+      image: ${{ matrix.image }}
+      context: ${{ matrix.context }}
+      postfix-tag: ${{ matrix.postfix-tag || false }}
+      push: true

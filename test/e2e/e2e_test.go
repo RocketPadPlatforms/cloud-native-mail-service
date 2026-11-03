@@ -48,6 +48,9 @@ const metricsServiceName = "cloud-native-mail-service-controller-manager-metrics
 // metricsRoleBindingName is the name of the RBAC that will be created to allow get the metrics data
 const metricsRoleBindingName = "cloud-native-mail-service-metrics-binding"
 
+// curlTokenSecret holds the service account token for the curl-metrics pod
+const curlTokenSecret = "curl-metrics-token"
+
 var _ = Describe("CNMS e2e", Ordered, func() {
 	var controllerPodName string
 
@@ -95,9 +98,10 @@ var _ = Describe("CNMS e2e", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
 
 		By("enabling the static test users (Phase 2 test feature)")
-		// kubectl 1.37 no longer has `set args`; replace the pod
-		// template args with a JSON patch (keeping the args the
-		// kustomize overlays add: metrics, leader election, probes).
+		// kubectl has no `set args`; a JSON patch replaces the container
+		// args. It replaces all of them, so it repeats the args of the
+		// kustomize overlays (metrics, leader election, probes) and adds
+		// the test feature flag.
 		cmd = exec.Command("kubectl", "patch", "deployment",
 			"cloud-native-mail-service-controller-manager", "-n", namespace,
 			"--type", "json",
@@ -128,6 +132,7 @@ var _ = Describe("CNMS e2e", Ordered, func() {
 
 		By("cleaning up the curl pod for metrics")
 		_, _ = kubectl("delete", "pod", "curl-metrics", "-n", namespace, "--ignore-not-found")
+		_, _ = kubectl("delete", "secret", curlTokenSecret, "-n", namespace, "--ignore-not-found")
 
 		By("undeploying the controller-manager")
 		_, _ = utils.Run(exec.Command("make", "undeploy"))
@@ -255,6 +260,14 @@ subjects:
 
 			// +kubebuilder:scaffold:e2e-metrics-webhooks-readiness
 
+			By("storing the token in a Secret, so it is not part of the pod spec")
+			tokenFile := filepath.Join(GinkgoT().TempDir(), "token")
+			Expect(os.WriteFile(tokenFile, []byte(token), 0o600)).To(Succeed())
+			cmd = exec.Command("kubectl", "create", "secret", "generic", curlTokenSecret,
+				"--namespace", namespace, "--from-file=token="+tokenFile)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create the token Secret")
+
 			By("creating the curl-metrics pod to access the metrics endpoint")
 			cmd = exec.Command("kubectl", "run", "curl-metrics", "--restart=Never",
 				"--namespace", namespace,
@@ -267,8 +280,12 @@ subjects:
 							"image": "%s",
 							"command": ["/bin/sh", "-c"],
 							"args": [
-								"for i in $(seq 1 30); do curl -v -k -H 'Authorization: Bearer %s' https://%s.%s.svc.cluster.local:8443/metrics && exit 0 || sleep 2; done; exit 1"
+								"for i in $(seq 1 30); do curl -sS -i -k -H \"Authorization: Bearer $TOKEN\" https://%s.%s.svc.cluster.local:8443/metrics && exit 0 || sleep 2; done; exit 1"
 							],
+							"env": [{
+								"name": "TOKEN",
+								"valueFrom": {"secretKeyRef": {"name": "%s", "key": "token"}}
+							}],
 							"securityContext": {
 								"readOnlyRootFilesystem": true,
 								"allowPrivilegeEscalation": false,
@@ -284,7 +301,7 @@ subjects:
 						}],
 						"serviceAccountName": "%s"
 					}
-				}`, images.Curl, token, metricsServiceName, namespace, serviceAccountName))
+				}`, images.Curl, metricsServiceName, namespace, curlTokenSecret, serviceAccountName))
 			_, err = utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create curl-metrics pod")
 
@@ -304,7 +321,7 @@ subjects:
 				metricsOutput, err := getMetricsOutput()
 				g.Expect(err).NotTo(HaveOccurred(), "Failed to retrieve logs from curl pod")
 				g.Expect(metricsOutput).NotTo(BeEmpty())
-				g.Expect(metricsOutput).To(ContainSubstring("< HTTP/1.1 200 OK"))
+				g.Expect(metricsOutput).To(ContainSubstring("HTTP/1.1 200 OK"))
 			}
 			Eventually(verifyMetricsAvailable, 2*time.Minute).Should(Succeed())
 		})
@@ -839,9 +856,8 @@ func serviceAccountToken() (string, error) {
 	}`
 
 	By("creating temporary file to store the token request")
-	secretName := fmt.Sprintf("%s-token-request", serviceAccountName)
-	tokenRequestFile := filepath.Join("/tmp", secretName)
-	err := os.WriteFile(tokenRequestFile, []byte(tokenRequestRawString), os.FileMode(0o644))
+	tokenRequestFile := filepath.Join(GinkgoT().TempDir(), "token-request.json")
+	err := os.WriteFile(tokenRequestFile, []byte(tokenRequestRawString), os.FileMode(0o600))
 	if err != nil {
 		return "", err
 	}
