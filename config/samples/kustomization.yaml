@@ -1,8 +1,16 @@
 ## Append samples of your project ##
+# The samples carry no namespace: apply them into the namespace the grant
+# names (spec.namespace of cnms_v1alpha1_maildomaingrant.yaml, which is
+# cluster-scoped and ignores -n):
+#   kubectl create namespace mail-sample
+#   kubectl apply -n mail-sample -k config/samples
+# The static-users test samples (cnms_v1alpha1_mailserver-static-users.yaml
+# and cnms_v1alpha1_sample-static-users.yaml) are not listed here: they need
+# the operator flag --enable-insecure-test-features and replace the
+# MailDirectory of cnms_v1alpha1_mailserver.yaml.
 resources:
 - cnms_v1alpha1_mailserver.yaml
 - cnms_v1alpha1_maildomain.yaml
 - cnms_v1alpha1_maildirectory.yaml
 - cnms_v1alpha1_maildomaingrant.yaml
-- cnms_v1alpha1_sample-static-users.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

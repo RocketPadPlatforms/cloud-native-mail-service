@@ -50,6 +50,10 @@ without an expiry.
 | `--allow-cluster-issuers` | `false` | Lets a `MailServer` reference a cert-manager `ClusterIssuer` in `spec.tls.issuerRef`. Without the flag such a server is fail-closed (`Ready=False, reason=ClusterIssuerNotAllowed`) and no `Certificate` is created; a namespaced `Issuer` is always allowed. A shared `ClusterIssuer` lets every tenant obtain certificates from it, so enable the flag only on clusters where that is intended. Add it to the manager `args` in `config/manager/manager.yaml` (Kustomize); the Helm chart will expose it as a value (Phase 10). |
 | `--enable-insecure-test-features` | `false` | Accepts `spec.submission.insecureStaticUsers` (Phase 2 test users from a Secret). For tests only: the operator logs a warning at startup when it is set. Without the flag a `MailServer` that sets the field is fail-closed (`Ready=False, reason=InsecureStaticUsersDisabled`). |
 
+The operator logs structured JSON to stdout and records important state
+changes (a rejected configuration, a revoked domain, an ownership
+conflict, a `Ready` transition) as Kubernetes Events on the object.
+
 ## Pod Security admission
 
 The data-plane pods set a restricted-style security context: runtime
@@ -133,20 +137,13 @@ this version; annotate the PVCs of an older server by hand
 
 ## Status conditions
 
-`kubectl get mailserver` shows a `Ready` rollup; the reasons explain
-the first failing sub-condition:
-
-| Condition | True when | Notable False reasons |
-|-----------|-----------|----------------------|
-| `DomainsAuthorized` | every `spec.domains` entry passes the grant check | `NotGranted`, `DuplicateDomain`, `DomainNotFound`, `PartiallyAuthorized` (only the authorized domains are rendered; the message names the blocked ones, which leave the data plane when the new configuration is rolled out; `Ready` stays `False`) |
-| `CertificateReady` | the TLS Secret (`<name>-tls` or `spec.tls.secretName`) carries `tls.crt` and `tls.key` | `SecretNotFound`, `SecretIncomplete` |
-| `ConfigValidated` | the rendered configuration of every component passed its validation Job (or already runs); `Unknown` while the Jobs run | `ConfigRejected` (message names the failed Job; delete the Job to retry), `ValidatingConfig` (Unknown) |
-| `WorkloadsReady` | every data-plane workload finished its rollout (latest spec observed, all replicas on the desired template and ready) | `Progressing` while converging, `RolloutStalled` after a Deployment exceeds its progress deadline or the workloads stay not ready for 10 minutes (the message lists which) |
-| `Observability` | the Prometheus Operator integration matches `spec.observability.prometheusOperator` (`auto` is the default) | `CRDsRequired` (setting `enabled` without the ServiceMonitor CRDs) |
-| `ClientIPPreserved` | Postfix sees the real client address (postscreen and the per-client rate limits depend on it); informational, never part of `Ready` | `ClusterTrafficPolicy` (`inbound.externalTrafficPolicy: Cluster` on a LoadBalancer Service source-NATs clients, so the rate limits count all senders together; use `Local`) |
-| `DedicatedSendingAddress` | outbound mail leaves from an address of its own (an IP pool claim) or through a relay; informational, never part of `Ready` | `NodeSourceAddress` (`outbound.direct` without `ipPoolClaimRef` sends from the node address, which other workloads share, so the sender reputation is shared; see ADR 0002) |
-| `NodeDrainable` | the Postfix disruption budget allows evicting one pod at a time; informational, never part of `Ready` | `BudgetBlocksDrain` (`postfixMinAvailable` keeps every replica available, for example the default `1` with `postfix.replicas: 1`, so a node drain waits; add replicas or lower the budget) |
-| `Ready` | all of the above (except `ClientIPPreserved`, `DedicatedSendingAddress` and `NodeDrainable`) | propagated reasons, e.g. `DirectoryNotFound`, `NoUserSource` (no `directoryRef` and no other user source), `StaticUsersInvalid`, `OwnershipConflict`, `RelayNotAvailable` (Phase 6), `IpPoolClaimNotAvailable` (Phase 7) |
+`kubectl get mailserver` shows a `Ready` rollup; its reason names the
+first failing sub-condition (`CertificateReady`, `ConfigValidated`,
+`WorkloadsReady`, `DomainsAuthorized`, `Observability`) or the input
+that blocks the render (`DirectoryNotFound`, `NoUserSource`, ...).
+`ClientIPPreserved`, `DedicatedSendingAddress` and `NodeDrainable` are
+warnings that never feed into `Ready`. Every condition and reason is
+listed in the [status conditions reference](../reference/status-conditions.md).
 
 The operator only changes objects it controls. If an object it needs
 (for example a Service named `<server>-postfix`) already exists and has

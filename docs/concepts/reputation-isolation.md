@@ -20,6 +20,12 @@ CNMS therefore isolates every `MailServer` completely:
   reputation and Bayes state are never shared between servers
   (one dedicated set per `MailServer`, never pooled).
 
+Today the workloads, queues, Rspamd and Valkey are isolated. Own DKIM
+keys arrive with Phase 5 and own sending addresses with Phase 7: until
+then `outbound.direct` sends from the address of the node, which other
+workloads share, and the `DedicatedSendingAddress` condition warns about
+it.
+
 Inbound is isolated the same way: each `MailServer` has its own
 inbound Service and its own postscreen state.
 

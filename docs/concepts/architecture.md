@@ -22,7 +22,7 @@ import Mermaid from '@theme/Mermaid';
     subgraph dp ["Data plane (one isolated set per MailServer)"]
         LB["Service (LoadBalancer)<br/>25 inbound, 587 submission"] --> PF["Postfix (StatefulSet)<br/>SMTP in, submission, outbound"]
         PF -->|"LMTP"| DC["Dovecot<br/>IMAP, LMTP, SASL auth"]
-        PF -->|"milter (inet:) + tempfail"| RP["Rspamd (Deployment)<br/>filtering, DKIM signing, rate limits"]
+        PF -->|"milter (inet:) + tempfail"| RP["Rspamd (Deployment)<br/>filtering, rate limits<br/>(DKIM signing: Phase 5)"]
         RP --- VK["Valkey<br/>(rate limits, reputation, Bayes)"]
     end
     CFG --> PF
@@ -56,7 +56,7 @@ namespace — nothing is shared between servers
 | Workload | Kind | Role |
 |---|---|---|
 | Postfix | StatefulSet, 2+ replicas | SMTP in (port 25 behind postscreen), submission (587), outbound delivery; one queue PVC per replica |
-| Rspamd | Deployment, 2+ replicas | Filtering, DKIM signing, SPF/DMARC checks, rate limits |
+| Rspamd | Deployment, 2+ replicas | Filtering, SPF/DMARC checks, rate limits; DKIM signing arrives in Phase 5 |
 | Valkey | one instance per server | Rspamd state (rate limits, reputation, Bayes) |
 | Dovecot | StatefulSet, single replica | IMAP, LMTP delivery from Postfix, SASL authentication for submission |
 
@@ -111,9 +111,10 @@ a DKIM key that exists in a restored Secret.
 Every component exposes Prometheus-format metrics (ADR 0005). The
 operator checks via API discovery whether the Prometheus Operator
 CRDs are available; if so (and the `MailServer` observability
-setting allows, default `auto`) it creates ServiceMonitors and
-PodMonitors, otherwise it sets a condition explaining that and
-continues normally. Without the CRDs the same metrics are scrapeable
+setting allows, default `auto`) it creates one ServiceMonitor per
+component, otherwise it sets a condition explaining that and
+continues normally. PodMonitors and PrometheusRules are not created
+yet (Phase 9). Without the CRDs the same metrics are scrapeable
 from the per-component Services directly. The Rspamd controller only
 answers loopback clients, so its metrics are served by a loopback
 sidecar on port 9151 that also reports whether its last copy

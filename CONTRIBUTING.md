@@ -39,6 +39,6 @@ make test-e2e        # e2e on an isolated kind cluster (needs kind + docker)
 
 ## Project layout
 
-See `AGENTS.md` for the project guide (kubebuilder conventions, marker
-reference, controller design rules) and `TASK.md` for the project decisions
-and phase plan.
+See `AGENTS.md` for the project guide: the project decisions and phase
+plan, the kubebuilder conventions, the marker reference and the controller
+design rules.

@@ -18,8 +18,10 @@ change. Upgrade notes are published for every release.
 
 :::danger
 **DKIM signing is not implemented yet** (Phase 5): outbound mail currently
-leaves unsigned. Recipient validation only knows the static test users for
-now; the directory (Phase 3) replaces them.
+leaves unsigned. Users come only from the static test users (a test
+feature); a `MailDirectory` is checked for existence but not queried until
+Phase 3, so recipient validation and login know no other user. Do not send
+production mail from a CNMS server yet.
 :::
 
 ## What CNMS gives you
@@ -31,7 +33,9 @@ now; the directory (Phase 3) replaces them.
   follows with the `MailDomain` phase.
 - **Reputation isolation.** Every `MailServer` owns its workloads, queues,
   sending addresses, DKIM keys and HELO names, so several mail systems on
-  one cluster never share sender reputation.
+  one cluster never share sender reputation. Workloads, queues, Rspamd and
+  Valkey are isolated today; DKIM keys follow in Phase 5 and sending
+  addresses in Phase 7.
 - **Mail is never lost to a component outage.** Filtering or lookup
   failures delay mail (4xx and queueing) — they never reject it.
 - **Users stay outside the operator by default.** Mailboxes and accounts come
@@ -43,14 +47,17 @@ now; the directory (Phase 3) replaces them.
 ## Documentation
 
 - [Getting started](getting-started/index.md) — install on kind, first send
-  and first receive.
-- [How-to guides](how-to/index.md) — install, DNS records, rDNS, IP pools,
-  directories, relay mode, mailboxes, observability, backup, GitOps.
+  and first receive (not written yet).
+- [How-to guides](how-to/index.md) — install and operate, blocking direct
+  SMTP egress; DNS records, rDNS, IP pools, directories, relay mode,
+  observability, backup and GitOps follow with their features.
 - [Concepts](concepts/index.md) — resource model, domain authorization,
   architecture, control plane vs data plane, reputation isolation, failure
   modes.
-- [Operations](operations/index.md) — runbooks and operating procedures.
-- [Reference](reference/index.md) — API reference, third-party licenses.
+- [Operations](operations/index.md) — runbooks and operating procedures
+  (not written yet).
+- [Reference](reference/index.md) — API reference, status conditions,
+  testing, third-party and data-plane licenses.
 
 ## Project
 

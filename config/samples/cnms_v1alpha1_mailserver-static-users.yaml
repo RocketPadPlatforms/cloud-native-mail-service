@@ -1,0 +1,29 @@
+# Test-only MailServer: its users come from the Secret in
+# cnms_v1alpha1_sample-static-users.yaml instead of a MailDirectory. The
+# operator accepts spec.submission.insecureStaticUsers only when it runs
+# with --enable-insecure-test-features. It reuses the MailDomain and
+# MailDomainGrant samples and is not part of kustomization.yaml;
+# apply it and the Secret with `kubectl apply -n mail-sample -f <file>`.
+apiVersion: cnms.rpp.gmbh/v1alpha1
+kind: MailServer
+metadata:
+  labels:
+    app.kubernetes.io/name: cloud-native-mail-service
+    app.kubernetes.io/managed-by: kustomize
+  name: mailserver-static-users-sample
+spec:
+  outbound:
+    direct: {}
+  domains:
+    - name: maildomain-sample
+  tls:
+    issuerRef:
+      kind: Issuer
+      name: selfsigned-issuer
+  submission:
+    enabled: true
+    insecureStaticUsers:
+      secretName: sample-static-users
+  mailboxes:
+    enabled: true
+    storage: 10Gi

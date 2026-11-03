@@ -15,6 +15,15 @@ How domain authorization works is explained in
 
 ## The four resources
 
+:::note
+Not every resource has a controller yet. `MailServer` and
+`MailDomainGrant` are reconciled. `MailDomain` and `MailDirectory` are
+API only: the `MailServer` controller reads them (the domain claims, the
+existence of the directory), but nothing generates DKIM keys, writes DNS
+records or queries a directory, and their status stays empty. See the
+[roadmap](../roadmap.md) for the phase of each part.
+:::
+
 ### `MailDomainGrant`
 
 Grants one namespace the right to use one domain for mail (sending,
@@ -38,12 +47,15 @@ Key spec fields:
 
 - `directoryRef` — the `MailDirectory` used for recipient validation and
   authentication. Optional (ADR 0008): without it the server needs another
-  user source, otherwise it is not ready (`NoUserSource`).
+  user source, otherwise it is not ready (`NoUserSource`). Until Phase 3
+  only its existence is checked; the users come from the test Secret
+  `submission.insecureStaticUsers`.
 - `outbound` — exactly one of `direct` (own sending addresses, optionally via
   a `MailIPPoolClaim`) or `relay` (a smart host; the `MailRelay` resource
   arrives with the relay phase).
-- `domains` — the `MailDomain`s this server handles: they are signed with
-  DKIM and accepted for submission.
+- `domains` — the `MailDomain`s this server handles: they are accepted
+  for delivery and submission once authorized, and signed with DKIM from
+  Phase 5 on.
 - `tls` — the cert-manager issuer the server certificate comes from.
 - `submission`, `mailboxes` — enable submission (on by default) and Dovecot
   mail storage (off by default). With submission on and mailboxes off,
@@ -93,7 +105,7 @@ MailDomain ─── publishes ──> DNS records   (DKIM/SPF/DMARC/MTA-STS/TLS
 principle be used by several `MailServer`s. A `MailDomain` is only active for
 its domain when a `MailDomainGrant` names its namespace (or the operator
 runs unrestricted); without one, the domain is inactive and fail closed.
-The controller (Phase 2 onward) validates those references and evaluates
+The `MailServer` controller validates those references and evaluates
 the grants at reconcile time; the API server enforces only the per-object
 rules (schema, defaults, CEL).
 
