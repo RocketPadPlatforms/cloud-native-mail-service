@@ -45,9 +45,6 @@ func (r *Renderer) Render(req *render.RenderRequest) (*render.RenderResult, erro
 	if req == nil || req.Server == nil {
 		return nil, errors.New("render request without MailServer")
 	}
-	if len(req.AuthorizedDomains) == 0 {
-		return nil, errors.New("no authorized domains")
-	}
 	// 9.1.2 has no config-check flag (`--check-config` is parsed
 	// as a config directive), so the gate briefly starts the
 	// server with the rendered configuration, pings it and shuts

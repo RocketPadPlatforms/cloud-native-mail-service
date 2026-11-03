@@ -116,14 +116,6 @@ func TestRenderErrors(t *testing.T) {
 			name: "no-server",
 			req:  &render.RenderRequest{AuthorizedDomains: []string{domainA}},
 		},
-		{
-			name: "no-domains",
-			req: &render.RenderRequest{
-				Server: &v1alpha1.MailServer{
-					ObjectMeta: metav1.ObjectMeta{Name: testName, Namespace: testNamespace},
-				},
-			},
-		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -160,5 +152,15 @@ func TestRenderResultCommands(t *testing.T) {
 	}
 	if want := "mail-valkey.tenant1.svc.cluster.local:6379"; !strings.Contains(res.ConfigData["redis.conf"], want) {
 		t.Errorf("redis.conf does not target %s", want)
+	}
+}
+
+// Domain revocation leaves the Rspamd configuration unchanged: it
+// carries no domain list, so an empty authorized set must still render.
+func TestRenderWithoutAuthorizedDomains(t *testing.T) {
+	req := testRequest(t, nil)
+	req.AuthorizedDomains = nil
+	if _, err := New().Render(req); err != nil {
+		t.Fatalf("Render() = %v, want success", err)
 	}
 }

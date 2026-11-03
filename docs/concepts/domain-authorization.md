@@ -58,9 +58,10 @@ claimed `MailDomain`s:
 - **narrowing a grant revokes access** — there is no cached decision;
 - **creation order never matters** — restores and re-apply cannot move a
   domain to a different tenant;
-- **duplicates fail closed** — if the same domain is claimed more than
-  once (in one namespace or across namespaces), every claimant is blocked
-  until the misconfiguration is fixed.
+- **duplicates fail closed** — if the owning namespace claims the same
+  domain more than once, every such claimant is blocked until the
+  misconfiguration is fixed. A claim from a namespace without the grant
+  is unauthorized on its own and never blocks the owner.
 
 ### Derived names
 
@@ -78,6 +79,25 @@ accepting submission for it immediately, and removes the DNS records and
 the certificate after a short grace period (15 minutes, so a brief GitOps
 prune-and-recreate does not delete DKIM records worldwide). The DKIM
 secret is kept, so re-granting the domain does not rotate the key.
+
+For a `MailServer` this means:
+
+- Every domain is evaluated on its own. The authorized subset is
+  rendered; the others are left out of the Postfix configuration and the
+  certificate's names. `DomainsAuthorized` is `False` with reason
+  `PartiallyAuthorized` and a message naming each blocked domain, and a
+  Warning Event is emitted. `Ready` stays `False` until the whole spec is
+  realised, even though the authorized domains keep working.
+- If no domain is authorized any longer, a running server is re-rendered
+  fail closed: Postfix rejects all recipients, submission is off, and the
+  certificate keeps only the in-cluster Service name. A server that never
+  had a data plane gets none.
+- The new configuration goes through the usual [validation
+  gate](../decisions/0009-config-validation-gate.md): until its Job
+  passes, the previous configuration keeps running.
+- Sender-address binding on submission is not enforced yet (backlog), so a
+  login that still exists can use a revoked domain as sender address until
+  the Phase 3 binding lands; there is no DKIM signing before Phase 5.
 
 ## Wiring-level bypasses
 

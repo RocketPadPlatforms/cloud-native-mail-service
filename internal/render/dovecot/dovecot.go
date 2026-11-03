@@ -45,9 +45,6 @@ func (r *Renderer) Render(req *render.RenderRequest) (*render.RenderResult, erro
 	if req == nil || req.Server == nil {
 		return nil, errors.New("render request without MailServer")
 	}
-	if len(req.AuthorizedDomains) == 0 {
-		return nil, errors.New("no authorized domains")
-	}
 	return &render.RenderResult{
 		ConfigData: map[string]string{
 			"dovecot.conf": renderDovecotConf(req),

@@ -74,9 +74,6 @@ func (r *Renderer) Render(req *render.RenderRequest) (*render.RenderResult, erro
 	if req == nil || req.Server == nil {
 		return nil, errors.New("render request without MailServer")
 	}
-	if len(req.AuthorizedDomains) == 0 {
-		return nil, errors.New("no authorized domains")
-	}
 	mainCF := renderMainCF(req)
 	return &render.RenderResult{
 		ConfigData: map[string]string{
@@ -95,13 +92,12 @@ func (r *Renderer) Render(req *render.RenderRequest) (*render.RenderResult, erro
 	}, nil
 }
 
-// primaryDomain is the domain used for myhostname, the postmaster
+// primaryDomain is the name used for myhostname, the postmaster
 // address and the certificate (D2). Domains are sorted so rendering is
-// deterministic across replicas and reconciles.
+// deterministic across replicas and reconciles; with no authorized
+// domain it is the in-cluster Service name.
 func primaryDomain(req *render.RenderRequest) string {
-	domains := slices.Clone(req.AuthorizedDomains)
-	slices.Sort(domains)
-	return domains[0]
+	return req.ServerHostname()
 }
 
 // sortedDomains returns the authorized domains in sorted order.
@@ -119,8 +115,12 @@ func mailboxesEnabled(req *render.RenderRequest) bool {
 }
 
 // submissionEnabled reports whether authenticated submission (587) is
-// enabled. The API default is true (kubebuilder default).
+// enabled. The API default is true (kubebuilder default). Without an
+// authorized domain nothing may be sent, so submission is off.
 func submissionEnabled(req *render.RenderRequest) bool {
+	if len(req.AuthorizedDomains) == 0 {
+		return false
+	}
 	sub := req.Server.Spec.Submission
 	return sub == nil || sub.Enabled == nil || *sub.Enabled
 }

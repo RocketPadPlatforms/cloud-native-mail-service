@@ -26,8 +26,13 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/recorder"
 
 	cnmsv1alpha1 "github.com/RocketPadPlatforms/cloud-native-mail-service/api/v1alpha1"
@@ -92,10 +97,47 @@ func (r *MailDomainGrantReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	return ctrl.Result{}, nil
 }
 
-// SetupWithManager sets up the controller with the Manager.
+// grantNamespaceIndex is the field index of MailDomainGrants by
+// spec.namespace, so a Namespace event finds the grants pointing at it.
+const grantNamespaceIndex = "spec.namespace"
+
+// indexGrantByNamespace is the extractor of grantNamespaceIndex.
+func indexGrantByNamespace(obj client.Object) []string {
+	g, ok := obj.(*cnmsv1alpha1.MailDomainGrant)
+	if !ok || g.Spec.Namespace == "" {
+		return nil
+	}
+	return []string{g.Spec.Namespace}
+}
+
+// mapNamespaceGrants enqueues the grants that point at the namespace.
+func (r *MailDomainGrantReconciler) mapNamespaceGrants(ctx context.Context, obj client.Object) []reconcile.Request {
+	list := &cnmsv1alpha1.MailDomainGrantList{}
+	if err := r.List(ctx, list, client.MatchingFields{grantNamespaceIndex: obj.GetName()}); err != nil {
+		logf.FromContext(ctx).Error(err, "Could not list MailDomainGrants", "namespace", obj.GetName())
+		return nil
+	}
+	reqs := make([]reconcile.Request, 0, len(list.Items))
+	for i := range list.Items {
+		reqs = append(reqs, reconcile.Request{NamespacedName: types.NamespacedName{Name: list.Items[i].Name}})
+	}
+	return reqs
+}
+
+// SetupWithManager sets up the controller with the Manager. A
+// Namespace appearing or disappearing re-evaluates the grants that
+// point at it; label and annotation updates are ignored.
 func (r *MailDomainGrantReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(),
+		&cnmsv1alpha1.MailDomainGrant{}, grantNamespaceIndex, indexGrantByNamespace); err != nil {
+		return err
+	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&cnmsv1alpha1.MailDomainGrant{}).
 		Named("maildomaingrant").
+		Watches(&corev1.Namespace{}, handler.EnqueueRequestsFromMapFunc(r.mapNamespaceGrants),
+			builder.WithPredicates(predicate.Funcs{
+				UpdateFunc: func(event.UpdateEvent) bool { return false },
+			})).
 		Complete(r)
 }

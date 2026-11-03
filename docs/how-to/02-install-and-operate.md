@@ -56,7 +56,7 @@ the first failing sub-condition:
 
 | Condition | True when | Notable False reasons |
 |-----------|-----------|----------------------|
-| `DomainsAuthorized` | every `spec.domains` entry passes the grant check | `NotGranted`, `DuplicateDomain`, `DomainNotFound` |
+| `DomainsAuthorized` | every `spec.domains` entry passes the grant check | `NotGranted`, `DuplicateDomain`, `DomainNotFound`, `PartiallyAuthorized` (some domains are served, the message names the blocked ones; `Ready` stays `False`) |
 | `CertificateReady` | the TLS Secret (`<name>-tls` or `spec.tls.secretName`) carries `tls.crt` and `tls.key` | `SecretNotFound`, `SecretIncomplete` |
 | `ConfigValidated` | the rendered configuration of every component passed its validation Job (or already runs); `Unknown` while the Jobs run | `ConfigRejected` (message names the failed Job; delete the Job to retry), `ValidatingConfig` (Unknown) |
 | `WorkloadsReady` | every data-plane workload finished its rollout (latest spec observed, all replicas on the desired template and ready) | `Progressing` while converging, `RolloutStalled` after a Deployment exceeds its progress deadline or the workloads stay not ready for 10 minutes (the message lists which) |
@@ -65,10 +65,15 @@ the first failing sub-condition:
 | `Ready` | all of the above (except `ClientIPPreserved`) | propagated reasons, e.g. `DirectoryNotFound`, `StaticUsersInvalid`, `RelayNotAvailable` (Phase 6), `IpPoolClaimNotAvailable` (Phase 7) |
 
 A not-ready `MailServer` is re-checked every 30 seconds (certificates
-get issued, workloads come up, CRDs get installed). A `MailDomainGrant`
-that points at a missing namespace shows
+get issued, workloads come up, CRDs get installed), a ready one every
+10 minutes as a safety net behind the watches. Every change to a
+`MailDomainGrant` re-evaluates all `MailServer`s, and a change to a
+`MailDomain` re-evaluates the servers of every namespace that claims the
+same domain, because uniqueness is checked cluster wide. A
+`MailDomainGrant` that points at a missing namespace shows
 `NamespaceExists=False, reason=NamespaceNotFound` (informational; it
-never feeds back into authorization).
+never feeds back into authorization) and is re-checked when the
+namespace appears or disappears.
 
 ## Dovecot
 

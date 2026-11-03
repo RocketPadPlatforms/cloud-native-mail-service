@@ -297,22 +297,29 @@ func postfixPodDisruptionBudget(server *cnmsv1alpha1.MailServer) *policyv1.PodDi
 // (unstructured, so the operator works without the cert-manager
 // CRDs, principle 10). Unauthorized domains are dropped from the SANs
 // (ADR 0003); the primary domain (first sorted) is the common name.
+// With no authorized domain the certificate keeps only the in-cluster
+// server name (cert-manager needs at least one name, and the data
+// plane mounts the Secret) and has no common name.
 func certificate(req *render.RenderRequest) *unstructured.Unstructured {
 	server := req.Server
 	domains := slices.Clone(req.AuthorizedDomains)
 	slices.Sort(domains)
-	primary := domains[0]
+	spec := map[string]any{
+		"issuerRef": map[string]any{
+			"kind": server.Spec.TLS.IssuerRef.Kind,
+			"name": server.Spec.TLS.IssuerRef.Name,
+		},
+		"secretName": TLSSecretName(server),
+		"dnsNames":   domainsToAny(domains),
+		"usages":     []any{"server auth", "client auth"},
+	}
+	if len(domains) > 0 {
+		spec["commonName"] = domains[0]
+	} else {
+		spec["dnsNames"] = domainsToAny([]string{req.ServerHostname()})
+	}
 	return unstructuredObj("cert-manager.io/v1", "Certificate",
-		server.Name, server.Namespace, objectLabels(server, ""), map[string]any{
-			"issuerRef": map[string]any{
-				"kind": server.Spec.TLS.IssuerRef.Kind,
-				"name": server.Spec.TLS.IssuerRef.Name,
-			},
-			"secretName": TLSSecretName(server),
-			"commonName": primary,
-			"dnsNames":   domainsToAny(domains),
-			"usages":     []any{"server auth", "client auth"},
-		})
+		server.Name, server.Namespace, objectLabels(server, ""), spec)
 }
 
 // domainsToAny converts a []string to a []any (unstructured).

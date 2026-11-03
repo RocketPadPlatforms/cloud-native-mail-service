@@ -161,16 +161,14 @@ type DataPlane struct {
 }
 
 // Build produces every object of the data plane of one MailServer.
-// req must carry at least one authorized domain; renders must
-// contain a result for every data-plane component. The output is
-// deterministic.
+// req may carry no authorized domain (all revoked): the configuration
+// is then fail closed (see render.RenderRequest) and the Certificate
+// keeps only the in-cluster server name. renders must contain a result
+// for every data-plane component. The output is deterministic.
 func Build(req *render.RenderRequest, renders map[render.Component]*render.RenderResult) (*DataPlane, error) {
 	server := req.Server
 	if server == nil {
 		return nil, errors.New("render request without MailServer")
-	}
-	if len(req.AuthorizedDomains) == 0 {
-		return nil, errors.New("no authorized domains")
 	}
 	var missing []render.Component
 	for _, c := range render.AllComponents() {
