@@ -100,12 +100,14 @@ rules:
   - cnms.rpp.gmbh
   resources:
   - maildomaingrants/status
+  - maildomains/status
   - mailservers/status
   verbs:
   - patch
 - apiGroups:
   - cnms.rpp.gmbh
   resources:
+  - maildomains/finalizers
   - mailservers/finalizers
   verbs:
   - update
