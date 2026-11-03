@@ -19,15 +19,16 @@ limitations under the License.
 // the e2e suite is one of these constants.
 //
 // Upstream images are pinned by version tag AND digest and are
-// updated by the Renovate regex managers in renovate.json.
+// updated by the Renovate custom managers in renovate.json.
 // CNMS-built images (Postfix, E2EClient) are fully qualified
 // ghcr.io/rocketpadplatforms references pinned by version tag only:
 // their digest changes with every local build, and e2e always
 // rebuilds them from images/ (make docker-build-data-plane); their
 // tags are synced with the Dockerfiles in the same PR (ADR 0004
 // consequences).
-// shortcut: no digest until a CI workflow publishes the images to
-// ghcr.io; pin them by digest as soon as it does (docs/backlog.md).
+// shortcut: no digest yet; the images workflow publishes the images to
+// ghcr.io, so pin them by digest once a published image exists
+// (docs/backlog.md).
 package images
 
 // Upstream images (version tag + digest).

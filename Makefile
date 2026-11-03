@@ -161,15 +161,12 @@ docker-push: ## Push docker image with the manager.
 PLATFORMS ?= linux/arm64,linux/amd64,linux/s390x,linux/ppc64le
 .PHONY: docker-buildx
 docker-buildx: ## Build and push docker image for the manager for cross-platform support
-	# copy existing Dockerfile and insert --platform=${BUILDPLATFORM} into Dockerfile.cross, and preserve the original Dockerfile
-	sed -e '1 s/\(^FROM\)/FROM --platform=\$$\{BUILDPLATFORM\}/; t' -e ' 1,// s//FROM --platform=\$$\{BUILDPLATFORM\}/' Dockerfile > Dockerfile.cross
 	$(CONTAINER_TOOL) buildx inspect cloud-native-mail-service-builder >/dev/null 2>&1 || $(CONTAINER_TOOL) buildx create --name cloud-native-mail-service-builder
 	$(CONTAINER_TOOL) buildx use cloud-native-mail-service-builder
-	@# Clean up the builder and Dockerfile.cross, but still fail when the build fails.
+	@# Remove the builder, but still fail when the build fails.
 	@status=0; \
-	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) $(if $(BASE_IMAGE),--build-arg BASE_IMAGE=$(BASE_IMAGE)) --tag ${IMG} -f Dockerfile.cross . || status=$$?; \
+	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) $(if $(BASE_IMAGE),--build-arg BASE_IMAGE=$(BASE_IMAGE)) --tag ${IMG} . || status=$$?; \
 	$(CONTAINER_TOOL) buildx rm cloud-native-mail-service-builder; \
-	rm -f Dockerfile.cross; \
 	exit $$status
 
 .PHONY: build-installer

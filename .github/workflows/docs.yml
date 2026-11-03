@@ -8,16 +8,17 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
+# Pull request runs get their own group: in a shared group a newer pending
+# run replaces the queued deploy of main.
 concurrency:
-  group: "pages"
+  group: pages-${{ github.event_name == 'pull_request' && github.ref || 'deploy' }}
   cancel-in-progress: false
 
 jobs:
   build:
     name: Build docs
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     steps:
       - name: Clone the code
@@ -46,6 +47,10 @@ jobs:
   deploy:
     name: Deploy to GitHub Pages
     if: github.event_name != 'pull_request'
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

@@ -25,12 +25,20 @@ container image with a known user, writable paths, and a log path
 ## Decision
 
 1. **Postfix image, built by CNMS** (`images/postfix/Dockerfile`):
-   official 3.11.7 source tarball from ftp.postfix.org, SHA512 pinned
-   as a build argument, built on `debian:trixie-slim` (base pinned by
-   digest). Configure flags: `--with-tls --with-sasl --with-lmdb
-   --with-ldap --with-sqlite` (SASL for the Dovecot auth backend on the
-   submission listener; LDAP and SQLite for the Phase 3 directory
-   lookups; LMDB as the default map store). The entrypoint runs the
+   official 3.11.7 source tarball, downloaded from a mirror of the
+   official release directory (`postfix-mirror.horus-it.com`). The
+   version and the SHA512 are build arguments, and the build also
+   verifies Wietse Venema's GPG signature of the tarball against the
+   key in `images/postfix/keys`. The base is `debian:trixie-slim`
+   (pinned by digest). Postfix 3.11 has no configure script: the
+   Dockerfile runs `make makefiles` with `CCARGS` of
+   `-DUSE_TLS -DUSE_SASL_AUTH -DDEF_SERVER_SASL_TYPE="dovecot"
+   -DHAS_LMDB -DHAS_SQLITE -DHAS_LDAP -DNO_DB -DNO_NIS -DNO_NISPLUS`
+   (SASL for the Dovecot auth backend on the submission listener, with
+   the dovecot type built in and no external SASL library; LDAP and
+   SQLite for the Phase 3 directory lookups; LMDB as the default map
+   store and no Berkeley DB) and installs the client binaries to
+   `/usr/sbin`. The entrypoint runs the
    master as root; the master drops privileges to the `postfix` user
    for all daemons, and the queue lives on a per-replica volume. The
    root FS is read-only; the data directory (`/var/lib/postfix`) is an
@@ -85,29 +93,41 @@ container image with a known user, writable paths, and a log path
    validation gate briefly starts the server and pings it.
 6. **Pin handling:** every engine/test image reference is a Go
    constant (version tag + digest) in one package, consumed by the
-   renderers and the e2e suite; a Renovate regex manager updates them.
+   renderers and the e2e suite; a Renovate custom manager updates them.
    Base images of CNMS-built Dockerfiles are pinned by digest
    (Renovate dockerfile manager). The CNMS-built images are fully
    qualified under the project's registry namespace
    (`ghcr.io/rocketpadplatforms/cnms-postfix`, `cnms-e2e-client`): a
    short name such as `cnms/postfix` would resolve to a Docker Hub
-   namespace CNMS does not control. They carry the version tag only
-   until a CI workflow publishes them; the digest pin follows then
-   (backlog).
+   namespace CNMS does not control. Their tags follow `POSTFIX_VERSION`
+   (a Renovate custom manager keeps the Dockerfile, the Makefile and
+   the constants in step; the checksum of the tarball is updated by
+   hand in the same PR). The constants carry the version tag only:
+   the e2e suite rebuilds both images locally, and the digest pin
+   follows once published images exist (backlog).
 7. **E2E-only images:** a swaks client image
    (`debian:trixie-slim` + `swaks` + `openssl` + `curl`, apt swaks
-   `20201014.0` upstream) and `axllent/mailpit:v1.32.0` (MIT; the
-   sink runs with `--smtp [::]:25`, API/UI on 8025). Test-only,
-   version-pinned in the e2e suite, not part of the product.
+   `20201014.0` upstream), `axllent/mailpit:v1.32.0` (MIT; the
+   sink runs with `--smtp [::]:25`, API/UI on 8025) and
+   `curlimages/curl`, which scrapes the operator metrics. Test-only,
+   pinned by version and digest in the images package, not part of
+   the product.
    The sink must listen on port 25: the kind cluster's NetworkPolicy
    enforcement (kindnet, nftables `queue` to a userspace evaluator)
    evaluates Service traffic on the post-DNAT tuple, so the Postfix
    pod's port-25 egress allow (`mail-egress-smtp`) must match the
    delivery path's target port; a 25→1025 Service would leave the
    flow at dport 1025 and be dropped.
-8. **Multi-arch:** CNMS-built images are built for the local/CI
-   architecture; e2e runs amd64. A multi-arch publish pipeline is a
-   Phase 10 concern (Makefile `docker-buildx` support already exists).
+8. **Multi-arch:** the `images` workflow builds the operator, Postfix
+   and e2e client images for linux/amd64 and linux/arm64. Pull requests
+   only build; pushes to main and version tags publish them to
+   `ghcr.io/rocketpadplatforms` (`cnms-operator`, `cnms-postfix`,
+   `cnms-e2e-client`) with an SBOM and a provenance attestation. The
+   Postfix and e2e client images are also tagged with the Postfix
+   version. The e2e suite builds the images locally for the host
+   architecture (amd64 in CI). The Makefile `docker-buildx` target
+   builds the operator for further platforms. The Postfix image is
+   compiled under emulation for arm64, so that build is slow.
 
 ## Consequences
 
