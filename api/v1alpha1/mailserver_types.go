@@ -98,7 +98,7 @@ type MailServerSpec struct {
 	// +optional
 	Observability *Observability `json:"observability,omitempty"`
 
-	// Backup settings (k8up annotations on managed resources).
+	// Backup settings (k8up annotations on the managed volumes).
 	// +optional
 	Backup *Backup `json:"backup,omitempty"`
 }
@@ -325,9 +325,14 @@ type Observability struct {
 	PrometheusOperator *string `json:"prometheusOperator,omitempty"`
 }
 
-// Backup configures backup annotations (k8up) on managed resources.
+// Backup configures backup annotations (k8up) on the managed volumes.
 type Backup struct {
-	// Annotate managed volumes and pods for k8up. Defaults to true.
+	// Annotate the managed PersistentVolumeClaims for k8up
+	// (k8up.io/backup): the Dovecot mail volume is included, the
+	// Postfix queue volumes and the Valkey volume are excluded.
+	// Kubernetes cannot change the claim templates of an existing
+	// StatefulSet, so the annotation reaches the Postfix and Dovecot
+	// volumes created after the StatefulSet. Defaults to true.
 	// +optional
 	// +kubebuilder:default=true
 	Enabled *bool `json:"enabled,omitempty"`

@@ -58,6 +58,7 @@ func validation(server *cnmsv1alpha1.MailServer, c render.Component, r *render.R
 	jobLabels := objectLabels(server, c)
 
 	volumes, mounts := validationVolumes(server, c, r)
+	podSecurity := &corev1.PodSecurityContext{SeccompProfile: podSeccomp()}
 	var backoffLimit int32
 	ttl := validationTTLSeconds
 	deadline := validationDeadlineSeconds
@@ -81,17 +82,36 @@ func validation(server *cnmsv1alpha1.MailServer, c render.Component, r *render.R
 					Spec: corev1.PodSpec{
 						RestartPolicy:                corev1.RestartPolicyNever,
 						AutomountServiceAccountToken: new(false),
+						SecurityContext:              podSecurity,
 						Volumes:                      volumes,
 						Containers: []corev1.Container{{
-							Name:         validateContainerName,
-							Image:        componentImage(c),
-							Command:      r.ValidateCommand,
-							VolumeMounts: mounts,
+							Name:            validateContainerName,
+							Image:           componentImage(c),
+							Command:         r.ValidateCommand,
+							VolumeMounts:    mounts,
+							SecurityContext: validationSecurity(c),
+							Resources:       validationResources(c),
 						}},
 					},
 				},
 			},
 		},
+	}
+}
+
+// validationSecurity is the security context of the validation
+// container of a component: the user and capabilities of the workload
+// it checks, except that nothing binds a port or signals a process.
+func validationSecurity(c render.Component) *corev1.SecurityContext {
+	switch c {
+	case render.ComponentPostfix:
+		return rootSecurity(postfixValidateCaps...)
+	case render.ComponentRspamd:
+		return nonRootSecurity(rspamdUserID, rspamdGroupID)
+	case render.ComponentDovecot:
+		return nonRootSecurity(dovecotVmailID, dovecotVmailID)
+	default:
+		return nonRootSecurity(valkeyID, valkeyID)
 	}
 }
 
@@ -127,11 +147,14 @@ func validationVolumes(server *cnmsv1alpha1.MailServer, c render.Component, r *r
 		return []corev1.Volume{config}, localDMount()
 	case render.ComponentDovecot:
 		// `doveconf -n` reads neither the users file nor the
-		// certificate, so only the configuration is mounted.
-		return []corev1.Volume{config},
-			[]corev1.VolumeMount{{Name: configVolumeName, MountPath: "/etc/dovecot", ReadOnly: true}}
+		// certificate, so only the configuration is mounted; it
+		// writes its binary configuration to /tmp.
+		return []corev1.Volume{config, emptyDirVolume(tmpVolumeName)},
+			[]corev1.VolumeMount{{Name: configVolumeName, MountPath: "/etc/dovecot", ReadOnly: true}, tmpMount()}
 	default:
-		return []corev1.Volume{config},
-			[]corev1.VolumeMount{{Name: configVolumeName, MountPath: "/etc/valkey", ReadOnly: true}}
+		// The validation starts the server, which writes its pidfile
+		// to /tmp.
+		return []corev1.Volume{config, emptyDirVolume(tmpVolumeName)},
+			[]corev1.VolumeMount{{Name: configVolumeName, MountPath: "/etc/valkey", ReadOnly: true}, tmpMount()}
 	}
 }

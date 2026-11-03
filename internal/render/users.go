@@ -123,7 +123,7 @@ func validateUserDoc(u userDoc) error {
 		return fmt.Errorf("username %q must not contain @", u.Username)
 	}
 	if !usernameRE.MatchString(u.Username) || strings.Contains(u.Username, "..") {
-		return fmt.Errorf("username %q must consist of [a-z0-9._-], not start with a dot and not contain ..", u.Username)
+		return fmt.Errorf("username %q must consist of [a-z0-9._-], must not start with a dot and must not contain two dots", u.Username)
 	}
 	if hasForbiddenChar(u.PasswordHash) || hasForbiddenChar(u.Mailbox) {
 		return fmt.Errorf("passwordHash and mailbox must not contain : or control characters")

@@ -15,6 +15,10 @@ scoped; nothing here is committed.
   ADR 0003).
 - OIDC directory backend for `MailDirectory` (after LDAP/SQL).
 - rDNS backends other than `manual` (externalDNS, provider APIs).
+- Sync the k8up annotations onto the PVCs of an existing StatefulSet
+  (the claim templates are immutable, so toggling `spec.backup.enabled`
+  or upgrading does not reach volumes that already exist) and remove
+  them when `spec.backup.enabled` is switched off.
 - Operator-managed k8up `Schedule` resources and repository credentials
   (user-created, documented examples for now).
 - DANE/DNSSEC automation.
@@ -57,6 +61,14 @@ scoped; nothing here is committed.
 - Publish the CNMS-built images (`cnms-postfix`, `cnms-e2e-client`) to
   `ghcr.io/rocketpadplatforms` from CI and pin them by digest in
   `internal/images/images.go` (tag only today, ADR 0004).
+- `MailServer` field for the resource requests and limits of each
+  component (`spec.<component>.resources`); the defaults are constants
+  in `internal/manifests/resources.go` today.
+- Valkey authentication (`requirepass` from a Secret) and a
+  `maxmemory` below the container limit: Valkey runs without a password
+  and without a memory cap today, protected only by the NetworkPolicies
+  (ADR 0006), and is OOM-killed instead of refusing writes when it
+  reaches its memory limit.
 - Tracing.
 - Webmail/UI, billing, multi-cluster federation.
 - IMAP horizontal scaling.
