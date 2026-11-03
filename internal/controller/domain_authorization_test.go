@@ -184,6 +184,14 @@ func TestAuthorizationEvaluate(t *testing.T) {
 			wantReason:  ReasonAuthorizationDisabled,
 		},
 		{
+			name:       "public suffix is never authorized",
+			server:     testServerForAuth(tenantA, "co-uk"),
+			domains:    []cnmsv1alpha1.MailDomain{domain(tenantA, "co-uk", "co.uk")},
+			mode:       AuthorizationUnrestricted,
+			wantReason: ReasonPublicSuffix,
+			wantNotOK:  true,
+		},
+		{
 			name:   "unrestricted still enforces uniqueness",
 			server: testServerForAuth(tenantA, testDomain),
 			domains: []cnmsv1alpha1.MailDomain{

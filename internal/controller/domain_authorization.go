@@ -21,6 +21,8 @@ import (
 	"slices"
 	"strings"
 
+	"golang.org/x/net/publicsuffix"
+
 	cnmsv1alpha1 "github.com/RocketPadPlatforms/cloud-native-mail-service/api/v1alpha1"
 )
 
@@ -169,8 +171,11 @@ func (e *authorizationEvaluator) Evaluate() authorization {
 // authorize decides whether a MailDomain of namespace may use domain:
 // nil when it may, else the failure (ADR 0003). The MailDomain
 // controller calls it for the claim it reconciles, so both controllers
-// reach the same verdict.
+// reach the same verdict. A public suffix is never authorized (ADR 0012).
 func (e *authorizationEvaluator) authorize(namespace, domain string) *domainFailure {
+	if suffix, _ := publicsuffix.PublicSuffix(domain); suffix == domain {
+		return &domainFailure{ReasonPublicSuffix, domain + " is a public suffix; a MailDomain needs a domain below it"}
+	}
 	if e.mode == AuthorizationAllowlist && !e.granted(namespace, domain) {
 		return &domainFailure{ReasonNotGranted,
 			fmt.Sprintf("no MailDomainGrant covering %q for namespace %q", domain, namespace)}

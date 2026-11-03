@@ -85,6 +85,9 @@ const (
 	conditionReady = "Ready"
 )
 
+// ReasonReady is the reason of a Ready condition that is True.
+const ReasonReady = "Ready"
+
 // Ready condition reasons set before the data plane renders.
 const (
 	// ReasonDirectoryNotFound is set when the referenced MailDirectory
@@ -225,7 +228,7 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	// Domain authorization (ADR 0003) is evaluated first and on every
 	// reconcile: no tenant-controlled check below may keep a revoked
 	// domain from reaching the data plane.
-	grants, domains, err := r.listAuthorizationInput(ctx)
+	grants, domains, err := listAuthorizationInput(ctx, r)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -346,7 +349,7 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		reason, message = blocked.reason, blocked.message
 	}
 	setCondition(conds, generation, conditionReady,
-		conditionStatus(reason == "Ready"), reason, message)
+		conditionStatus(reason == ReasonReady), reason, message)
 	return r.finish(ctx, server, orig, prevReady)
 }
 
@@ -654,13 +657,13 @@ func eventMessage(msg string) string {
 
 // listAuthorizationInput lists the grants and claims the evaluator
 // needs (ADR 0003: a pure function of the current objects).
-func (r *MailServerReconciler) listAuthorizationInput(ctx context.Context) (*cnmsv1alpha1.MailDomainGrantList, *cnmsv1alpha1.MailDomainList, error) {
+func listAuthorizationInput(ctx context.Context, c client.Reader) (*cnmsv1alpha1.MailDomainGrantList, *cnmsv1alpha1.MailDomainList, error) {
 	grants := &cnmsv1alpha1.MailDomainGrantList{}
-	if err := r.List(ctx, grants); err != nil {
+	if err := c.List(ctx, grants); err != nil {
 		return nil, nil, err
 	}
 	domains := &cnmsv1alpha1.MailDomainList{}
-	if err := r.List(ctx, domains); err != nil {
+	if err := c.List(ctx, domains); err != nil {
 		return nil, nil, err
 	}
 	return grants, domains, nil
@@ -1210,5 +1213,5 @@ func readyReason(conds []metav1.Condition, order []string) (string, string) {
 			return c.Reason, c.Message
 		}
 	}
-	return "Ready", "all managed workloads are running with validated configuration"
+	return ReasonReady, "all managed workloads are running with validated configuration"
 }
