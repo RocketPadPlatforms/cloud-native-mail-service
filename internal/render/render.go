@@ -64,6 +64,11 @@ type RenderRequest struct {
 	// StaticUsers holds the parsed users from
 	// spec.submission.insecureStaticUsers (empty when unset).
 	StaticUsers []StaticUser
+
+	// DKIMKeys are the active signing keys of the authorized domains
+	// (ADR 0011). A domain without an entry has no key: it is still
+	// served, and its outbound mail fails closed (ADR 0013).
+	DKIMKeys []DomainKeys
 }
 
 // ServerHostname is the name the server presents (Postfix myhostname,

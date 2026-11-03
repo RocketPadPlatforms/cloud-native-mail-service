@@ -124,6 +124,7 @@ const (
 	tmpVolumeName             = "tmp"
 	configVolumeName          = "config"
 	usersVolumeName           = "users"
+	dkimVolumeName            = "dkim"
 	tlsVolumeName             = "tls"
 	stateVolumeName           = "state"
 	runVolumeName             = "run"
@@ -235,7 +236,7 @@ func Build(req *render.RenderRequest, renders map[render.Component]*render.Rende
 	dp.Workloads = []client.Object{
 		postfixStatefulSet(server, renders[render.ComponentPostfix]),
 		dovecotStatefulSet(server, renders[render.ComponentDovecot]),
-		rspamdDeployment(server, renders[render.ComponentRspamd]),
+		rspamdDeployment(server, renders[render.ComponentRspamd], dkimVolume(req)),
 		valkeyDeployment(server, renders[render.ComponentValkey]),
 	}
 	served := strings.Join(slices.Sorted(slices.Values(req.AuthorizedDomains)), ",")

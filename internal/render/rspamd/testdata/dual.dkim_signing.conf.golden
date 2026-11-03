@@ -1,0 +1,27 @@
+# CNMS-rendered Rspamd local.d/dkim_signing.conf -- do not edit.
+# Source: MailServer tenant1/mail (ADR 0004)
+
+# Sign with the header-From domain exactly: no reduction to
+# the effective second-level domain, and no guessed key for a
+# domain without an entry below.
+use_esld = false;
+try_fallback = false;
+# The envelope (VERP) domain may differ from the From domain,
+# and a login need not be an address; binding the login to the
+# sender is Postfix's job (ADR 0011).
+allow_hdrfrom_mismatch = true;
+allow_username_mismatch = true;
+# Sign authenticated mail and Postfix's own non-SMTP mail. Pod
+# addresses count as "local" for Rspamd, so sign_local stays
+# off (ADR 0013).
+sign_authenticated = true;
+sign_local = false;
+sign_networks = ["127.0.0.1", "::1"];
+domain {
+  "a.example" {
+    selectors [
+      { path = "/etc/rspamd/dkim/a.example/cnms-20261103.key"; selector = "cnms-20261103"; },
+      { path = "/etc/rspamd/dkim/a.example/cnms-ed25519-20261103.key"; selector = "cnms-ed25519-20261103"; },
+    ]
+  }
+}

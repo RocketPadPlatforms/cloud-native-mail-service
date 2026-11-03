@@ -20,6 +20,8 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -39,9 +41,8 @@ const (
 )
 
 // testRequest builds a RenderRequest for the test MailServer. Domains
-// are intentionally passed unsorted; the Phase 2 Rspamd config does not
-// reference them (DKIM arrives with Phase 5), but the contract is the
-// same as for every other renderer.
+// are intentionally passed unsorted; without keys they appear in the
+// guard only, which makes their outbound mail fail closed.
 func testRequest(t *testing.T, mutate func(*v1alpha1.MailServer)) *render.RenderRequest {
 	t.Helper()
 	server := &v1alpha1.MailServer{
@@ -90,6 +91,8 @@ func TestRenderConfigFiles(t *testing.T) {
 		{golden: "default.redis.conf", key: "redis.conf"},
 		{golden: "default.history_redis.conf", key: "history_redis.conf"},
 		{golden: "default.options.inc", key: "options.inc"},
+		{golden: "default.dkim_signing.conf", key: "dkim_signing.conf"},
+		{golden: "default.rspamd.local.lua", key: render.RspamdLocalLua},
 	}
 	res, err := New().Render(testRequest(t, nil))
 	if err != nil {
@@ -145,6 +148,8 @@ func TestRenderResultCommands(t *testing.T) {
 		"redis.conf",
 		"history_redis.conf",
 		"options.inc",
+		"dkim_signing.conf",
+		render.RspamdLocalLua,
 	} {
 		if _, ok := res.ConfigData[key]; !ok {
 			t.Errorf("missing %s in config data", key)
@@ -155,12 +160,113 @@ func TestRenderResultCommands(t *testing.T) {
 	}
 }
 
-// Domain revocation leaves the Rspamd configuration unchanged: it
-// carries no domain list, so an empty authorized set must still render.
+// With every domain revoked the guard still renders, with an empty
+// table: nothing is served, so nothing is required.
 func TestRenderWithoutAuthorizedDomains(t *testing.T) {
 	req := testRequest(t, nil)
 	req.AuthorizedDomains = nil
-	if _, err := New().Render(req); err != nil {
+	// Keys of a revoked domain must not reach the configuration.
+	req.DKIMKeys = []render.DomainKeys{{Domain: domainA, Keys: []render.DKIMKey{{Selector: "s1", Available: true}}}}
+	res, err := New().Render(req)
+	if err != nil {
 		t.Fatalf("Render() = %v, want success", err)
+	}
+	checkGolden(t, "nodomains.dkim_signing.conf", res.ConfigData["dkim_signing.conf"])
+	checkGolden(t, "nodomains.rspamd.local.lua", res.ConfigData[render.RspamdLocalLua])
+}
+
+func key(selector string) render.DKIMKey {
+	return render.DKIMKey{
+		Selector: selector, SecretName: "secret-" + selector, SecretKey: "private.key", Available: true,
+	}
+}
+
+// dkimRequests are the signing scenarios of the golden files.
+func dkimRequests(t *testing.T) map[string]*render.RenderRequest {
+	t.Helper()
+	with := func(domains []string, keys ...render.DomainKeys) *render.RenderRequest {
+		req := testRequest(t, nil)
+		req.AuthorizedDomains, req.DKIMKeys = domains, keys
+		return req
+	}
+	unreadable := key("cnms-20261103")
+	unreadable.Available = false
+	return map[string]*render.RenderRequest{
+		"rsa": with([]string{domainA},
+			render.DomainKeys{Domain: domainA, Keys: []render.DKIMKey{key("cnms-20261103")}}),
+		"dual": with([]string{domainA},
+			render.DomainKeys{Domain: domainA, Keys: []render.DKIMKey{key("cnms-ed25519-20261103"), key("cnms-20261103")}}),
+		// Unsorted input: the output is ordered by domain and selector.
+		"multi": with([]string{domainB, domainA},
+			render.DomainKeys{Domain: domainB, Keys: []render.DKIMKey{key("cnms-20261104")}},
+			render.DomainKeys{Domain: domainA, Keys: []render.DKIMKey{key("cnms-ed25519-20261103"), key("cnms-20261103")}}),
+		// b has no key at all, c has one that could not be read: both
+		// stay in the guard, so their outbound mail fails closed.
+		"missing": with([]string{domainA, domainB, "c.example"},
+			render.DomainKeys{Domain: domainA, Keys: []render.DKIMKey{key("cnms-20261103")}},
+			render.DomainKeys{Domain: "c.example", Keys: []render.DKIMKey{unreadable}}),
+	}
+}
+
+func TestRenderDKIM(t *testing.T) {
+	for name, req := range dkimRequests(t) {
+		t.Run(name, func(t *testing.T) {
+			res, err := New().Render(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			checkGolden(t, name+".dkim_signing.conf", res.ConfigData["dkim_signing.conf"])
+			checkGolden(t, name+".rspamd.local.lua", res.ConfigData[render.RspamdLocalLua])
+		})
+	}
+}
+
+var (
+	signingSelector = regexp.MustCompile(`path = "` + regexp.QuoteMeta(render.DKIMDir) + `/([^/"]+)/([^"]+)\.key"; selector = "([^"]+)";`)
+	guardOption     = regexp.MustCompile(`"([^":]+):s=([^"]+)"`)
+)
+
+// The signer and the guard are rendered from the same keys: every
+// signature the guard requires is one dkim_signing is configured to make,
+// and the other way round.
+func TestGuardAndSigningListTheSameSelectors(t *testing.T) {
+	for name, req := range dkimRequests(t) {
+		t.Run(name, func(t *testing.T) {
+			res, err := New().Render(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var signing, guard []string
+			for _, m := range signingSelector.FindAllStringSubmatch(res.ConfigData["dkim_signing.conf"], -1) {
+				if m[2] != m[3] {
+					t.Errorf("key path names selector %q, the entry %q", m[2], m[3])
+				}
+				signing = append(signing, m[1]+":s="+m[3])
+			}
+			for _, m := range guardOption.FindAllStringSubmatch(res.ConfigData[render.RspamdLocalLua], -1) {
+				guard = append(guard, m[1]+":s="+m[2])
+			}
+			slices.Sort(signing)
+			slices.Sort(guard)
+			if !slices.Equal(signing, guard) {
+				t.Errorf("signing %v, guard %v", signing, guard)
+			}
+		})
+	}
+}
+
+// Nothing of a key but its name reaches the configuration.
+func TestRenderHoldsNoKeyMaterial(t *testing.T) {
+	req := dkimRequests(t)["dual"]
+	res, err := New().Render(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for file, content := range res.ConfigData {
+		for _, secret := range []string{"secret-cnms-20261103", "private.key", "BEGIN"} {
+			if strings.Contains(content, secret) {
+				t.Errorf("%s contains %q", file, secret)
+			}
+		}
 	}
 }

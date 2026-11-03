@@ -53,9 +53,11 @@ reason and message.
 | `DedicatedSendingAddress` | `False` | `NodeSourceAddress` | `outbound.direct` without `ipPoolClaimRef` sends from the node address (ADR 0002) |
 | `NodeDrainable` | `True` | `Drainable` | the Postfix disruption budget allows evicting one pod |
 | `NodeDrainable` | `False` | `BudgetBlocksDrain` | `postfixMinAvailable` keeps every Postfix replica, so a node drain waits |
+| `DKIMKeysAvailable` | `True` | `KeysAvailable` | every served domain has all its active signing keys, and each key was read and parsed (also when no domain is served) |
+| `DKIMKeysAvailable` | `False` | `KeysMissing` | a served domain has no active key yet, or a key Secret is missing, has no such key, or does not parse; the message lists each domain and key. Outbound mail of those domains is deferred (451 4.7.1), inbound mail is not affected, and the rollout does not wait. Looked up again every minute ([ADR 0011](../decisions/0011-dkim-keys-and-rotation.md), [ADR 0013](../decisions/0013-never-unsigned-guard.md)) |
 
-`ClientIPPreserved`, `DedicatedSendingAddress` and `NodeDrainable` are
-warnings: they never feed into `Ready`.
+`ClientIPPreserved`, `DedicatedSendingAddress`, `NodeDrainable` and
+`DKIMKeysAvailable` are warnings: they never feed into `Ready`.
 
 ## MailDomainGrant
 

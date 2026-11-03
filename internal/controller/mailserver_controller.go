@@ -270,6 +270,18 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		failClosed, renderDomains, renderUsers = true, nil, nil
 	}
 
+	// The signing keys of the domains that are rendered (ADR 0011). A
+	// domain without a usable key is still served; its outbound mail
+	// fails closed in the guard, so the rollout does not wait for it.
+	keys, err := r.collectDKIMKeys(ctx, server, domains.Items, renderDomains)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	prevDKIM := meta.FindStatusCondition(*conds, ConditionDKIMKeysAvailable).DeepCopy()
+	dkimStatus, dkimReason, dkimMessage := dkimCondition(renderDomains, keys)
+	setCondition(conds, generation, ConditionDKIMKeysAvailable, dkimStatus, dkimReason, dkimMessage)
+	r.emitDKIMEvent(server, prevDKIM, dkimStatus, dkimMessage)
+
 	// Render and apply the data plane.
 	certCRDs, err := r.crdsAvailable(ctx, crdCertificate)
 	if err != nil {
@@ -285,7 +297,7 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 	prevValidated := meta.FindStatusCondition(*conds, ConditionConfigValidated)
 	prevValidated = prevValidated.DeepCopy()
-	g, rolloutWant, err := r.applyGuarded(ctx, server, renderDomains, renderUsers, certCRDs, failClosed)
+	g, rolloutWant, err := r.applyGuarded(ctx, server, renderDomains, renderUsers, keys.keys, certCRDs, failClosed)
 	if err != nil {
 		log.FromContext(ctx).Error(err, "Could not apply data plane")
 		reason := applyFailureReason(err)
@@ -350,7 +362,12 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 	setCondition(conds, generation, conditionReady,
 		conditionStatus(reason == ReasonReady), reason, message)
-	return r.finish(ctx, server, orig, prevReady)
+	res, err := r.finish(ctx, server, orig, prevReady)
+	if err == nil && dkimStatus == metav1.ConditionFalse {
+		// Key Secrets are not watched: look for the missing key again.
+		res.RequeueAfter = min(res.RequeueAfter, dkimKeyRetry)
+	}
+	return res, err
 }
 
 // applyGuarded applies the render for domains and users. If the
@@ -358,8 +375,8 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 // was rejected) while they serve a domain that is no longer
 // authorized, it applies the fail-closed render instead of waiting.
 // The returned map holds the revision the rollout check waits for.
-func (r *MailServerReconciler) applyGuarded(ctx context.Context, server *cnmsv1alpha1.MailServer, domains []string, users []render.StaticUser, certCRDs, failClosed bool) (*gate, map[string]string, error) {
-	g, err := r.applyDataPlane(ctx, server, domains, users, certCRDs)
+func (r *MailServerReconciler) applyGuarded(ctx context.Context, server *cnmsv1alpha1.MailServer, domains []string, users []render.StaticUser, keys []render.DomainKeys, certCRDs, failClosed bool) (*gate, map[string]string, error) {
+	g, err := r.applyDataPlane(ctx, server, domains, users, keys, certCRDs)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -370,7 +387,7 @@ func (r *MailServerReconciler) applyGuarded(ctx context.Context, server *cnmsv1a
 	if err != nil || !need {
 		return g, nil, err
 	}
-	closed, err := r.applyDataPlane(ctx, server, nil, nil, certCRDs)
+	closed, err := r.applyDataPlane(ctx, server, nil, nil, nil, certCRDs)
 	if err != nil {
 		return nil, nil, err
 	}

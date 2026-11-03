@@ -42,6 +42,12 @@ test keys:
   (`User` header); Postfix 3.11.7 sends it by default
   (`milter_mail_macros = i {auth_type} {auth_authen} {auth_author}
   {mail_addr} {mail_host} {mail_mailer}`).
+- `lualib/lua_dkim_tools.lua` (`prepare_dkim_signing`) signs nothing when
+  the From header has a second address and `allow_hdrfrom_multiple` is
+  unset, and nothing when no From domain can be extracted.
+- A pre-result `reject` makes the milter proxy answer `554 5.7.1` with the
+  message (`src/libserver/milter.c`, `RSPAMD_MILTER_RCODE_REJECT`), unless
+  `discard_on_reject` or `quarantine_on_reject` is set; CNMS sets neither.
 
 Postfix 3.11.7 (the pinned source tarball, `README_FILES/MILTER_README`,
 `proto/postconf.proto`, `src/cleanup/cleanup_milter.c`):
@@ -63,6 +69,10 @@ Postfix 3.11.7 (the pinned source tarball, `README_FILES/MILTER_README`,
 - There is no `{postfix_internal_origin}` macro in 3.11.7 (it arrives in a
   later release), so a milter cannot tell Postfix-generated mail from
   `sendmail(1)` mail.
+- The pickup service passes `CLEANUP_FLAG_BOUNCE` for locally submitted
+  mail (`src/pickup/pickup.c`), so the cleanup server bounces a milter
+  rejection to the sender. This was read in the current upstream source;
+  the same behaviour is expected on Postfix 3.11.7, not run.
 
 ## Decision
 
@@ -99,24 +109,37 @@ local required = {
   ["empty.example"] = {},
 }
 
+local rspamd_logger = require 'rspamd_logger'
+
 local skip_actions = { reject = true, drop = true, discard = true, ['soft reject'] = true }
 
 local function defer(task)
   task:set_pre_result('soft reject', 'DKIM signing unavailable, try again later', 'cnms_dkim_guard')
 end
 
-local function check(task)
-  local user = task:get_user()
+-- source reports whether CNMS signs for this client: a login, or loopback
+-- (Postfix's own non-SMTP mail) with a non-empty envelope sender.
+local function source(task)
+  if task:get_user() then return true end
   local ip = task:get_from_ip()
-  local loopback = ip and ip:is_valid() and (tostring(ip) == '127.0.0.1' or tostring(ip) == '::1')
-  if not user and not loopback then return end            -- not a signed class
-
+  if not (ip and ip:is_valid() and (tostring(ip) == '127.0.0.1' or tostring(ip) == '::1')) then return false end
   local efrom = task:get_from('smtp')
-  local empty_env = not (efrom and efrom[1] and efrom[1].addr and #efrom[1].addr > 0)
-  if empty_env and not user then return end               -- Postfix-generated bounce
+  return (efrom and efrom[1] and efrom[1].addr and #efrom[1].addr > 0) and true or false
+end
+
+local function check(task)
+  if not source(task) then return end                     -- not a signed class, or a Postfix-generated bounce
 
   local hfrom = task:get_from('mime')
-  if not hfrom or #hfrom ~= 1 or not hfrom[1].domain then return end
+  if hfrom and hfrom[2] then                              -- Rspamd signs no message with several From addresses
+    for _, a in ipairs(hfrom) do
+      if a.domain and required[a.domain:lower()] then
+        return task:set_pre_result('reject', 'multiple From addresses cannot be DKIM signed', 'cnms_dkim_guard')
+      end
+    end
+    return
+  end
+  if not (hfrom and hfrom[1] and hfrom[1].domain) then return end  -- no From: Rspamd does not sign either
   local want = required[hfrom[1].domain:lower()]
   if not want then return end                             -- not a served domain
 
@@ -136,8 +159,13 @@ rspamd_config:register_symbol({
   type = 'postfilter',
   flags = 'ignore_passthrough',
   callback = function(task)
-    local ok = pcall(check, task)
-    if not ok and task:get_user() then defer(task) end    -- a guard bug must not let mail out
+    local ok, err = pcall(check, task)
+    if ok then return end
+    pcall(rspamd_logger.errx, task, 'CNMS DKIM guard failed: %s', err)
+    -- a guard bug must not let mail out
+    local sok, signed = pcall(source, task)
+    if not sok then sok, signed = pcall(task.get_user, task) end  -- source itself failed: defer logins only
+    if sok and signed then defer(task) end
   end,
 })
 ```
@@ -158,6 +186,12 @@ selectors per domain:
 | unauthenticated from an Internet or pod address | untouched, unsigned |
 | authenticated, From domain not served | untouched, unsigned |
 | authenticated, From subdomain not in the table (`use_esld=false`) | untouched, unsigned |
+| several From addresses, one of them served (authenticated, or loopback with a sender) | `reject` (554 5.7.1) |
+| several From addresses, none served | untouched, unsigned |
+| no From header | untouched, unsigned |
+| error inside the guard, loopback with a sender | `soft reject` |
+| error inside the guard, loopback with an empty sender | untouched |
+| the guard cannot determine the source | authenticated mail `soft reject`, everything else untouched |
 
 ### 3. Exemptions and their price
 
@@ -165,15 +199,20 @@ selectors per domain:
   defers Postfix-generated bounces (README). A login with an empty
   sender is not exempt.
 - **Messages that are going to be rejected or deferred anyway** are
-  skipped, so the guard does not turn a spam `reject` into a retry loop.
-- **Known gaps**, deliberately not closed here: a message with several
-  `From` headers, and an authenticated message whose From domain the
-  server does not serve, are not guarded. Both belong to Postfix-side
-  controls (`header_checks`, sender-login maps, ADR 0008 backlog);
-  deferring them in the signer would only retry a message that can never
-  be signed. The sender-login binding of Phase 3 closes the second gap
-  (backlog entry exists). A held (`quarantine`) message is guarded like
-  any other.
+  skipped, so the guard does not turn a spam `reject` into a retry loop,
+  except several From addresses with a served domain, which the guard
+  always rejects.
+- **Several From addresses.** Rspamd signs no message with a second From
+  address, so such a message of a served domain could leave unsigned. The
+  guard rejects it rather than defers it, because no retry can ever be
+  signed. Postfix bounces locally submitted mail that is rejected this way
+  back to its sender; the SMTP client gets a 554 5.7.1 on submission.
+- **Known gap**, deliberately not closed here: an authenticated message
+  whose From domain the server does not serve is not guarded. It belongs
+  to Postfix-side controls (sender-login maps, ADR 0008 backlog);
+  deferring it in the signer would only retry a message that can never
+  be signed. The sender-login binding of Phase 3 closes it (backlog entry
+  exists). A held (`quarantine`) message is guarded like any other.
 
 ### 4. Failure semantics
 
@@ -181,7 +220,8 @@ selectors per domain:
 |---|---|
 | key missing, unreadable, or does not parse | 451 4.7.1 to the SMTP client at the end of DATA; nothing leaves; the client keeps the mail |
 | Rspamd down or slow | unchanged: `milter_default_action = tempfail` with the configured timeouts |
-| guard code error | authenticated mail is deferred, the error is logged; other mail is not touched |
+| several From addresses with a served one | 554 5.7.1 to the SMTP client; non-SMTP mail bounces to the sender; a permanent property of the message, so a deferral would only retry until the queue lifetime ends |
+| guard code error | logged; authenticated and loopback mail with a sender is deferred (a deferral is retried; Postfix's own bounces never reach the milter, section 5); if the source itself cannot be determined only authenticated mail is deferred; Internet mail is never touched |
 | Valkey down | no effect: keys come from mounted Secrets |
 | `rspamd.local.lua` does not load | caught by the validation Job (exit 1), the old revision keeps running |
 

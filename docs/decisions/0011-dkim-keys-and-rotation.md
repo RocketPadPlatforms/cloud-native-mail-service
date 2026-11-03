@@ -225,24 +225,56 @@ dkim:
   key bytes, and the ADR 0009 config hash (ConfigMap files, users Secret,
   image) does not cover them. Key contents cannot change for generated
   Secrets (immutable); a BYO change needs no rollout (mtime).
+- Every Secret source of the volume is `optional: true`. The controller
+  only lists keys it could read, so the pod starts; and a Secret deleted
+  later does not leave the pod stuck (a non-optional source fails the
+  mount on the next kubelet sync): the files vanish, Rspamd logs
+  `cannot load dkim key`, and the guard defers the mail of the domain.
+  A key that becomes readable, or a Secret that is replaced under the
+  same selector, changes the item list and so the pod template: a
+  rolling update without a validation Job, because the configuration
+  hash is unchanged.
 - A switch of the active key changes the rendered `dkim_signing.conf`
   and the guard table, so it goes through the ADR 0009 gate (validation
   Job, then rollout) like any configuration change. No reload is needed
   for keys; certificates keep using the reload sidecar.
+- **Which keys are active.** The `MailServer` controller takes them from
+  the `MailDomain` object, not from its status: the `active` selectors of
+  the rotation annotation for generated keys (the Secret is
+  `<maildomain>-dkim-<selector>`, data key `private.key`), the entries of
+  `spec.dkim.keys` with `signing` true for your own keys. The status lists
+  only keys that could be read, so a deleted Secret would drop the selector
+  from the guard and let mail leave unsigned. A `MailDomain` without the
+  annotation (not reconciled yet, or restored without it) has no active
+  key: its domain fails closed until the `MailDomain` controller has
+  written the state.
 - **Key presence before rollout.** The validation Job cannot see keys, so
   the `MailServer` controller reads each active key Secret (uncached) when
-  it renders: a missing Secret or data key is left out of the volume,
-  reported as `DKIMKeysAvailable=False` (naming domain and selector) and
-  an Event, and the selector stays in the `domain` table and in the guard
-  table. The domain then **fails closed**: its outbound mail is deferred
-  (ADR 0013), its inbound mail is unaffected. Dropping the selector from
-  the configuration instead would remove the domain from the guard and
-  let mail leave unsigned, so it is not done. The rollout is not held
-  back: the new configuration is no worse than the old for that domain,
-  and holding it would stall every other change of the server.
+  it renders, and parses it (`dkim.Parse`, the rules of section 4): a
+  missing Secret or data key, or content that does not parse, is left out
+  of the volume, reported as `DKIMKeysAvailable=False` (naming domain and
+  selector) and an Event, and the selector stays in the `domain` table and
+  in the guard table. The domain then **fails closed**: its outbound mail
+  is deferred (ADR 0013), its inbound mail is unaffected. Dropping the
+  selector from the configuration instead would remove the domain from
+  the guard and let mail leave unsigned, so it is not done. The rollout is
+  not held back: the new configuration is no worse than the old for that
+  domain, and holding it would stall every other change of the server.
+  Secrets are not watched, so the controller looks for a missing key again
+  every minute.
 - Mount modes: `defaultMode: 0440` with the pod `fsGroup` of the Rspamd
-  user (the pod already sets it), read-only root file system unchanged.
-  Not yet verified on a cluster; the e2e suite covers it.
+  group (11333, which is also the uid of the `_rspamd` user in the pinned
+  image; the pod already sets it), read-only root file system unchanged.
+  Verified in the pinned image run as 11333:11333 with a read-only root
+  file system and key files owned by `root:11333` with mode 0440: the
+  keys load. The same files owned by `root:root` give `Permission denied`
+  and the guard defers, so the `fsGroup` is required. What the kubelet
+  does to a projected volume with `fsGroup` was not verified on a
+  cluster; the e2e suite covers it.
+- The validation Job (ADR 0009) mounts the configuration and
+  `rspamd.local.lua`, not the keys: `configtest` does not read key files
+  (verified above), and a Job that failed on a missing key would hold
+  back every other change of the server, which this ADR rules out.
 
 ### 6. Rotation of generated keys
 

@@ -18,6 +18,8 @@ package manifests
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -306,11 +308,31 @@ func dovecotStatefulSet(server *cnmsv1alpha1.MailServer, r *render.RenderResult)
 
 // rspamdDeployment renders the Rspamd workload: Deployment with
 // maxUnavailable 0 and surge (project plan HA section).
-func rspamdDeployment(server *cnmsv1alpha1.MailServer, r *render.RenderResult) *appsv1.Deployment {
+func rspamdDeployment(server *cnmsv1alpha1.MailServer, r *render.RenderResult, dkim *corev1.Volume) *appsv1.Deployment {
 	name := render.ServiceName(server.Name, render.ComponentRspamd)
 	replicas := int32(2)
 	if server.Spec.Rspamd != nil {
 		replicas = int32Value(server.Spec.Rspamd.Replicas, replicas)
+	}
+	volumes := []corev1.Volume{
+		configVolume(configMapName(server, render.ComponentRspamd, r)),
+		{
+			// On-disk module state only (ADR 0004);
+			// shared state lives in the per-MailServer
+			// Valkey. Restarts reset it deliberately.
+			Name:         "state",
+			VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+		},
+		{
+			// Scratch space of the read-only metrics sidecar.
+			Name:         tmpVolumeName,
+			VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+		},
+	}
+	mounts := append(rspamdConfigMounts(), corev1.VolumeMount{Name: stateVolumeName, MountPath: rspamdStateDir})
+	if dkim != nil {
+		volumes = append(volumes, *dkim)
+		mounts = append(mounts, corev1.VolumeMount{Name: dkimVolumeName, MountPath: render.DKIMDir, ReadOnly: true})
 	}
 	return &appsv1.Deployment{
 		ObjectMeta: objectMeta(server, name, render.ComponentRspamd),
@@ -335,21 +357,7 @@ func rspamdDeployment(server *cnmsv1alpha1.MailServer, r *render.RenderResult) *
 						SeccompProfile: podSeccomp(),
 					},
 					TopologySpreadConstraints: topologySpreadConstraints(server, render.ComponentRspamd),
-					Volumes: []corev1.Volume{
-						configVolume(configMapName(server, render.ComponentRspamd, r)),
-						{
-							// On-disk module state only (ADR 0004);
-							// shared state lives in the per-MailServer
-							// Valkey. Restarts reset it deliberately.
-							Name:         "state",
-							VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
-						},
-						{
-							// Scratch space of the read-only metrics sidecar.
-							Name:         tmpVolumeName,
-							VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
-						},
-					},
+					Volumes:                   volumes,
 					Containers: []corev1.Container{{
 						Name:            "rspamd",
 						SecurityContext: nonRootSecurity(rspamdUserID, rspamdGroupID),
@@ -358,7 +366,7 @@ func rspamdDeployment(server *cnmsv1alpha1.MailServer, r *render.RenderResult) *
 						// The controller port is for the probes and
 						// loopback clients only; no Service exposes it.
 						Ports:          []corev1.ContainerPort{{Name: "milter", ContainerPort: render.PortRspamdMilter}, {Name: "controller", ContainerPort: render.PortRspamdController}},
-						VolumeMounts:   append(localDMount(), corev1.VolumeMount{Name: stateVolumeName, MountPath: rspamdStateDir}),
+						VolumeMounts:   mounts,
 						ReadinessProbe: portProbe(render.PortRspamdController),
 						LivenessProbe:  portProbe(render.PortRspamdController),
 					}, {
@@ -575,15 +583,67 @@ func configSubPathMounts() []corev1.VolumeMount {
 	return mounts
 }
 
-// localDMount mounts the Rspamd ConfigMap over the image's local.d
-// (the rendered overrides replace the directory; the rest of the
-// image's configuration tree is untouched, ADR 0004).
-func localDMount() []corev1.VolumeMount {
+// rspamdConfigMounts mounts the Rspamd ConfigMap over the image's
+// local.d (the rendered overrides replace the directory; the rest of
+// the image's configuration tree is untouched, ADR 0004), and the guard
+// script at the path Rspamd loads it from (ADR 0013). The script is
+// also visible in local.d, where nothing reads it. Both the workload
+// and the validation Job use it, because configtest rejects a broken
+// script. subPath staleness is fine: the ConfigMap is immutable and
+// named by its content.
+func rspamdConfigMounts() []corev1.VolumeMount {
 	return []corev1.VolumeMount{{
 		Name:      configVolumeName,
 		MountPath: "/etc/rspamd/local.d",
 		ReadOnly:  true,
+	}, {
+		Name:      configVolumeName,
+		MountPath: "/etc/rspamd/" + render.RspamdLocalLua,
+		SubPath:   render.RspamdLocalLua,
+		ReadOnly:  true,
 	}}
+}
+
+// dkimVolume is the projected volume that puts the signing keys of the
+// authorized domains at render.DKIMDir (ADR 0011, section 5): one item
+// per available active key, at <domain>/<selector>.key, so domains that
+// share a selector name do not collide. Keys that could not be read
+// are left out. nil when no key is available.
+//
+// Every Secret source is optional, so a Secret deleted after the pod
+// started does not wedge the pod: the files vanish, the guard defers
+// the mail of the domain, and the pod stays up. The mode 0440 together
+// with the pod fsGroup (the Rspamd group) lets the Rspamd user read
+// the files and nobody else.
+func dkimVolume(req *render.RenderRequest) *corev1.Volume {
+	items := map[string][]corev1.KeyToPath{}
+	for _, d := range slices.Compact(slices.Sorted(slices.Values(req.AuthorizedDomains))) {
+		for _, k := range req.ActiveKeys(d) {
+			if k.Available {
+				items[k.SecretName] = append(items[k.SecretName], corev1.KeyToPath{
+					Key: k.SecretKey, Path: render.DKIMKeyPath(d, k.Selector),
+				})
+			}
+		}
+	}
+	if len(items) == 0 {
+		return nil
+	}
+	var sources []corev1.VolumeProjection
+	for _, name := range slices.Sorted(maps.Keys(items)) {
+		sources = append(sources, corev1.VolumeProjection{Secret: &corev1.SecretProjection{
+			LocalObjectReference: corev1.LocalObjectReference{Name: name},
+			Items:                items[name],
+			Optional:             new(true),
+		}})
+	}
+	return &corev1.Volume{
+		Name: dkimVolumeName,
+		VolumeSource: corev1.VolumeSource{Projected: &corev1.ProjectedVolumeSource{
+			Sources:     sources,
+			DefaultMode: new(int32(0o440)),
+		}},
+	}
 }
 
 // tlsMount mounts the certificate at the Postfix path.

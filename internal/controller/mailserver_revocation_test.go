@@ -280,7 +280,7 @@ var _ = Describe("MailServer domain revocation", func() {
 	failClosedJobsG := func() map[string]bool {
 		server := &cnmsv1alpha1.MailServer{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testServerName, Namespace: ns}, server)).To(Succeed())
-		plane, err := renderDataPlane(server, nil, nil)
+		plane, err := renderDataPlane(server, nil, nil, nil)
 		Expect(err).ToNot(HaveOccurred())
 		names := map[string]bool{}
 		for _, v := range plane.Validations {
