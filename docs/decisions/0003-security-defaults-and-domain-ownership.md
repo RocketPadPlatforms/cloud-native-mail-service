@@ -205,12 +205,17 @@ Tenants who can create `DNSEndpoint` or `Certificate` objects directly
 bypass CNMS entirely; that is stopped by how the integrations are wired,
 not by policy engines:
 
-- **DNSEndpoints:** the operator writes them only into its own namespace
-  (e.g. `cnms-system`). A dedicated external-dns instance runs with
-  `--namespace=cnms-system`, a tight `--domain-filter`, and its own
-  `--txt-owner-id`. `DNSEndpoint`s that tenants create in their own
-  namespaces are ignored by that instance. Cross-namespace owner references
-  are not allowed, so CNMS cleans up through finalizers and labels.
+- **DNSEndpoints:** amended in Phase 5 (ADR 0012). The operator writes the
+  `DNSEndpoint` of a `MailDomain` into the namespace of the `MailDomain`,
+  controlled by it through an owner reference (cross-namespace owner
+  references are not allowed, which is why it is not written to an
+  operator namespace), and removes it after the revocation grace period.
+  The wiring therefore cannot rely on a namespace filter: the external-dns
+  instance that serves CNMS needs a tight `--domain-filter` and its own
+  `--txt-owner-id`, and tenants must have no RBAC on `dnsendpoints`
+  (the tenant roles of CNMS grant none); a tenant who can create
+  `DNSEndpoint`s in a namespace watched by that instance bypasses the
+  grants. The optional Kyverno sample covers this case at admission.
 - **ClusterIssuers:** a tenant's own namespaced `Issuer` is their business.
   A shared `ClusterIssuer` is allowed only through a future grant field
   (`allowedClusterIssuers`); clusters where tenants can create

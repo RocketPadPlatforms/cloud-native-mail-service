@@ -12,6 +12,7 @@ module.exports = {
       link: { type: 'doc', id: 'how-to/index' },
       items: [
         'how-to/install-and-operate',
+        'how-to/dkim-keys-and-dns-records',
         'how-to/block-direct-smtp-egress',
       ],
     },

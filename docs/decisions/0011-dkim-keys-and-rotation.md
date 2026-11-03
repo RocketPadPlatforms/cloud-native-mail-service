@@ -136,7 +136,8 @@ login to the sender is the Postfix side's job (sender-login maps, ADR
   RSA or Ed25519 **PKCS#8 PEM** (a format the pinned Rspamd loads and
   every common tool writes). Annotations `cnms.rpp.gmbh/created`
   (RFC 3339) and `cnms.rpp.gmbh/algorithm`; labels
-  `app.kubernetes.io/managed-by` and `cnms.rpp.gmbh/maildomain`. The
+  `app.kubernetes.io/managed-by`, `cnms.rpp.gmbh/managed-by` (the label
+  of every CNMS-managed object) and `cnms.rpp.gmbh/maildomain`. The
   `MailDomain` object name is limited to 63 characters (CEL) so the label
   value is valid; the Secret name is then at most 63 + 6 + 47 = 116
   characters, within the 253 of a Secret name.
@@ -153,7 +154,19 @@ login to the sender is the Postfix side's job (sender-login maps, ADR
   and `delete` on Secrets (ADR 0009 already grants them, uncached). A
   create that returns `AlreadyExists` is adopted after the content is
   validated, which is what makes a restore safe: a key found under the
-  deterministic name is never regenerated.
+  deterministic name is never regenerated. The existence of the name is
+  checked before a key is generated, so nothing is generated for a name
+  that is taken. A Secret restored without the managed-by and maildomain
+  labels is adopted in memory only: the label selector of the list does
+  not find it, so it is adopted again on every reconcile (stable, never
+  regenerated); restore the labels with it. The selector of a key is read
+  from the Secret name (`<maildomain>-dkim-<selector>`); the algorithm
+  comes from the parsed key, the `algorithm` annotation only stands in
+  for a key that does not parse. A Secret of that name whose
+  `cnms.rpp.gmbh/maildomain` label names another MailDomain is never
+  adopted: it is reported as `KeySecretConflict` with a warning event,
+  and the domain fails closed until the name is free. (An unlabeled
+  Secret is still adopted.)
 
 ### 4. Bring-your-own keys
 
@@ -179,7 +192,16 @@ dkim:
   would only invite weak keys) or Ed25519; ECDSA and other types are
   rejected. At most 16 KiB. The controller derives the algorithm from the
   key; a failing key sets `DKIMKeysValid=False` with the key and the
-  reason, and the other keys keep working.
+  reason, and the other keys keep working. A missing Secret is such a
+  failure, not an error: the controller reads the Secrets again after a
+  minute, and otherwise every five minutes, because Secrets are neither
+  cached nor watched.
+- `status.dkim` lists every key with `signing: true` as active (up to
+  8, so `status.dkim.active` allows 8 entries, not one per algorithm)
+  and every key with `signing: false` as pending: it is published and
+  does not sign (a new key before it takes over, or an old one until you
+  remove it). There is no retiring state: the user removes the entry
+  after the overlap.
 - **User-driven rotation without a state machine.** Publish the new key
   with `signing: false`, wait until the status shows its record verified,
   flip the flags in one commit (new `true`, old `false`), and remove the

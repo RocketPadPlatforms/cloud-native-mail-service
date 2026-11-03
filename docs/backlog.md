@@ -17,8 +17,19 @@ committed.
 
 ## Phase 5: `MailDomain` and domain authorization
 
-- `MailDomain` has no controller yet (same reason as `MailDirectory`);
-  Phase 5 re-scaffolds it the same way.
+- Derived-name conflicts (`DerivedNameConflict`, ADR 0003): a `MailDomain`
+  whose own name is a derived name of another active domain. Not detected
+  by the `MailDomain` controller yet.
+- Check that a `DNSEndpoint` target longer than 255 octets (the RSA-2048
+  DKIM value) is published as one TXT record by the common external-dns
+  providers (ADR 0012 left it unverified); split it into character-strings
+  in the target if one needs it.
+- Re-verify a pending DKIM key right before it becomes active when the
+  last lookup is older than the hold period, and verify against the
+  authoritative servers instead of one resolver.
+- Make the Secrets of bring-your-own keys cheaper to follow: they are read
+  every five minutes because Secrets are not cached; a metadata-only watch
+  on labelled Secrets would react at once.
 - A "never unsigned" guard in Rspamd: a postfilter Lua rule that calls
   `task:set_pre_result('soft reject', ...)` for authenticated or local mail
   without `DKIM_SIGNED`. Exempt the empty-sender mail Postfix generates itself

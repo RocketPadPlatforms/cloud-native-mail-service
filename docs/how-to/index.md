@@ -4,8 +4,8 @@ Task-oriented guides:
 
 - [Block direct SMTP egress from other pods](block-direct-smtp-egress.md)
 - [Install and operate](02-install-and-operate.mdx)
+- [DKIM keys and DNS records](dkim-keys-and-dns-records.mdx)
 - Install (Helm, Kustomize)
-- DNS records
 - Manual rDNS
 - IP pools
 - Directories (LDAP/SQL)

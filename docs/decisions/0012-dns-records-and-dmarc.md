@@ -90,7 +90,7 @@ defaults to `none` when `spec.dmarc` is set; with `spec.dmarc` absent no
 record is published and none is required. `sp` and `np` are additive API
 fields (`subdomainPolicy`, `nonExistentSubdomainPolicy`, no default, so
 the tag is omitted unless set). Never emitted: `pct`, `rf`, `ri`, `psd`
-(a public suffix cannot be a `MailDomain`, section 6), `adkim`/`aspf`/`fo`
+(a public suffix cannot be a `MailDomain`, section 5), `adkim`/`aspf`/`fo`
 (their defaults are what CNMS wants). `rua` and `ruf` get `mailto:`
 prepended by the renderer. `t=y` is emitted when `testing` is true; the
 API comment on `testing` ("evaluated but not enforced") is corrected to
@@ -225,10 +225,19 @@ revocation).
 **Intervals.** Records that are not verified, and pending DKIM keys, are
 checked after 1 minute, backing off to 10 minutes; verified records every
 hour to notice drift. The controller watches nothing in DNS, so these
-requeues are the mechanism. Status writes are skipped when nothing
-changed: `lastChecked` is rewritten when `verified` flips or the last
-write is an hour old (the idea of ADR 0007, so a verified domain does not
-write its status every reconcile).
+requeues are the mechanism. The schedule, the attempt counter and the
+count of failed rounds in a row live in operator memory, not in the
+status: a restart looks every record up again, which only costs the
+lookups, and the status does not change when the answers are the same.
+A record without an answer yet (a new key, a changed value) is looked up
+at once. Status writes are skipped when nothing changed: `lastChecked`
+is rewritten when `verified` flips or when a lookup runs and the stored
+time is an hour old (the idea of ADR 0007, so a verified domain does not
+write its status every reconcile). A pending key stays on the
+one-to-ten-minute schedule even when its record is verified, until it is
+active. Records that never answered stay `verified` unset and
+`RecordsVerified` is `Unknown` with reason `Checking` until a lookup
+answers or three rounds in a row fail (`LookupFailing`).
 
 **Status.** `status.records` keeps its shape (`name`, `type`, `value`,
 `verified`, `lastChecked`; at most 64 entries: five purposes, a few DKIM
@@ -239,15 +248,27 @@ manual-mode domains stay `Ready=False` until the user publishes the
 records, which is the visible work item. The data plane does not wait for
 `Ready`: serving and signing never depend on DNS (ADR 0011, bootstrap).
 Further conditions: `Authorized`, `DKIMKeysValid`, `DKIMRotation`,
-`RecordsVerified`, `DNSPublished`, `SPFReady`, `MTASTSReady`.
+`RecordsVerified`, `DNSPublished` (only in `externalDNS` mode),
+`SPFReady`, `MTASTSReady` (only with MTA-STS enabled) and the warning
+`ReportAuthorization` (only with DMARC; `False` names the record a
+receiver in another organizational domain has to publish). `SPFReady`,
+`MTASTSReady` and `ReportAuthorization` never feed into `Ready`. The
+`Ready` order is `Authorized`, `DKIMKeysValid`, `DNSPublished`,
+`RecordsVerified`. The mx hosts of the MTA-STS policy come from the
+`MailServer`s of the namespace that list the domain; until the
+`MailServer` controller provides them, an enabled MTA-STS has no policy
+and `MTASTSReady` is `False` with reason `NoMailServer`.
 
 ### 5. Public suffixes
 
 The controller rejects a `MailDomain` whose domain is a public suffix
 (`golang.org/x/net/publicsuffix`, BSD-3-Clause, already a transitive
 dependency; license-checked when promoted to a direct one), as ADR 0003
-announced: `Authorized=False` with reason `PublicSuffix`. This is also why
-no `psd` field exists.
+announced: `Authorized=False` with reason `PublicSuffix`. The `MailServer`
+controller rejects it the same way, so both controllers use one shared
+check. The private section of the Public Suffix List counts too
+(`github.io` is rejected, `x.github.io` is not), because the ICANN flag
+is ignored on purpose. This is also why no `psd` field exists.
 
 ## Consequences
 
