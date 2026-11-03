@@ -37,7 +37,8 @@ keys, own Rspamd and Valkey instances. Nothing is shared between
 Key spec fields:
 
 - `directoryRef` — the `MailDirectory` used for recipient validation and
-  authentication.
+  authentication. Optional (ADR 0008): without it the server needs another
+  user source, otherwise it is not ready (`NoUserSource`).
 - `outbound` — exactly one of `direct` (own sending addresses, optionally via
   a `MailIPPoolClaim`) or `relay` (a smart host; the `MailRelay` resource
   arrives with the relay phase).
@@ -63,9 +64,11 @@ publishes), MTA-STS, and TLS-RPT.
   lists every required record and whether a lookup verified it; the admin
   creates the records with the hoster. In `externalDNS` mode the operator
   creates `DNSEndpoint` resources.
-- DKIM rotation policy (`interval`, `overlap`) is spec; the rotation schedule
-  progress is recorded in the `cnms.rpp.gmbh/rotation` annotation so it
-  survives a restore without status.
+- DKIM configuration (`selectorPrefix`, rotation `interval` and `overlap`) is
+  spec. Selector names are `<prefix>-<yyyymmdd>` (UTC creation date of the
+  key), so a rotation publishes a new selector next to the old one. The
+  rotation schedule progress is recorded in the `cnms.rpp.gmbh/rotation`
+  annotation so it survives a restore without status.
 - `status.records` is the contract for DNS verification: every required
   record with name, type, expected value, and `verified` state.
 

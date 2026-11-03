@@ -118,10 +118,10 @@ type LDAPTLS struct {
 	// +kubebuilder:default=StartTLS
 	Mode *string `json:"mode,omitempty"`
 
-	// CASSecretRef references a Secret with the CA bundle (key
+	// CASecretRef references a Secret with the CA bundle (key
 	// "ca.crt") used to verify the server certificate.
 	// +optional
-	CASSecretRef *SecretReference `json:"caSecretRef,omitempty"`
+	CASecretRef *SecretReference `json:"caSecretRef,omitempty"`
 }
 
 // SQLTLS configures transport security for the SQL connection.
@@ -134,10 +134,10 @@ type SQLTLS struct {
 	// +kubebuilder:default=verify-full
 	Mode *string `json:"mode,omitempty"`
 
-	// CASSecretRef references a Secret with the CA bundle (key
+	// CASecretRef references a Secret with the CA bundle (key
 	// "ca.crt") used to verify the server certificate.
 	// +optional
-	CASSecretRef *SecretReference `json:"caSecretRef,omitempty"`
+	CASecretRef *SecretReference `json:"caSecretRef,omitempty"`
 }
 
 // SQL configures a SQL user directory (PostgreSQL).

@@ -37,9 +37,13 @@ import (
 // queues, IPs, DKIM keys and Rspamd/Valkey instances.
 type MailServerSpec struct {
 	// Directory used for recipient validation and user authentication.
-	// References a MailDirectory in the same namespace.
-	// +kubebuilder:validation:Required
-	DirectoryRef NameReference `json:"directoryRef"`
+	// References a MailDirectory in the same namespace. Optional: a
+	// server without a directory needs another user source, which is
+	// MailUser accounts (ADR 0008, not implemented yet) or, for tests,
+	// submission.insecureStaticUsers. Without any user source the
+	// server is not Ready (reason NoUserSource).
+	// +optional
+	DirectoryRef *NameReference `json:"directoryRef,omitempty"`
 
 	// Outbound selects the outbound delivery mode.
 	// +kubebuilder:validation:Required
@@ -49,6 +53,7 @@ type MailServerSpec struct {
 	// (when enabled on the domain) and accepted for submission.
 	// Each entry references a MailDomain in the same namespace.
 	// +kubebuilder:validation:Required
+	// +listType=atomic
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=50
 	// +kubebuilder:validation:XValidation:rule="self.all(x, self.filter(y, y == x).size() == 1)",message="domain references must be unique"
@@ -119,7 +124,7 @@ type DirectOutbound struct {
 	// Optional: without a claim, mail leaves via the pods' source
 	// addresses.
 	// +optional
-	IpPoolClaimRef *NameReference `json:"ipPoolClaimRef,omitempty"`
+	IPPoolClaimRef *NameReference `json:"ipPoolClaimRef,omitempty"`
 }
 
 // RelayOutbound delivers mail via a smart host.
@@ -159,7 +164,9 @@ type IssuerReference struct {
 
 // Inbound configures the inbound (port 25) Service.
 type Inbound struct {
-	// Service type for inbound mail. Defaults to LoadBalancer.
+	// Service type for inbound mail. Defaults to LoadBalancer. With
+	// ClusterIP the service is not reachable from outside the cluster
+	// and externalTrafficPolicy has no effect.
 	// +optional
 	// +kubebuilder:validation:Enum=LoadBalancer;ClusterIP
 	// +kubebuilder:default=LoadBalancer
@@ -167,7 +174,9 @@ type Inbound struct {
 
 	// externalTrafficPolicy of the inbound service. Defaults to Local
 	// so that client addresses are preserved for postscreen and
-	// rate limiting.
+	// rate limiting. Only used with serviceType LoadBalancer; it is
+	// ignored (not rejected, because the default is always present)
+	// with ClusterIP.
 	// +optional
 	// +kubebuilder:validation:Enum=Local;Cluster
 	// +kubebuilder:default=Local
@@ -255,6 +264,7 @@ type Rspamd struct {
 // Valkey configures the Rspamd key-value store.
 //
 // +kubebuilder:validation:XValidation:rule="!has(self.persistence) || !self.persistence || has(self.storage)",message="storage is required when persistence is enabled"
+// +kubebuilder:validation:XValidation:rule="!has(self.storage) || (has(self.persistence) && self.persistence)",message="storage is only used when persistence is enabled"
 type Valkey struct {
 	// Persist Valkey data (Bayes, fuzzy and rate-limit state).
 	// Defaults to false.
@@ -340,6 +350,7 @@ type MailServerStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Relay",type="string",JSONPath=".spec.outbound.relay.relayRef.name",description="Relay of the relay outbound mode; empty for direct delivery"
 // +kubebuilder:printcolumn:name="Ready",type="string",JSONPath=".status.conditions[?(@.type=='Ready')].status"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 // The longest generated object name is "<name>-<component>-v-<hash8>"

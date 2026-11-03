@@ -15,6 +15,10 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
+    - description: Relay of the relay outbound mode; empty for direct delivery
+      jsonPath: .spec.outbound.relay.relayRef.name
+      name: Relay
+      type: string
     - jsonPath: .status.conditions[?(@.type=='Ready')].status
       name: Ready
       type: string
@@ -96,7 +100,11 @@ spec:
               directoryRef:
                 description: |-
                   Directory used for recipient validation and user authentication.
-                  References a MailDirectory in the same namespace.
+                  References a MailDirectory in the same namespace. Optional: a
+                  server without a directory needs another user source, which is
+                  MailUser accounts (ADR 0008, not implemented yet) or, for tests,
+                  submission.insecureStaticUsers. Without any user source the
+                  server is not Ready (reason NoUserSource).
                 properties:
                   name:
                     description: Name of the referenced resource.
@@ -130,6 +138,7 @@ spec:
                 maxItems: 50
                 minItems: 1
                 type: array
+                x-kubernetes-list-type: atomic
                 x-kubernetes-validations:
                 - message: domain references must be unique
                   rule: self.all(x, self.filter(y, y == x).size() == 1)
@@ -141,14 +150,19 @@ spec:
                     description: |-
                       externalTrafficPolicy of the inbound service. Defaults to Local
                       so that client addresses are preserved for postscreen and
-                      rate limiting.
+                      rate limiting. Only used with serviceType LoadBalancer; it is
+                      ignored (not rejected, because the default is always present)
+                      with ClusterIP.
                     enum:
                     - Local
                     - Cluster
                     type: string
                   serviceType:
                     default: LoadBalancer
-                    description: Service type for inbound mail. Defaults to LoadBalancer.
+                    description: |-
+                      Service type for inbound mail. Defaults to LoadBalancer. With
+                      ClusterIP the service is not reachable from outside the cluster
+                      and externalTrafficPolicy has no effect.
                     enum:
                     - LoadBalancer
                     - ClusterIP
@@ -377,8 +391,9 @@ spec:
                 x-kubernetes-validations:
                 - message: storage is required when persistence is enabled
                   rule: '!has(self.persistence) || !self.persistence || has(self.storage)'
+                - message: storage is only used when persistence is enabled
+                  rule: '!has(self.storage) || (has(self.persistence) && self.persistence)'
             required:
-            - directoryRef
             - domains
             - outbound
             - tls

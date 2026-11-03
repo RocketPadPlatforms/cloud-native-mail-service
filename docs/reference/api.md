@@ -62,7 +62,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `selector` _string_ | Selector of the current signing key. Defaults to "cnms". | cnms | MaxLength: 30 <br />Pattern: `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$` <br />Optional: \{\} <br /> |
+| `selectorPrefix` _string_ | Prefix of the selector names. The selector of a key is<br />`<prefix>-<yyyymmdd>`, the UTC date the key was created (rotation<br />is at most daily), so a rotation publishes a new selector next<br />to the old one. The selector in use is reported in<br />status.dkim.selector; only the prefix is configuration.<br />Defaults to "cnms". | cnms | MaxLength: 30 <br />Pattern: `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$` <br />Optional: \{\} <br /> |
 | `rotation` _[DKIMRotation](#dkimrotation)_ | Key rotation. When set, the operator rotates the key on the<br />given interval and publishes the new selector with an overlap<br />so that both selectors stay valid during the switch. Rotation<br />progress (schedule, start times) is recorded in the<br />"cnms.rpp.gmbh/rotation" annotation on the resource, because it<br />must survive a restore without status. |  | Optional: \{\} <br /> |
 
 
@@ -97,7 +97,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `selector` _string_ | Selector of the active key. |  | Optional: \{\} <br /> |
-| `keyAge` _[Duration](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#duration-v1-meta)_ | Age of the active key. |  | Optional: \{\} <br /> |
+| `keyCreated` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#time-v1-meta)_ | Creation time of the active key. The age is derived from it,<br />so status does not change on every reconcile. |  | Optional: \{\} <br /> |
 | `pendingSelector` _string_ | Selector of the key being rolled in, during an overlap. |  | Optional: \{\} <br /> |
 
 
@@ -187,8 +187,8 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `serviceType` _string_ | Service type for inbound mail. Defaults to LoadBalancer. | LoadBalancer | Enum: [LoadBalancer ClusterIP] <br />Optional: \{\} <br /> |
-| `externalTrafficPolicy` _string_ | externalTrafficPolicy of the inbound service. Defaults to Local<br />so that client addresses are preserved for postscreen and<br />rate limiting. | Local | Enum: [Local Cluster] <br />Optional: \{\} <br /> |
+| `serviceType` _string_ | Service type for inbound mail. Defaults to LoadBalancer. With<br />ClusterIP the service is not reachable from outside the cluster<br />and externalTrafficPolicy has no effect. | LoadBalancer | Enum: [LoadBalancer ClusterIP] <br />Optional: \{\} <br /> |
+| `externalTrafficPolicy` _string_ | externalTrafficPolicy of the inbound service. Defaults to Local<br />so that client addresses are preserved for postscreen and<br />rate limiting. Only used with serviceType LoadBalancer; it is<br />ignored (not rejected, because the default is always present)<br />with ClusterIP. | Local | Enum: [Local Cluster] <br />Optional: \{\} <br /> |
 
 
 #### InsecureStaticUsers
@@ -260,7 +260,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `mode` _string_ | Mode of the connection: "StartTLS" upgrades an existing<br />connection (default), "LDAPS" connects directly over TLS, "None"<br />disables transport security. With "None", bindDN must not be<br />set (cleartext bind). | StartTLS | Enum: [StartTLS LDAPS None] <br />Optional: \{\} <br /> |
-| `caSecretRef` _[SecretReference](#secretreference)_ | CASSecretRef references a Secret with the CA bundle (key<br />"ca.crt") used to verify the server certificate. |  | Optional: \{\} <br /> |
+| `caSecretRef` _[SecretReference](#secretreference)_ | CASecretRef references a Secret with the CA bundle (key<br />"ca.crt") used to verify the server certificate. |  | Optional: \{\} <br /> |
 
 
 #### MTAStS
@@ -527,7 +527,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `directoryRef` _[NameReference](#namereference)_ | Directory used for recipient validation and user authentication.<br />References a MailDirectory in the same namespace. |  | Required: \{\} <br /> |
+| `directoryRef` _[NameReference](#namereference)_ | Directory used for recipient validation and user authentication.<br />References a MailDirectory in the same namespace. Optional: a<br />server without a directory needs another user source, which is<br />MailUser accounts (ADR 0008, not implemented yet) or, for tests,<br />submission.insecureStaticUsers. Without any user source the<br />server is not Ready (reason NoUserSource). |  | Optional: \{\} <br /> |
 | `outbound` _[Outbound](#outbound)_ | Outbound selects the outbound delivery mode. |  | Required: \{\} <br /> |
 | `domains` _[NameReference](#namereference) array_ | Domains handled by this mail server. They are signed with DKIM<br />(when enabled on the domain) and accepted for submission.<br />Each entry references a MailDomain in the same namespace. |  | MaxItems: 50 <br />MinItems: 1 <br />Required: \{\} <br /> |
 | `tls` _[TLS](#tls)_ | TLS for inbound, submission and outbound mail. The certificate<br />is managed by cert-manager from the referenced issuer. |  | Required: \{\} <br /> |
@@ -717,7 +717,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `mode` _string_ | Mode of the connection: "verify-full" encrypts and verifies the<br />host name (default), "require" encrypts without host name<br />verification, "disable" sends cleartext. | verify-full | Enum: [verify-full require disable] <br />Optional: \{\} <br /> |
-| `caSecretRef` _[SecretReference](#secretreference)_ | CASSecretRef references a Secret with the CA bundle (key<br />"ca.crt") used to verify the server certificate. |  | Optional: \{\} <br /> |
+| `caSecretRef` _[SecretReference](#secretreference)_ | CASecretRef references a Secret with the CA bundle (key<br />"ca.crt") used to verify the server certificate. |  | Optional: \{\} <br /> |
 
 
 #### SecretReference
