@@ -2,6 +2,7 @@ name: Tests
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 permissions: {}
@@ -10,7 +11,8 @@ jobs:
   test:
     permissions:
       contents: read
-    name: Unit and envtest tests (prometheus CRDs: ${{ matrix.prometheus-crds }})
+    name: "Unit and envtest tests (prometheus CRDs: ${{ matrix.prometheus-crds }})"
+    timeout-minutes: 20
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -32,6 +34,36 @@ jobs:
       - name: Running Tests
         env:
           PROMETHEUS_CRDS: ${{ matrix.prometheus-crds }}
+        run: make test
+
+  generated:
+    permissions:
+      contents: read
+    name: Generated files are up to date
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Regenerate
         run: |
           go mod tidy
-          make test
+          make manifests generate api-ref license-report
+
+      # status (not diff) so that new untracked generated files fail too.
+      - name: Check for drift
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            git status --short
+            git diff
+            echo "Generated files or go.mod/go.sum are out of date; run: go mod tidy && make manifests generate api-ref license-report" >&2
+            exit 1
+          fi

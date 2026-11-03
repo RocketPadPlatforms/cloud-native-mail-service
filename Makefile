@@ -70,6 +70,9 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 # - KUBECTL_KUBERC=true
 # CertManager is installed by default; skip with:
 # - CERT_MANAGER_INSTALL_SKIP=true
+# The Prometheus Operator CRDs are not installed by default; install the
+# minimal ServiceMonitor CRD (hack/crds/prometheus-operator) with:
+# - PROMETHEUS_CRDS=1
 KIND_CLUSTER ?= cloud-native-mail-service-test-e2e
 # Node image of the e2e cluster (the default of the pinned kind release),
 # pinned by digest.

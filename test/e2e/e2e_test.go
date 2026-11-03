@@ -365,6 +365,28 @@ subjects:
 			Expect(out).To(HavePrefix("200 text/plain"), "Prometheus 3 rejects a scrape without a content type")
 		})
 
+		It("should create ServiceMonitors only when the Prometheus Operator CRDs are installed", func() {
+			// AGENTS.md section 6: the suite runs with and without the
+			// CRDs (PROMETHEUS_CRDS=1); the data plane works either way.
+			reason, monitors := "CRDsUnavailable", 0
+			if prometheusCRDs() {
+				reason, monitors = "MonitorsCreated", 3
+			}
+			verifyObservability := func(g Gomega) {
+				got, err := mailServerConditionReason("Observability")
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(got).To(Equal(reason))
+				if monitors == 0 {
+					return // the resource type does not exist without the CRDs
+				}
+				out, err := kubectl("get", "servicemonitors.monitoring.coreos.com", "-n", e2eNamespace,
+					"-o", "name")
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(utils.GetNonEmptyLines(out)).To(HaveLen(monitors))
+			}
+			Eventually(verifyObservability, 2*time.Minute, 5*time.Second).Should(Succeed())
+		})
+
 		It("should refuse the Rspamd controller API to other pods", func() {
 			// The controller serves the learn, fuzzy and map endpoints
 			// and the history; a pod outside the Rspamd pod must reach
@@ -711,11 +733,43 @@ var _ = BeforeSuite(func() {
 
 	configureKubectlKubeRC()
 	setupCertManager()
+	setupPrometheusCRDs()
 })
 
 var _ = AfterSuite(func() {
+	teardownPrometheusCRDs()
 	teardownCertManager()
 })
+
+// prometheusCRDsDir holds the minimal ServiceMonitor CRD that stands in
+// for the Prometheus Operator, relative to the project directory.
+const prometheusCRDsDir = "hack/crds/prometheus-operator"
+
+// prometheusCRDs reports whether the suite runs with the Prometheus
+// Operator CRDs (PROMETHEUS_CRDS=1), like the envtest suite.
+func prometheusCRDs() bool {
+	return os.Getenv("PROMETHEUS_CRDS") == "1"
+}
+
+// setupPrometheusCRDs installs the Prometheus Operator CRDs before the
+// operator starts when PROMETHEUS_CRDS=1.
+func setupPrometheusCRDs() {
+	if !prometheusCRDs() {
+		return
+	}
+	By("installing the Prometheus Operator CRDs")
+	_, err := kubectl("apply", "-f", prometheusCRDsDir)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to install the Prometheus Operator CRDs")
+}
+
+// teardownPrometheusCRDs removes the CRDs installed by setupPrometheusCRDs.
+func teardownPrometheusCRDs() {
+	if !prometheusCRDs() {
+		return
+	}
+	By("uninstalling the Prometheus Operator CRDs")
+	_, _ = kubectl("delete", "--ignore-not-found", "-f", prometheusCRDsDir)
+}
 
 // Disable kubectl kuberc by default for test isolation.
 // This prevents local kubectl configurations from affecting test behavior.

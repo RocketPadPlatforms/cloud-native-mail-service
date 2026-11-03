@@ -153,6 +153,15 @@
     },
     {
       "customType": "regex",
+      "description": "Renovate release used to validate this configuration in CI.",
+      "managerFilePatterns": ["/^\\.github/workflows/lint\\.yml$/"],
+      "matchStrings": ["RENOVATE_VERSION:\\s*(?<currentValue>\\S+)"],
+      "depNameTemplate": "renovate",
+      "datasourceTemplate": "npm",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
       "description": "kind release installed by the e2e workflow.",
       "managerFilePatterns": ["/^\\.github/workflows/test-e2e\\.yml$/"],
       "matchStrings": ["KIND_VERSION:\\s*(?<currentValue>v\\S+)"],

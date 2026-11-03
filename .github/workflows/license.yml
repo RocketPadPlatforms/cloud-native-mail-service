@@ -2,6 +2,7 @@ name: License
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 permissions: {}
@@ -11,6 +12,7 @@ jobs:
     permissions:
       contents: read
     name: Check dependency licenses
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
       - name: Clone the code

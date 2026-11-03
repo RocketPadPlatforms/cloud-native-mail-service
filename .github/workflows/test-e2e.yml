@@ -2,6 +2,7 @@ name: E2E Tests
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 permissions: {}
@@ -10,8 +11,15 @@ jobs:
   test-e2e:
     permissions:
       contents: read
-    name: Run e2e tests on kind
+    name: "Run e2e tests on kind (prometheus CRDs: ${{ matrix.prometheus-crds }})"
+    timeout-minutes: 45
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # PROMETHEUS_CRDS=1 installs a minimal ServiceMonitor CRD so
+        # the optional Prometheus Operator integration is exercised.
+        prometheus-crds: ["0", "1"]
     steps:
       - name: Clone the code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -39,6 +47,6 @@ jobs:
         run: kind version
 
       - name: Running Test e2e
-        run: |
-          go mod tidy
-          make test-e2e
+        env:
+          PROMETHEUS_CRDS: ${{ matrix.prometheus-crds }}
+        run: make test-e2e

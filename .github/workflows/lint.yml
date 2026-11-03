@@ -2,6 +2,7 @@ name: Lint
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 permissions: {}
@@ -11,6 +12,7 @@ jobs:
     permissions:
       contents: read
     name: Run golangci-lint
+    timeout-minutes: 20
     runs-on: ubuntu-latest
     steps:
       - name: Clone the code
@@ -29,3 +31,20 @@ jobs:
         run: make lint
       - name: Build the network policy kustomizations
         run: make check-network-policy
+
+  renovate-config:
+    permissions:
+      contents: read
+    name: Validate the Renovate configuration
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate renovate.json
+        env:
+          RENOVATE_VERSION: 44.206.3
+        run: npx --yes --package "renovate@${RENOVATE_VERSION}" renovate-config-validator --strict

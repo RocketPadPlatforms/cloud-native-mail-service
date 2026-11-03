@@ -56,7 +56,10 @@ Assertions (Phase 2):
   `Ready=False` with `ConfigRejected`, the running pods and template
   stay unchanged, and restoring the spec needs no new validation;
 - a renewed TLS certificate is served by Postfix without a pod
-  restart (the cert-reload sidecar reloads in place).
+  restart (the cert-reload sidecar reloads in place);
+- the Prometheus Operator integration creates the three
+  `ServiceMonitor`s with the CRDs (`PROMETHEUS_CRDS=1`) and reports
+  `CRDsUnavailable` without them.
 
 The suite never sends real mail and never touches real DNS or
 provider APIs (testing rule); the `example.*` domain and
@@ -67,8 +70,11 @@ documentation address ranges are used throughout.
 ```console
 make test        # unit + envtest (PROMETHEUS_CRDS=1 also runs the
                  # optional Prometheus Operator integration leg)
-make test-e2e    # e2e on kind (needs kind, docker and kubectl)
+make test-e2e    # e2e on kind (needs kind, docker and kubectl);
+                 # PROMETHEUS_CRDS=1 installs the ServiceMonitor CRD
+                 # first and expects the operator to create monitors
 ```
 
-CI runs `make test` with and without the ServiceMonitor CRDs,
-`make test-e2e` on kind, the linter, and the license check.
+CI runs `make test` and `make test-e2e` on kind with and without the
+ServiceMonitor CRDs, the linter, the license check, and a check that
+the generated files are up to date.
