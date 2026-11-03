@@ -24,7 +24,6 @@ import (
 	"reflect"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -32,7 +31,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	policyv1 "k8s.io/api/policy/v1"
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -128,15 +126,6 @@ const requeueInterval = 30 * time.Second
 // readyRequeueInterval is how often a ready MailServer is
 // re-evaluated as a safety net behind the watches.
 const readyRequeueInterval = 10 * time.Minute
-
-// crdCacheTTL is how long CRD-availability results are cached, so
-// integrations installed later are picked up without a restart
-// (principle 10).
-const crdCacheTTL = 5 * time.Minute
-
-// apiReadTimeout bounds the reads that bypass the cache (CRDs), so a
-// slow API server cannot stall a reconcile or the startup.
-const apiReadTimeout = 10 * time.Second
 
 // CRD names the operator discovers for optional integrations.
 const (
@@ -822,41 +811,9 @@ func (r *MailServerReconciler) reconcileObservability(ctx context.Context, serve
 }
 
 // crdsAvailable reports whether the CRD with the given plural name is
-// installed, cached for crdCacheTTL so integrations installed later
-// are picked up without a restart (principle 10). The CRDs are read
-// directly with a timeout: the informer cache would watch every CRD
-// of the cluster for two lookups every few minutes.
+// installed (cached, see crdCache).
 func (r *MailServerReconciler) crdsAvailable(ctx context.Context, name string) (bool, error) {
-	r.crds.mu.Lock()
-	defer r.crds.mu.Unlock()
-	if time.Since(r.crds.checkedAt) < crdCacheTTL {
-		return r.crds.available[name], nil
-	}
-	ctx, cancel := context.WithTimeout(ctx, apiReadTimeout)
-	defer cancel()
-	avail := make(map[string]bool, 2)
-	for _, n := range []string{crdCertificate, crdServiceMonitor} {
-		crd := &apiextensionsv1.CustomResourceDefinition{}
-		err := r.APIReader.Get(ctx, types.NamespacedName{Name: n}, crd)
-		if errors.IsNotFound(err) {
-			avail[n] = false
-			continue
-		}
-		if err != nil {
-			return false, err
-		}
-		avail[n] = true
-	}
-	r.crds.available = avail
-	r.crds.checkedAt = time.Now()
-	return avail[name], nil
-}
-
-// crdCache caches the results of crdsAvailable.
-type crdCache struct {
-	mu        sync.Mutex
-	checkedAt time.Time
-	available map[string]bool
+	return r.crds.installed(ctx, r.APIReader, name)
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -896,25 +853,6 @@ func (r *MailServerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&cnmsv1alpha1.MailDirectory{}, handler.EnqueueRequestsFromMapFunc(r.mapSameNamespaceServers)).
 		Watches(&cnmsv1alpha1.MailDomainGrant{}, handler.EnqueueRequestsFromMapFunc(r.mapGrantServers)).
 		Complete(r)
-}
-
-// crdInstalled reports whether the CRD with the given name is installed
-// (direct API read; the manager cache has not started yet at setup
-// time). On an error other than NotFound the watch is skipped so that
-// a transient API failure can never crash the operator (principle 10).
-func crdInstalled(mgr ctrl.Manager, name string) bool {
-	ctx, cancel := context.WithTimeout(context.Background(), apiReadTimeout)
-	defer cancel()
-	crd := &apiextensionsv1.CustomResourceDefinition{}
-	err := mgr.GetAPIReader().Get(ctx, client.ObjectKey{Name: name}, crd)
-	if err == nil {
-		return true
-	}
-	if !errors.IsNotFound(err) {
-		log.Log.Info("Could not check the CRD at startup, skipping the optional watch",
-			"crd", name, "error", err.Error())
-	}
-	return false
 }
 
 // mailDomainDomainIndex is the field index of MailDomains by
