@@ -30,7 +30,10 @@ Assertions (Phase 2):
   ready (the per-component config validation Jobs have passed:
   `postfix check`, `rspamadm configtest`, `doveconf -n`, Valkey ping;
   ADR 0009);
-- the Postfix queue metrics are served as `text/plain` (ADR 0005);
+- the Postfix queue metrics and the Rspamd metrics sidecar (port 9151,
+  `cnms_rspamd_metrics_up 1`) are served as `text/plain` (ADR 0005);
+- the Rspamd controller port 11334 (`/metrics`, `/learnspam`,
+  `/fuzzyadd`, `/savemap`, `/history`) is not served to other pods;
 - Postfix logs to the pod stdout (`maillog_file=/dev/stdout`);
 - unauthenticated mail for the server's own domain is accepted on
   port 25 (postscreen) and delivered to the Dovecot maildir via

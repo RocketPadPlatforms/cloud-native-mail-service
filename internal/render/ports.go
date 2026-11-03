@@ -31,7 +31,8 @@ const (
 	// the controller worker serves the HTTP API incl. GET /metrics;
 	// verified against the 4.2 documentation).
 	PortRspamdMilter     int32 = 11332 // proxy worker milter interface
-	PortRspamdController int32 = 11334 // controller worker (incl. GET /metrics)
+	PortRspamdController int32 = 11334 // controller worker (incl. GET /metrics), loopback clients only
+	PortRspamdMetrics    int32 = 9151  // metrics sidecar: loopback copy of the controller /metrics (ADR-0005)
 	PortRspamdNormal     int32 = 11333 // normal (scanner) worker, pod-internal: the proxy worker forwards to it
 
 	// Dovecot.
@@ -61,7 +62,7 @@ func ComponentPorts(c Component) []int32 {
 	case ComponentPostfix:
 		return []int32{PortPostfixInbound, PortPostfixSubmission, PortPostfixMetrics}
 	case ComponentRspamd:
-		return []int32{PortRspamdMilter, PortRspamdController}
+		return []int32{PortRspamdMilter, PortRspamdMetrics}
 	case ComponentDovecot:
 		return []int32{PortDovecotLMTP, PortDovecotAuth}
 	case ComponentValkey:

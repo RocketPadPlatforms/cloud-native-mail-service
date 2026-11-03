@@ -313,14 +313,40 @@ func rspamdDeployment(server *cnmsv1alpha1.MailServer, r *render.RenderResult) *
 							Name:         "state",
 							VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
 						},
+						{
+							// Scratch space of the read-only metrics sidecar.
+							Name:         tmpVolumeName,
+							VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+						},
 					},
 					Containers: []corev1.Container{{
-						Name:           "rspamd",
-						Image:          images.Rspamd, // default CMD: rspamd -f
-						Ports:          []corev1.ContainerPort{{Name: "milter", ContainerPort: render.PortRspamdMilter}, {Name: "rspamd-metrics", ContainerPort: render.PortRspamdController}},
+						Name:  "rspamd",
+						Image: images.Rspamd, // default CMD: rspamd -f
+						// The controller port is for the probes and
+						// loopback clients only; no Service exposes it.
+						Ports:          []corev1.ContainerPort{{Name: "milter", ContainerPort: render.PortRspamdMilter}, {Name: "controller", ContainerPort: render.PortRspamdController}},
 						VolumeMounts:   append(localDMount(), corev1.VolumeMount{Name: stateVolumeName, MountPath: rspamdStateDir}),
 						ReadinessProbe: portProbe(render.PortRspamdController),
 						LivenessProbe:  portProbe(render.PortRspamdController),
+					}, {
+						// Metrics sidecar (ADR 0005): copies the
+						// loopback-only controller /metrics and serves
+						// it on 9151. It runs in the Postfix image
+						// for busybox (wget, httpd), which the Rspamd
+						// image lacks.
+						Name:    rspamdMetricsContainer,
+						Image:   images.Postfix,
+						Command: rspamdMetricsLoop(render.PortRspamdMetrics, render.PortRspamdController),
+						SecurityContext: &corev1.SecurityContext{
+							RunAsUser:                new(nobodyID),
+							RunAsGroup:               new(nobodyID),
+							RunAsNonRoot:             new(true),
+							ReadOnlyRootFilesystem:   new(true),
+							AllowPrivilegeEscalation: new(false),
+							Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+						},
+						Ports:        []corev1.ContainerPort{{Name: rspamdMetricsContainer, ContainerPort: render.PortRspamdMetrics}},
+						VolumeMounts: []corev1.VolumeMount{{Name: tmpVolumeName, MountPath: "/tmp"}},
 					}},
 				},
 			},

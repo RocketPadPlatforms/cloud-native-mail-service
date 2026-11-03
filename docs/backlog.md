@@ -31,17 +31,12 @@ scoped; nothing here is committed.
 - Operator-driven PVC resize for the Postfix queue and the mail
   volume (expand the PVCs, then allow `queueStorage`/`storage` edits);
   today the sizes are immutable and resized manually (ADR 0010).
-- Rspamd `/metrics` for Prometheus (ADR 0005 correction): the controller
-  refuses every non-loopback client. Options: (a) a per-server Secret
-  with a read-only controller `password` (and a discarded
-  `enable_password`); Prometheus can only send it as the `Password`
-  header or the `?password=` query argument, and a ServiceMonitor only
-  takes static `params`, so the password would sit in the
-  ServiceMonitor in plain text; (b) a metrics sidecar that reads
-  `127.0.0.1:11334/metrics` (secure_ip) and serves it on its own port,
-  like the Postfix queue-metrics sidecar, which also lets the NetworkPolicy
-  drop port 11334; needs an image with an HTTP client. Not an option:
-  removing `secure_ip` (exposes history and statistics to every pod).
+- Optional Rspamd message history (`MailServer` field with a retention
+  period and subject privacy); disabled today (ADR 0005).
+- Licence policy call for GPL-2.0-only `busybox` in the CNMS Postfix
+  image (queue-metrics and Rspamd metrics sidecars): decide whether it
+  fits section 9 of the project plan, then add it to `NOTICE` and the
+  third-party notices (ADR 0005, licence note).
 - Phase 5 (`MailDomain`, DKIM): a "never unsigned" guard in Rspamd, a
   postfilter Lua rule that calls `task:set_pre_result('soft reject', ...)`
   for authenticated or local mail without `DKIM_SIGNED`. Exempt the

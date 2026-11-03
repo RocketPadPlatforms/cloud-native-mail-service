@@ -351,28 +351,45 @@ subjects:
 			Expect(ctype).To(HavePrefix("text/plain"), "Prometheus 3 rejects a scrape without a content type")
 		})
 
-		It("should refuse the Rspamd controller API to other pods", func() {
-			// The controller serves the learn and fuzzy endpoints; a
-			// pod outside the Rspamd pod must not reach them, nor the
-			// read-only endpoints (no password is configured).
-			base := "http://mail-rspamd." + e2eNamespace + ".svc.cluster.local:11334"
-			status := func(method, path string) (string, error) {
-				return e2eClientExec("curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
-					"-X", method, "--data", "x", base+path)
-			}
+		It("should serve the Rspamd metrics via the loopback sidecar as text/plain (ADR 0005)", func() {
 			Eventually(func(g Gomega) {
-				code, err := status("POST", "/learnspam")
+				// -L: busybox httpd redirects /metrics to /metrics/.
+				out, err := e2eClientExec("curl", "-sL", rspamdMetricsURL)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(code).To(Equal("401"), "learnspam must be refused from another pod")
+				g.Expect(out).To(ContainSubstring("cnms_rspamd_metrics_up 1"),
+					"the metrics copy must succeed: %s", out)
 			}).Should(Succeed())
-			for _, path := range []string{"/fuzzyadd", "/savemap"} {
-				code, err := status("POST", path)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(code).To(Equal("401"), "%s must be refused from another pod", path)
-			}
-			code, err := status("GET", "/history")
+			out, err := e2eClientExec("curl", "-sL", "-o", "/dev/null",
+				"-w", "%{http_code} %{content_type}", rspamdMetricsURL)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(code).To(Equal("401"), "history must not be readable from another pod")
+			Expect(out).To(HavePrefix("200 text/plain"), "Prometheus 3 rejects a scrape without a content type")
+		})
+
+		It("should refuse the Rspamd controller API to other pods", func() {
+			// The controller serves the learn, fuzzy and map endpoints
+			// and the history; a pod outside the Rspamd pod must reach
+			// none of them (the NetworkPolicy drops the port and the
+			// controller refuses non-loopback clients with 401).
+			podIP, err := kubectl("get", "pods", "-n", e2eNamespace,
+				"-l", "cnms.rpp.gmbh/mailserver=mail,app.kubernetes.io/component=rspamd",
+				"-o", "jsonpath={.items[0].status.podIP}")
+			Expect(err).NotTo(HaveOccurred())
+			podIP = strings.TrimSpace(podIP)
+			Expect(podIP).NotTo(BeEmpty())
+			base := "http://" + podIP + ":11334"
+			for _, req := range []struct{ method, path string }{
+				{"GET", "/metrics"},
+				{"POST", "/learnspam"},
+				{"POST", "/fuzzyadd"},
+				{"POST", "/savemap"},
+				{"GET", "/history"},
+			} {
+				// A dropped connection makes curl print 000 (and fail).
+				code, _ := e2eClientExec("curl", "-s", "-m", "5", "-o", "/dev/null", "-w", "%{http_code}",
+					"-X", req.method, "--data", "x", base+req.path)
+				Expect(strings.TrimSpace(code)).NotTo(Equal("200"),
+					"%s %s must not be served to another pod", req.method, req.path)
+			}
 		})
 
 		It("should log the Postfix daemons to the pod stdout (ADR 0004)", func() {

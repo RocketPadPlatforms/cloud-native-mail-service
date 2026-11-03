@@ -88,6 +88,8 @@ func TestRenderConfigFiles(t *testing.T) {
 		{golden: "default.worker-normal.inc", key: "worker-normal.inc"},
 		{golden: "default.worker-proxy.inc", key: "worker-proxy.inc"},
 		{golden: "default.redis.conf", key: "redis.conf"},
+		{golden: "default.history_redis.conf", key: "history_redis.conf"},
+		{golden: "default.options.inc", key: "options.inc"},
 	}
 	res, err := New().Render(testRequest(t, nil))
 	if err != nil {
@@ -149,6 +151,8 @@ func TestRenderResultCommands(t *testing.T) {
 		"worker-normal.inc",
 		"worker-proxy.inc",
 		"redis.conf",
+		"history_redis.conf",
+		"options.inc",
 	} {
 		if _, ok := res.ConfigData[key]; !ok {
 			t.Errorf("missing %s in config data", key)

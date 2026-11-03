@@ -1,0 +1,5 @@
+# CNMS-rendered Rspamd local.d/options.inc -- do not edit.
+# Source: MailServer tenant1/mail (ADR 0004)
+
+# No message history is kept (see history_redis.conf).
+history_rows = 0;

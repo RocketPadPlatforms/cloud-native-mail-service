@@ -300,6 +300,9 @@ func e2eClientExec(args ...string) (string, error) {
 // postfixMetricsURL is the queue-metrics endpoint of the Postfix Service.
 const postfixMetricsURL = "http://mail-postfix-metrics." + e2eNamespace + ".svc.cluster.local:9150/metrics"
 
+// rspamdMetricsURL is the metrics sidecar endpoint of the Rspamd Service.
+const rspamdMetricsURL = "http://mail-rspamd." + e2eNamespace + ".svc.cluster.local:9151/metrics"
+
 // servedCertFingerprint returns the SHA-256 fingerprint of the
 // certificate Postfix presents on the submission port (STARTTLS).
 func servedCertFingerprint() (string, error) {

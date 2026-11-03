@@ -98,6 +98,8 @@ const (
 	validateContainerName     = "validate"
 	queueMetricsContainerName = "queue-metrics"
 	certReloadContainerName   = "cert-reload"
+	rspamdMetricsContainer    = "rspamd-metrics"
+	tmpVolumeName             = "tmp"
 	configVolumeName          = "config"
 	usersVolumeName           = "users"
 	tlsVolumeName             = "tls"
@@ -126,6 +128,8 @@ const (
 	// Rspamd user GID (the image runs as _rspamd, uid/gid 11333):
 	// the pod fsGroup for the state emptyDir.
 	rspamdGroupID int64 = 11333
+	// nobodyID is the unprivileged user of the Rspamd metrics sidecar.
+	nobodyID int64 = 65534
 )
 
 // Validation is the config validation Job of one component for one
@@ -235,7 +239,7 @@ func ServiceMonitors(server *cnmsv1alpha1.MailServer) []client.Object {
 		mk(render.ServiceName(server.Name, render.ComponentPostfix)+"-metrics",
 			render.ComponentPostfix, "postfix-metrics"),
 		mk(render.ServiceName(server.Name, render.ComponentRspamd),
-			render.ComponentRspamd, "rspamd-metrics"),
+			render.ComponentRspamd, rspamdMetricsContainer),
 		mk(render.ServiceName(server.Name, render.ComponentValkey)+"-metrics",
 			render.ComponentValkey, "valkey-metrics"),
 	}
@@ -481,6 +485,51 @@ while :; do
     fi
   fi
 done`
+	return []string{"sh", "-c", script}
+}
+
+// rspamdMetricsLoop is the command of the Rspamd metrics sidecar
+// (ADR 0005). The controller worker only answers loopback clients
+// without a password, so the sidecar copies GET /metrics every 15s
+// over loopback and serves the copy on listenPort; no other
+// controller endpoint becomes reachable. The body is prefixed with
+// cnms_rspamd_metrics_up (0 when the last copy failed, in which case
+// the last good body is kept) so stale data is detectable. The file is
+// served as /metrics/index.txt because httpd sends no Content-Type for
+// a file without an extension and Prometheus 3 rejects that (same as
+// the Postfix queue-metrics sidecar). `busybox` is called by name: the
+// image does not symlink the applets.
+func rspamdMetricsLoop(listenPort, controllerPort int32) []string {
+	script := fmt.Sprintf(`set -eu
+dir=/tmp/rspamd-metrics
+mkdir -p "$dir/metrics"
+printf 'I:index.txt\n.txt:text/plain\n' > "$dir/httpd.conf"
+scrape() {
+  if busybox wget -q -T 5 -O "$dir/new" http://127.0.0.1:%[2]d/metrics; then
+    up=1
+    mv "$dir/new" "$dir/last"
+  else
+    up=0
+    rm -f "$dir/new"
+  fi
+  {
+    echo "# HELP cnms_rspamd_metrics_up Whether the last copy of the Rspamd metrics succeeded."
+    echo "# TYPE cnms_rspamd_metrics_up gauge"
+    echo "cnms_rspamd_metrics_up $up"
+    if [ -f "$dir/last" ]; then cat "$dir/last"; fi
+  } > "$dir/metrics/.index.tmp"
+  mv "$dir/metrics/.index.tmp" "$dir/metrics/index.txt"
+}
+scrape
+busybox httpd -f -p 0.0.0.0:%[1]d -h "$dir" -c "$dir/httpd.conf" &
+srv=$!
+trap 'exit 0' TERM INT
+while :; do
+  sleep 15 &
+  wait $!
+  kill -0 "$srv"
+  scrape
+done`, listenPort, controllerPort)
 	return []string{"sh", "-c", script}
 }
 

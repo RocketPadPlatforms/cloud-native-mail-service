@@ -23,9 +23,14 @@ narrowing of port-25 egress arrives with Phase 7.
      Service ports (25, 587) from anywhere; the component ports
      (postfix→rspamd milter 11332, postfix→dovecot 24 and the auth
      port, rspamd→valkey 6379) only between the pods of the same
-     `MailServer`; the metrics ports (ADR-0005) from the cluster
-     (documented: v1 allows in-cluster scraping without extra
-     configuration).
+     `MailServer`; the metrics ports (ADR-0005: Postfix 9150, Rspamd
+     9151, Valkey 9121) from the cluster (documented: v1 allows
+     in-cluster scraping without extra configuration). The Rspamd
+     controller (11334, loopback clients only) and normal worker
+     (11333, unauthenticated scan API) ports are not allowed from
+     any pod: the Rspamd metrics reach the cluster only through the
+     loopback sidecar on 9151, which cannot reach any other
+     controller endpoint.
    - Egress default-deny for CNMS pods, with allows: DNS (53), the
      component ports above, and port 25 egress from the Postfix pods
      (Phase 2: to any destination; Phase 7 narrows this to the
