@@ -59,6 +59,8 @@ func (r *Renderer) Render(req *render.RenderRequest) (*render.RenderResult, erro
 			"worker-normal.inc":     renderWorkerNormal(req),
 			"worker-proxy.inc":      renderWorkerProxy(req),
 			"redis.conf":            renderRedis(req),
+			"history_redis.conf":    renderHistoryRedis(req),
+			"options.inc":           renderOptions(req),
 		},
 		// `rspamadm configtest` validates the rendered configuration
 		// before rollout (D4: a bad config must never replace a
@@ -126,6 +128,31 @@ const disableFileInputs = `# CNMS never submits messages via File/Path/Shm input
 # inputs from being accepted.
 allow_file_and_shm_inputs = false;
 `
+
+// renderHistoryRedis renders local.d/history_redis.conf. With Redis
+// servers configured, the history module is active by default and
+// stores sender, recipients, subject, Message-ID, client IP and
+// authenticated user of every scanned message without expiry.
+// Verified against the 4.2.3 image: this file together with
+// history_rows = 0 (options.inc) stops it and no history key is
+// written.
+func renderHistoryRedis(req *render.RenderRequest) string {
+	var b strings.Builder
+	b.WriteString(sourceHeader(req, "local.d/history_redis.conf"))
+	b.WriteString("# No message metadata in Valkey (ADR 0005). The WebUI\n")
+	b.WriteString("# history is unavailable as a consequence.\n")
+	b.WriteString("enabled = false;\n")
+	return b.String()
+}
+
+// renderOptions renders local.d/options.inc (see renderHistoryRedis).
+func renderOptions(req *render.RenderRequest) string {
+	var b strings.Builder
+	b.WriteString(sourceHeader(req, "local.d/options.inc"))
+	b.WriteString("# No message history is kept (see history_redis.conf).\n")
+	b.WriteString("history_rows = 0;\n")
+	return b.String()
+}
 
 // renderRedis renders local.d/redis.conf.
 func renderRedis(req *render.RenderRequest) string {

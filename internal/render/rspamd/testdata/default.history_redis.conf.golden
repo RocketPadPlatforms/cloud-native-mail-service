@@ -1,0 +1,6 @@
+# CNMS-rendered Rspamd local.d/history_redis.conf -- do not edit.
+# Source: MailServer tenant1/mail (ADR 0004)
+
+# No message metadata in Valkey (ADR 0005). The WebUI
+# history is unavailable as a consequence.
+enabled = false;

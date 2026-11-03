@@ -18,6 +18,7 @@ package manifests
 
 import (
 	"fmt"
+	"os/exec"
 	"regexp"
 	"slices"
 	"strings"
@@ -391,6 +392,60 @@ func TestRspamdDeployment(t *testing.T) {
 	if main.ReadinessProbe == nil || main.ReadinessProbe.TCPSocket.Port.IntVal != render.PortRspamdController {
 		t.Error("rspamd readiness probe must target the controller port")
 	}
+	if main.LivenessProbe == nil || main.LivenessProbe.TCPSocket.Port.IntVal != render.PortRspamdController {
+		t.Error("rspamd liveness probe must target the controller port")
+	}
+	assertRspamdMetricsSidecar(t, dep, objs)
+}
+
+// assertRspamdMetricsSidecar checks the loopback metrics sidecar and
+// that the controller port is not exposed by any Service (ADR 0005).
+func assertRspamdMetricsSidecar(t *testing.T, dep *appsv1.Deployment, objs []client.Object) {
+	t.Helper()
+	pod := dep.Spec.Template.Spec
+	var side *corev1.Container
+	for i := range pod.Containers {
+		if pod.Containers[i].Name == rspamdMetricsContainer {
+			side = &pod.Containers[i]
+		}
+	}
+	if side == nil {
+		t.Fatal("rspamd-metrics sidecar missing")
+	}
+	if side.Image != images.Postfix {
+		t.Errorf("sidecar image = %s, want the Postfix image (busybox)", side.Image)
+	}
+	sc := side.SecurityContext
+	if sc == nil || sc.RunAsUser == nil || *sc.RunAsUser != nobodyID || sc.RunAsNonRoot == nil || !*sc.RunAsNonRoot ||
+		sc.ReadOnlyRootFilesystem == nil || !*sc.ReadOnlyRootFilesystem ||
+		sc.AllowPrivilegeEscalation == nil || *sc.AllowPrivilegeEscalation ||
+		sc.Capabilities == nil || !slices.Equal(sc.Capabilities.Drop, []corev1.Capability{"ALL"}) {
+		t.Errorf("sidecar securityContext = %+v", sc)
+	}
+	if len(side.Ports) != 1 || side.Ports[0].ContainerPort != render.PortRspamdMetrics || side.Ports[0].Name != rspamdMetricsContainer {
+		t.Errorf("sidecar ports = %v", side.Ports)
+	}
+	if !hasMount(side.VolumeMounts, tmpVolumeName, "/tmp") {
+		t.Error("sidecar misses the /tmp scratch mount")
+	}
+	script := side.Command[2]
+	for _, want := range []string{"http://127.0.0.1:11334/metrics", "0.0.0.0:9151", "cnms_rspamd_metrics_up"} {
+		if !strings.Contains(script, want) {
+			t.Errorf("sidecar script misses %q", want)
+		}
+	}
+	if out, err := exec.Command("sh", "-n", "-c", script).CombinedOutput(); err != nil {
+		t.Errorf("sidecar script is not valid sh: %v\n%s", err, out)
+	}
+	svc := mustFind[*corev1.Service](t, find(t, objs, kindService, testName+"-rspamd"), testName+"-rspamd")
+	for _, p := range svc.Spec.Ports {
+		if p.Port == render.PortRspamdController || p.TargetPort.IntVal == render.PortRspamdController {
+			t.Errorf("rspamd Service exposes the controller port: %v", p)
+		}
+		if p.Name == rspamdMetricsContainer && p.TargetPort.IntVal != render.PortRspamdMetrics {
+			t.Errorf("rspamd-metrics Service port targets %v", p.TargetPort)
+		}
+	}
 }
 
 func TestValkeyDeployment(t *testing.T) {
@@ -479,8 +534,13 @@ func TestNetworkPolicies(t *testing.T) {
 	if len(ingress.Spec.Ingress[2].From) != 2 {
 		t.Errorf("ingress rule 2 from = %v, want IPv4+IPv6 any", ingress.Spec.Ingress[2].From)
 	}
-	if !portSet(ingress.Spec.Ingress[2].Ports, []int32{render.PortPostfixMetrics, render.PortRspamdController, render.PortValkeyMetrics}) {
+	if !portSet(ingress.Spec.Ingress[2].Ports, []int32{render.PortPostfixMetrics, render.PortRspamdMetrics, render.PortValkeyMetrics}) {
 		t.Errorf("ingress rule 2 ports = %v", ingress.Spec.Ingress[2].Ports)
+	}
+	for _, rule := range ingress.Spec.Ingress {
+		if portPresent(rule.Ports, render.PortRspamdController) {
+			t.Error("ingress allows the Rspamd controller port")
+		}
 	}
 
 	egress := mustFind[*networkingv1.NetworkPolicy](t, find(t, objs, kindNetworkPolicy, testName+"-egress"), testName+"-egress")

@@ -27,7 +27,7 @@ isolation, see [resource model](../concepts/resource-model.md)):
 | Component | Role | In-cluster ports |
 |-----------|------|------------------|
 | Postfix   | SMTP in/out, relay, submission | 25 (postscreen), 587 (submission), 9150 (metrics) |
-| Rspamd    | filtering, DKIM, rate limits | 11332 (milter), 11334 (API/metrics) |
+| Rspamd    | filtering, DKIM, rate limits | 11332 (milter), 9151 (metrics) |
 | Dovecot   | IMAP, LMTP delivery, SASL auth | 24 (LMTP), 4190 (auth protocol), 143/993 (IMAP, mailboxes only) |
 | Valkey    | Rspamd state (one set per server) | 6379, 9121 (metrics) |
 
@@ -35,6 +35,12 @@ Ports 24 and 4190 (Postfix→Dovecot) and 6379 (Rspamd→Valkey) are
 internal: each is reachable only from the pods of the same
 `MailServer` (NetworkPolicies,
 [ADR 0006](../decisions/0006-network-policy-and-security-floor.md)).
+The Rspamd controller API (11334) answers loopback clients only; the
+metrics port 9151 is a sidecar copy of its `/metrics`
+([ADR 0005](../decisions/0005-component-metrics-sources.md)). The
+Rspamd message history is disabled, so the WebUI history is empty
+(the controller answers 500); it stores personal data in Valkey
+without an expiry.
 
 ## Operator flags
 

@@ -69,8 +69,9 @@ container image with a known user, writable paths, and a log path
    (documented exception; restarts reset on-disk module state only,
    never shared state). Writable paths and the run user are verified
    against the running image and recorded in the renderer commit.
-   Metrics: the controller worker serves `GET /metrics` (OpenMetrics);
-   see ADR-0005.
+   Metrics: a loopback sidecar copies the controller worker's
+   `GET /metrics` and serves it (the sidecar runs the Postfix image
+   for `busybox`); see ADR-0005. The message history is disabled.
 5. **Valkey image:** official `valkey/valkey:9.1.2`. The rendered
    config is mounted at `/etc/valkey/valkey.conf`; the container
    args are just this path (the entrypoint hands it to

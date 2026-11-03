@@ -112,7 +112,11 @@ CRDs are available; if so (and the `MailServer` observability
 setting allows, default `auto`) it creates ServiceMonitors and
 PodMonitors, otherwise it sets a condition explaining that and
 continues normally. Without the CRDs the same metrics are scrapeable
-from the per-component Services directly.
+from the per-component Services directly. The Rspamd controller only
+answers loopback clients, so its metrics are served by a loopback
+sidecar on port 9151 that also reports whether its last copy
+succeeded (`cnms_rspamd_metrics_up`); the Rspamd message history is
+disabled.
 
 ## Decisions
 

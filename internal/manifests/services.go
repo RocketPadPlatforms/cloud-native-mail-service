@@ -57,15 +57,15 @@ func services(server *cnmsv1alpha1.MailServer) []client.Object {
 		})
 	}
 
-	// Rspamd (milter + controller; the controller port carries the
-	// metrics, ADR 0005).
+	// Rspamd (milter + the metrics sidecar, ADR 0005). The controller
+	// port is not exposed: it answers loopback clients only.
 	rspamd := corev1.Service{
 		ObjectMeta: objectMeta(server, render.ServiceName(server.Name, render.ComponentRspamd), render.ComponentRspamd),
 		Spec: corev1.ServiceSpec{
 			Selector: componentSelector(server, render.ComponentRspamd).MatchLabels,
 			Ports: []corev1.ServicePort{
 				{Name: "milter", Port: render.PortRspamdMilter, TargetPort: intstr.FromInt32(render.PortRspamdMilter)},
-				{Name: "rspamd-metrics", Port: render.PortRspamdController, TargetPort: intstr.FromInt32(render.PortRspamdController)},
+				{Name: rspamdMetricsContainer, Port: render.PortRspamdMetrics, TargetPort: intstr.FromInt32(render.PortRspamdMetrics)},
 			},
 		},
 	}
@@ -160,7 +160,7 @@ func serverInboundTrafficPolicyPtr(server *cnmsv1alpha1.MailServer) *string {
 //     IPs (reputation damage).
 func networkPolicies(server *cnmsv1alpha1.MailServer) []client.Object {
 	componentPorts := []int32{render.PortRspamdMilter, render.PortDovecotLMTP, render.PortDovecotAuth, render.PortValkey}
-	metricsPorts := []int32{render.PortPostfixMetrics, render.PortRspamdController, render.PortValkeyMetrics}
+	metricsPorts := []int32{render.PortPostfixMetrics, render.PortRspamdMetrics, render.PortValkeyMetrics}
 	anywhere := func() networkingv1.NetworkPolicyPeer {
 		return networkingv1.NetworkPolicyPeer{
 			IPBlock: &networkingv1.IPBlock{CIDR: "0.0.0.0/0"},
