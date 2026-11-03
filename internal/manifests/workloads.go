@@ -58,7 +58,7 @@ func postfixStatefulSet(server *cnmsv1alpha1.MailServer, r *render.RenderResult)
 		Spec: appsv1.StatefulSetSpec{
 			Replicas:    &replicas,
 			ServiceName: name + "-headless",
-			Selector:    selectorMeta(componentSelector(server, render.ComponentPostfix)),
+			Selector:    componentSelector(server, render.ComponentPostfix),
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels:      objectLabels(server, render.ComponentPostfix),
@@ -202,7 +202,7 @@ func dovecotStatefulSet(server *cnmsv1alpha1.MailServer, r *render.RenderResult)
 		Spec: appsv1.StatefulSetSpec{
 			Replicas:    &replicas,
 			ServiceName: name + "-headless",
-			Selector:    selectorMeta(componentSelector(server, render.ComponentDovecot)),
+			Selector:    componentSelector(server, render.ComponentDovecot),
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels:      objectLabels(server, render.ComponentDovecot),
@@ -285,7 +285,7 @@ func rspamdDeployment(server *cnmsv1alpha1.MailServer, r *render.RenderResult) *
 		ObjectMeta: objectMeta(server, name, render.ComponentRspamd),
 		Spec: appsv1.DeploymentSpec{
 			Replicas: &replicas,
-			Selector: selectorMeta(componentSelector(server, render.ComponentRspamd)),
+			Selector: componentSelector(server, render.ComponentRspamd),
 			Strategy: appsv1.DeploymentStrategy{
 				Type: appsv1.RollingUpdateDeploymentStrategyType,
 				RollingUpdate: &appsv1.RollingUpdateDeployment{
@@ -378,7 +378,7 @@ func valkeyDeployment(server *cnmsv1alpha1.MailServer, r *render.RenderResult) *
 		ObjectMeta: objectMeta(server, name, render.ComponentValkey),
 		Spec: appsv1.DeploymentSpec{
 			Replicas: &replicas,
-			Selector: selectorMeta(componentSelector(server, render.ComponentValkey)),
+			Selector: componentSelector(server, render.ComponentValkey),
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels:      objectLabels(server, render.ComponentValkey),
@@ -444,10 +444,6 @@ func objectMeta(server *cnmsv1alpha1.MailServer, name string, c render.Component
 		Namespace: server.Namespace,
 		Labels:    objectLabels(server, c),
 	}
-}
-
-func selectorMeta(sel *metav1.LabelSelector) *metav1.LabelSelector {
-	return sel
 }
 
 // usersVolume is the Secret volume of the Dovecot users file (password

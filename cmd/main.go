@@ -92,19 +92,25 @@ func main() {
 			"'unrestricted' skips the grant requirement for single-tenant clusters. "+
 			"Uniqueness is enforced in both modes.")
 	flag.BoolVar(&enableInsecureTestFeatures, "enable-insecure-test-features", false,
-		"Accept MailServer.spec.submission.insecureStaticUsers (Phase 2 test "+
-			"users from a Secret with crypt(3) password hashes).")
+		"INSECURE, for tests only: accept MailServer.spec.submission.insecureStaticUsers "+
+			"(Phase 2 test users from a Secret with crypt(3) password hashes). "+
+			"The operator logs a warning at startup when it is set.")
 	flag.BoolVar(&allowClusterIssuers, "allow-cluster-issuers", false,
 		"Allow MailServers to reference a cert-manager ClusterIssuer in "+
 			"tls.issuerRef (ADR 0003). Off by default: a shared ClusterIssuer "+
 			"would let any tenant obtain certificates from it.")
-	opts := zap.Options{
-		Development: true,
-	}
+	// Production defaults: structured JSON on stdout. --zap-devel
+	// switches to the console encoder for local runs.
+	opts := zap.Options{Development: false}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+	if enableInsecureTestFeatures {
+		// logr has no warning level; the message carries it.
+		setupLog.Info("WARNING: --enable-insecure-test-features is set: " +
+			"MailServers may use static test users from a Secret. Do not use this in production")
+	}
 
 	authMode, err := controller.ParseDomainAuthorization(domainAuthorization)
 	if err != nil {
@@ -170,7 +176,7 @@ func main() {
 	// generate self-signed certificates for the metrics server. While convenient for development and testing,
 	// this setup is not recommended for production.
 	//
-	// TODO(user): If you enable certManager, uncomment the following lines:
+	// With cert-manager, uncomment the following lines:
 	// - [METRICS-WITH-CERTS] at config/default/kustomization.yaml to generate and use certificates
 	// managed by cert-manager for the metrics server.
 	// - [PROMETHEUS-WITH-CERTS] at config/prometheus/kustomization.yaml for TLS certification.
@@ -185,6 +191,8 @@ func main() {
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
+		Cache:                  controller.CacheOptions(),
+		Client:                 controller.ClientOptions(),
 		Metrics:                metricsServerOptions,
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,
@@ -217,20 +225,6 @@ func main() {
 		AllowClusterIssuers:        allowClusterIssuers,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "mailserver")
-		os.Exit(1)
-	}
-	if err := (&controller.MailDomainReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Failed to create controller", "controller", "maildomain")
-		os.Exit(1)
-	}
-	if err := (&controller.MailDirectoryReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Failed to create controller", "controller", "maildirectory")
 		os.Exit(1)
 	}
 	if err := (&controller.MailDomainGrantReconciler{

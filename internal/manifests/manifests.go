@@ -78,8 +78,9 @@ const (
 
 	// appValue is the app family value on all rendered resources.
 	appValue = "cloud-native-mail-service"
-	// managedByValue marks a resource as CNMS-managed.
-	managedByValue = "cnms"
+	// ManagedByValue is the value of ManagedByLabel and of the
+	// managed-by app label of CNMS-managed resources.
+	ManagedByValue = "cnms"
 
 	// ServerLabel carries the MailServer name on all its objects.
 	ServerLabel = "cnms.rpp.gmbh/mailserver"
@@ -315,8 +316,8 @@ func objectLabels(server *cnmsv1alpha1.MailServer, c render.Component) map[strin
 	l := map[string]string{
 		appLabel:          appValue,
 		InstanceLabelKey:  server.Name,
-		managedByAppLabel: managedByValue,
-		ManagedByLabel:    managedByValue,
+		managedByAppLabel: ManagedByValue,
+		ManagedByLabel:    ManagedByValue,
 		ServerLabel:       server.Name,
 	}
 	if c != "" {

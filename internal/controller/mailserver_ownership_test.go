@@ -86,14 +86,17 @@ var _ = Describe("MailServer object ownership", func() {
 			Expect(err).ToNot(HaveOccurred())
 		})
 
-		expectConflict := func(kind, name string) {
-			reconcileServerG(newReconcilerG(AuthorizationAllowlist, true), ns, testServerName)
+		expectConflictWith := func(r *MailServerReconciler, kind, name string) {
+			reconcileServerG(r, ns, testServerName)
 			status, reason, msg := serverConditionG(ns, testServerName, conditionReady)
 			Expect(status).To(Equal(metav1.ConditionFalse))
 			Expect(reason).To(Equal(ReasonOwnershipConflict))
 			Expect(msg).To(ContainSubstring(kind + ` "` + name + `"`))
 			err := k8sClient.Get(ctx, types.NamespacedName{Name: postfixObjectName, Namespace: ns}, &appsv1.StatefulSet{})
 			Expect(apierrors.IsNotFound(err)).To(BeTrue())
+		}
+		expectConflict := func(kind, name string) {
+			expectConflictWith(newReconcilerG(AuthorizationAllowlist, true), kind, name)
 		}
 
 		It("does not accept a foreign validation Job as the result", func() {
@@ -116,6 +119,27 @@ var _ = Describe("MailServer object ownership", func() {
 			})).To(Succeed())
 
 			expectConflict("ConfigMap", name)
+		})
+
+		// The manager cache only holds the objects labelled as managed
+		// by the operator, so a foreign object of the same name is
+		// invisible to a cached read.
+		It("sees foreign objects although the manager cache does not hold them", func() {
+			cm := plane.Configs[0].GetName()
+			Expect(k8sClient.Create(ctx, &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{Name: cm, Namespace: ns},
+				Data:       map[string]string{"main.cf": "# not the rendered configuration"},
+			})).To(Succeed())
+			mgr := startManagerG()
+			Expect(mgr.GetCache().WaitForCacheSync(ctx)).To(BeTrue())
+			cached := &corev1.ConfigMap{}
+			err := mgr.GetClient().Get(ctx, types.NamespacedName{Name: cm, Namespace: ns}, cached)
+			Expect(apierrors.IsNotFound(err)).To(BeTrue(), "the cache must not hold unlabelled ConfigMaps")
+
+			expectConflictWith(&MailServerReconciler{
+				Client: mgr.GetClient(), Scheme: mgr.GetScheme(), APIReader: mgr.GetAPIReader(),
+				DomainAuthorization: AuthorizationAllowlist, EnableInsecureTestFeatures: true,
+			}, "ConfigMap", cm)
 		})
 	})
 
@@ -165,7 +189,7 @@ var _ = Describe("MailServer object ownership", func() {
 			instance := map[string]string{manifests.InstanceLabelKey: testServerName}
 			cnms := map[string]string{
 				manifests.InstanceLabelKey: testServerName,
-				manifests.ManagedByLabel:   "cnms",
+				manifests.ManagedByLabel:   manifests.ManagedByValue,
 				manifests.ServerLabel:      testServerName,
 			}
 			// A Helm release with the same instance label.

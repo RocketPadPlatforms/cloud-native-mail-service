@@ -8,7 +8,6 @@ rules:
   - ""
   resources:
   - configmaps
-  - secrets
   verbs:
   - create
   - delete
@@ -36,6 +35,15 @@ rules:
   - patch
   - update
   - watch
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
 - apiGroups:
   - apiextensions.k8s.io
   resources:
@@ -83,43 +91,26 @@ rules:
   - cnms.rpp.gmbh
   resources:
   - maildirectories
+  - maildomaingrants
   - maildomains
   - mailservers
   verbs:
-  - create
-  - delete
   - get
   - list
-  - patch
-  - update
   - watch
 - apiGroups:
   - cnms.rpp.gmbh
   resources:
-  - maildirectories/finalizers
-  - maildomains/finalizers
+  - maildomaingrants/status
+  - mailservers/status
+  verbs:
+  - patch
+- apiGroups:
+  - cnms.rpp.gmbh
+  resources:
   - mailservers/finalizers
   verbs:
   - update
-- apiGroups:
-  - cnms.rpp.gmbh
-  resources:
-  - maildirectories/status
-  - maildomaingrants/status
-  - maildomains/status
-  - mailservers/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - cnms.rpp.gmbh
-  resources:
-  - maildomaingrants
-  verbs:
-  - get
-  - list
-  - watch
 - apiGroups:
   - events.k8s.io
   resources:
