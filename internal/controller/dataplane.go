@@ -203,7 +203,7 @@ func (r *MailServerReconciler) ensureJob(ctx context.Context, server *cnmsv1alph
 		// A Job of someone else (a tenant could pre-create one that
 		// "passed") must never count as the validation result.
 		if !metav1.IsControlledBy(existing, server) {
-			return nil, &ownershipConflictError{kind: kindName(job), name: job.Name}
+			return nil, &ownershipConflictError{kind: kindName(job), name: job.Name, owner: "MailServer"}
 		}
 		return existing, nil
 	}
@@ -262,7 +262,7 @@ func createOwned(ctx context.Context, c client.Client, reader client.Reader, sch
 		return client.IgnoreNotFound(err)
 	}
 	if !metav1.IsControlledBy(existing, owner) {
-		return &ownershipConflictError{kind: kindName(obj), name: obj.GetName()}
+		return &ownershipConflictError{kind: kindName(obj), name: obj.GetName(), owner: "MailServer"}
 	}
 	return nil
 }

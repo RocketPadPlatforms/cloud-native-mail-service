@@ -1,0 +1,55 @@
+# Minimal DNSEndpoint CRD for envtest (DNSENDPOINT_CRDS=1).
+# The real CRD comes from external-dns (v0.24.0 schema, ADR 0012); this
+# file registers the API group/kind and the fields CNMS writes so that the
+# optional externalDNS integration can be exercised. Other fields are
+# kept, not validated.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: dnsendpoints.externaldns.k8s.io
+  annotations:
+    # The group is protected (*.k8s.io); a test fixture is not approved.
+    api-approved.kubernetes.io: "unapproved, envtest fixture"
+spec:
+  group: externaldns.k8s.io
+  names:
+    kind: DNSEndpoint
+    listKind: DNSEndpointList
+    plural: dnsendpoints
+    singular: dnsendpoint
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                endpoints:
+                  type: array
+                  items:
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                    properties:
+                      dnsName:
+                        type: string
+                      recordType:
+                        type: string
+                      recordTTL:
+                        type: integer
+                        format: int64
+                      targets:
+                        type: array
+                        items:
+                          type: string
+                          minLength: 1
+                          maxLength: 4096
+            status:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true

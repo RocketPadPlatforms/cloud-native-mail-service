@@ -364,16 +364,20 @@ type DNSRecord struct {
 }
 
 // DKIMStatus reports the current DKIM signing state. A key is pending
-// (published, not signing yet), active (signing) or retiring (still
+// (published, not signing), active (signing) or retiring (still
 // published, no longer signing).
 type DKIMStatus struct {
-	// Active keys: the ones that sign, at most one per algorithm.
+	// Active keys: the ones that sign, at most one per algorithm for
+	// generated keys; with your own keys every key with signing true.
 	// +listType=atomic
-	// +kubebuilder:validation:MaxItems=2
+	// +kubebuilder:validation:MaxItems=8
 	// +optional
 	Active []DKIMKeyStatus `json:"active,omitempty"`
 
-	// Pending keys: published and waiting for a verified record.
+	// Pending keys: published, not signing. A generated key waits for
+	// its verified record; with your own keys these are the keys with
+	// signing false, before they take over or after they stopped
+	// signing.
 	// +listType=atomic
 	// +kubebuilder:validation:MaxItems=8
 	// +optional
@@ -432,6 +436,7 @@ type MTAStSStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Domain",type="string",JSONPath=".spec.domain"
+// +kubebuilder:printcolumn:name="Authorized",type="string",JSONPath=".status.conditions[?(@.type=='Authorized')].status"
 // +kubebuilder:printcolumn:name="Ready",type="string",JSONPath=".status.conditions[?(@.type=='Ready')].status"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 // The name is the value of a label on the DKIM key Secrets

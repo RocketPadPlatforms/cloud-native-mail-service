@@ -90,7 +90,6 @@ rules:
   resources:
   - maildirectories
   - maildomaingrants
-  - maildomains
   - mailservers
   verbs:
   - get
@@ -107,6 +106,15 @@ rules:
 - apiGroups:
   - cnms.rpp.gmbh
   resources:
+  - maildomains
+  verbs:
+  - get
+  - list
+  - patch
+  - watch
+- apiGroups:
+  - cnms.rpp.gmbh
+  resources:
   - maildomains/finalizers
   - mailservers/finalizers
   verbs:
@@ -118,6 +126,18 @@ rules:
   verbs:
   - create
   - patch
+- apiGroups:
+  - externaldns.k8s.io
+  resources:
+  - dnsendpoints
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
 - apiGroups:
   - monitoring.coreos.com
   resources:

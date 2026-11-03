@@ -38,6 +38,7 @@ import (
 
 	cnmsv1alpha1 "github.com/RocketPadPlatforms/cloud-native-mail-service/api/v1alpha1"
 	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/controller"
+	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/dnsrecords"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -66,6 +67,7 @@ func main() {
 	var domainAuthorization string
 	var enableInsecureTestFeatures bool
 	var allowClusterIssuers bool
+	var dnsResolver string
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -99,6 +101,9 @@ func main() {
 		"Allow MailServers to reference a cert-manager ClusterIssuer in "+
 			"tls.issuerRef (ADR 0003). Off by default: a shared ClusterIssuer "+
 			"would let any tenant obtain certificates from it.")
+	flag.StringVar(&dnsResolver, "dns-resolver", "",
+		"DNS resolver (host:port) that verifies the DNS records of MailDomains "+
+			"(ADR 0012). Empty uses the system resolver of the pod.")
 	// Production defaults: structured JSON on stdout. --zap-devel
 	// switches to the console encoder for local runs.
 	opts := zap.Options{Development: false}
@@ -119,6 +124,12 @@ func main() {
 	}
 	if authMode == controller.AuthorizationUnrestricted {
 		setupLog.Info("Domain authorization is unrestricted: any namespace may claim any domain")
+	}
+
+	resolver, err := dnsrecords.NewNetResolver(dnsResolver, 0)
+	if err != nil {
+		setupLog.Error(err, "Invalid --dns-resolver value")
+		os.Exit(1)
 	}
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
@@ -238,8 +249,10 @@ func main() {
 	if err := (&controller.MailDomainReconciler{
 		Client:              mgr.GetClient(),
 		Scheme:              mgr.GetScheme(),
+		APIReader:           mgr.GetAPIReader(),
 		Recorder:            mgr.GetEventRecorder("maildomain-controller"),
 		DomainAuthorization: authMode,
+		Resolver:            resolver,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "maildomain")
 		os.Exit(1)

@@ -18,6 +18,9 @@ spec:
     - jsonPath: .spec.domain
       name: Domain
       type: string
+    - jsonPath: .status.conditions[?(@.type=='Authorized')].status
+      name: Authorized
+      type: string
     - jsonPath: .status.conditions[?(@.type=='Ready')].status
       name: Ready
       type: string
@@ -438,8 +441,9 @@ spec:
                 description: DKIM reports the current signing state.
                 properties:
                   active:
-                    description: 'Active keys: the ones that sign, at most one per
-                      algorithm.'
+                    description: |-
+                      Active keys: the ones that sign, at most one per algorithm for
+                      generated keys; with your own keys every key with signing true.
                     items:
                       description: DKIMKeyStatus describes one DKIM key.
                       properties:
@@ -468,7 +472,7 @@ spec:
                       - algorithm
                       - selector
                       type: object
-                    maxItems: 2
+                    maxItems: 8
                     type: array
                     x-kubernetes-list-type: atomic
                   nextRotation:
@@ -478,8 +482,11 @@ spec:
                     format: date-time
                     type: string
                   pending:
-                    description: 'Pending keys: published and waiting for a verified
-                      record.'
+                    description: |-
+                      Pending keys: published, not signing. A generated key waits for
+                      its verified record; with your own keys these are the keys with
+                      signing false, before they take over or after they stopped
+                      signing.
                     items:
                       description: DKIMKeyStatus describes one DKIM key.
                       properties:
