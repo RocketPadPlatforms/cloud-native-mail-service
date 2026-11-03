@@ -287,7 +287,7 @@ func TestAuthorizationConditionListsEveryFailure(t *testing.T) {
 	if reason != ReasonPartiallyAuthorized {
 		t.Fatalf("reason = %q, want %q", reason, ReasonPartiallyAuthorized)
 	}
-	for _, want := range []string{"only a.example.org served", `"b.example.org"`, `"gone"`} {
+	for _, want := range []string{"only a.example.org authorized", "once the new configuration is rolled out", `"b.example.org"`, `"gone"`} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("message %q misses %q", msg, want)
 		}

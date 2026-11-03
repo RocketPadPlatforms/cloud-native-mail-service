@@ -57,7 +57,7 @@ the first failing sub-condition:
 
 | Condition | True when | Notable False reasons |
 |-----------|-----------|----------------------|
-| `DomainsAuthorized` | every `spec.domains` entry passes the grant check | `NotGranted`, `DuplicateDomain`, `DomainNotFound`, `PartiallyAuthorized` (some domains are served, the message names the blocked ones; `Ready` stays `False`) |
+| `DomainsAuthorized` | every `spec.domains` entry passes the grant check | `NotGranted`, `DuplicateDomain`, `DomainNotFound`, `PartiallyAuthorized` (only the authorized domains are rendered; the message names the blocked ones, which leave the data plane when the new configuration is rolled out; `Ready` stays `False`) |
 | `CertificateReady` | the TLS Secret (`<name>-tls` or `spec.tls.secretName`) carries `tls.crt` and `tls.key` | `SecretNotFound`, `SecretIncomplete` |
 | `ConfigValidated` | the rendered configuration of every component passed its validation Job (or already runs); `Unknown` while the Jobs run | `ConfigRejected` (message names the failed Job; delete the Job to retry), `ValidatingConfig` (Unknown) |
 | `WorkloadsReady` | every data-plane workload finished its rollout (latest spec observed, all replicas on the desired template and ready) | `Progressing` while converging, `RolloutStalled` after a Deployment exceeds its progress deadline or the workloads stay not ready for 10 minutes (the message lists which) |

@@ -21,6 +21,7 @@ import (
 	stderrors "errors"
 	"fmt"
 	"maps"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -204,37 +205,9 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return r.finish(ctx, server, prevReady)
 	}
 
-	// Directory: fail closed when the referenced MailDirectory is
-	// missing (recipient validation and auth are backed by it).
-	directory := &cnmsv1alpha1.MailDirectory{}
-	err := r.Get(ctx, types.NamespacedName{
-		Name: server.Spec.DirectoryRef.Name, Namespace: server.Namespace,
-	}, directory)
-	if errors.IsNotFound(err) {
-		return block(ReasonDirectoryNotFound, fmt.Sprintf(
-			"MailDirectory %q not found in namespace %q",
-			server.Spec.DirectoryRef.Name, server.Namespace))
-	}
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-
-	// Outbound modes not implemented yet (fail closed).
-	switch {
-	case server.Spec.Outbound.Relay != nil:
-		return block(ReasonRelayNotAvailable, "relay outbound arrives in Phase 6")
-	case server.Spec.Outbound.Direct != nil && server.Spec.Outbound.Direct.IpPoolClaimRef != nil:
-		return block(ReasonIpPoolClaimNotAvailable, "ipPoolClaimRef arrives in Phase 7")
-	}
-
-	// A shared ClusterIssuer needs the operator's opt-in (ADR 0003).
-	if server.Spec.TLS.IssuerRef.Kind == clusterIssuerKind && !r.AllowClusterIssuers {
-		return block(ReasonClusterIssuerNotAllowed, fmt.Sprintf(
-			"tls.issuerRef %q is a ClusterIssuer, which the operator does not allow (start it with --allow-cluster-issuers, or use a namespaced Issuer)",
-			server.Spec.TLS.IssuerRef.Name))
-	}
-
-	// Domain authorization (ADR 0003), re-evaluated on every reconcile.
+	// Domain authorization (ADR 0003) is evaluated first and on every
+	// reconcile: no tenant-controlled check below may keep a revoked
+	// domain from reaching the data plane.
 	grants, domains, err := r.listAuthorizationInput(ctx)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -250,24 +223,31 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	setCondition(conds, generation, ConditionDomainsAuthorized,
 		conditionStatus(auth.all()), authReason, authMessage)
 	r.emitAuthorizationEvent(server, auth, prevAuth, authReason, authMessage)
-	if len(auth.domains) == 0 {
-		// Nothing is authorized. A server that never had a data
-		// plane gets none; a running one is re-rendered fail closed
-		// below so a revoked domain is not served any longer.
-		exists, err := r.dataPlaneExists(ctx, server)
+
+	// Anything that keeps the normal render from being applied: an
+	// input the tenant controls is missing or invalid, or no domain is
+	// authorized. A running data plane must then not keep serving a
+	// revoked domain, so it gets the fail-closed render instead (no
+	// domains, no users; fixed content that depends on no tenant
+	// input beyond the server itself).
+	blocked, users, err := r.preflight(ctx, server, len(auth.domains) > 0)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if blocked == nil && len(auth.domains) == 0 {
+		blocked = &blockedBy{authReason, authMessage}
+	}
+	renderDomains, renderUsers := auth.domains, users
+	failClosed := false
+	if blocked != nil {
+		need, err := r.needsFailClosed(ctx, server, auth.domains)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
-		if !exists {
-			return block(authReason, authMessage)
+		if !need {
+			return block(blocked.reason, blocked.message)
 		}
-	}
-	authorized := auth.domains
-
-	// Static test users (fail closed: invalid users must not render).
-	users, userReason, userMessage, usersOK := r.staticUsers(ctx, server)
-	if !usersOK {
-		return block(userReason, userMessage)
+		failClosed, renderDomains, renderUsers = true, nil, nil
 	}
 
 	// Render and apply the data plane.
@@ -275,9 +255,17 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	if err != nil {
 		return ctrl.Result{}, err
 	}
+	if failClosed && r.clusterIssuerRefused(server) {
+		// Nothing may be requested from the refused issuer, and the
+		// existing Certificate would keep renewing the revoked names.
+		certCRDs = false
+		if err := r.deleteCertificate(ctx, server); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
 	prevValidated := meta.FindStatusCondition(*conds, ConditionConfigValidated)
 	prevValidated = prevValidated.DeepCopy()
-	g, err := r.applyDataPlane(ctx, server, authorized, users, certCRDs)
+	g, rolloutWant, err := r.applyGuarded(ctx, server, renderDomains, renderUsers, certCRDs, failClosed)
 	if err != nil {
 		log.FromContext(ctx).Error(err, "Could not apply data plane")
 		reason := applyFailureReason(err)
@@ -304,7 +292,7 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	if newRollout {
 		prevRollout = nil
 	}
-	rollout := r.workloadsReady(ctx, server, g.want, prevRollout)
+	rollout := r.workloadsReady(ctx, server, rolloutWant, prevRollout)
 	setCondition(conds, generation, ConditionWorkloadsReady,
 		conditionStatus(rollout.ready), rollout.reason(), rollout.message)
 	if newRollout && !rollout.ready {
@@ -324,27 +312,190 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		}
 	}
 
+	// DomainsAuthorized comes after the rollout conditions: a revoked
+	// domain is still served until the new configuration is validated
+	// and rolled out, so "partially authorized" must not hide that.
 	reason, message := readyReason(*conds, []string{
-		ConditionDomainsAuthorized, ConditionCertificateReady,
-		ConditionConfigValidated, ConditionWorkloadsReady, ConditionObservability,
+		ConditionCertificateReady, ConditionConfigValidated,
+		ConditionWorkloadsReady, ConditionDomainsAuthorized, ConditionObservability,
 	})
+	if blocked != nil {
+		// The fail-closed render is applied, but the server is not
+		// ready for what its spec asks for.
+		reason, message = blocked.reason, blocked.message
+	}
 	setCondition(conds, generation, conditionReady,
 		conditionStatus(reason == "Ready"), reason, message)
 	return r.finish(ctx, server, prevReady)
 }
 
-// dataPlaneExists reports whether the Postfix StatefulSet of the
-// server exists, that is, whether a data plane was ever applied.
-func (r *MailServerReconciler) dataPlaneExists(ctx context.Context, server *cnmsv1alpha1.MailServer) (bool, error) {
-	key := types.NamespacedName{
-		Name:      render.ServiceName(server.Name, render.ComponentPostfix),
-		Namespace: server.Namespace,
+// applyGuarded applies the render for domains and users. If the
+// workloads were not replaced (the new render is still validating or
+// was rejected) while they serve a domain that is no longer
+// authorized, it applies the fail-closed render instead of waiting.
+// The returned map holds the revision the rollout check waits for.
+func (r *MailServerReconciler) applyGuarded(ctx context.Context, server *cnmsv1alpha1.MailServer, domains []string, users []render.StaticUser, certCRDs, failClosed bool) (*gate, map[string]string, error) {
+	g, err := r.applyDataPlane(ctx, server, domains, users, certCRDs)
+	if err != nil {
+		return nil, nil, err
 	}
-	err := r.Get(ctx, key, &appsv1.StatefulSet{})
+	if failClosed || g.want != nil {
+		return g, g.want, nil
+	}
+	need, err := r.needsFailClosed(ctx, server, domains)
+	if err != nil || !need {
+		return g, nil, err
+	}
+	closed, err := r.applyDataPlane(ctx, server, nil, nil, certCRDs)
+	if err != nil {
+		return nil, nil, err
+	}
+	return g, closed.want, nil
+}
+
+// blockedBy is the reason the normal render cannot be applied.
+type blockedBy struct{ reason, message string }
+
+// preflight checks the tenant-controlled inputs of the render. A
+// non-nil blockedBy means the normal render must not be applied. The
+// static users are only loaded when needed (a fail-closed render has
+// none).
+func (r *MailServerReconciler) preflight(ctx context.Context, server *cnmsv1alpha1.MailServer, needUsers bool) (*blockedBy, []render.StaticUser, error) {
+	// Fail closed when the referenced MailDirectory is missing
+	// (recipient validation and auth are backed by it).
+	err := r.Get(ctx, types.NamespacedName{
+		Name: server.Spec.DirectoryRef.Name, Namespace: server.Namespace,
+	}, &cnmsv1alpha1.MailDirectory{})
 	if errors.IsNotFound(err) {
-		return false, nil
+		return &blockedBy{ReasonDirectoryNotFound, fmt.Sprintf(
+			"MailDirectory %q not found in namespace %q",
+			server.Spec.DirectoryRef.Name, server.Namespace)}, nil, nil
 	}
-	return err == nil, err
+	if err != nil {
+		return nil, nil, err
+	}
+	// Outbound modes not implemented yet (fail closed).
+	switch {
+	case server.Spec.Outbound.Relay != nil:
+		return &blockedBy{ReasonRelayNotAvailable, "relay outbound arrives in Phase 6"}, nil, nil
+	case server.Spec.Outbound.Direct != nil && server.Spec.Outbound.Direct.IpPoolClaimRef != nil:
+		return &blockedBy{ReasonIpPoolClaimNotAvailable, "ipPoolClaimRef arrives in Phase 7"}, nil, nil
+	}
+	// A shared ClusterIssuer needs the operator's opt-in (ADR 0003).
+	if r.clusterIssuerRefused(server) {
+		return &blockedBy{ReasonClusterIssuerNotAllowed, fmt.Sprintf(
+			"tls.issuerRef %q is a ClusterIssuer, which the operator does not allow (start it with --allow-cluster-issuers, or use a namespaced Issuer)",
+			server.Spec.TLS.IssuerRef.Name)}, nil, nil
+	}
+	if !needUsers {
+		return nil, nil, nil
+	}
+	// Static test users (fail closed: invalid users must not render).
+	users, reason, message, ok := r.staticUsers(ctx, server)
+	if !ok {
+		return &blockedBy{reason, message}, nil, nil
+	}
+	return nil, users, nil
+}
+
+// needsFailClosed reports whether the running data plane must be
+// replaced by the fail-closed render: it exists and either no domain
+// is authorized (re-applying is idempotent) or it serves a domain
+// outside the authorized set.
+func (r *MailServerReconciler) needsFailClosed(ctx context.Context, server *cnmsv1alpha1.MailServer, authorized []string) (bool, error) {
+	served, exists, err := r.servedDomains(ctx, server)
+	if err != nil {
+		return false, err
+	}
+	if len(authorized) == 0 {
+		return exists, nil
+	}
+	return slices.ContainsFunc(served, func(d string) bool { return !slices.Contains(authorized, d) }), nil
+}
+
+// servedDomains returns the domains the existing workloads of the
+// server serve, read from the served-domains annotation that every
+// workload carries since the revision was applied (the annotation
+// is set together with the pod template, so it names the revision
+// being rolled out; an older pod of a rollout in progress is not
+// tracked), and the names of the Certificate. exists reports whether
+// any workload or the Certificate exists, that is, whether a data
+// plane was ever applied.
+func (r *MailServerReconciler) servedDomains(ctx context.Context, server *cnmsv1alpha1.MailServer) (served []string, exists bool, err error) {
+	seen := map[string]bool{}
+	for _, c := range render.AllComponents() {
+		key := types.NamespacedName{Name: render.ServiceName(server.Name, c), Namespace: server.Namespace}
+		var obj client.Object = &appsv1.Deployment{}
+		if c == render.ComponentPostfix || c == render.ComponentDovecot {
+			obj = &appsv1.StatefulSet{}
+		}
+		if err := r.Get(ctx, key, obj); err != nil {
+			if errors.IsNotFound(err) {
+				continue
+			}
+			return nil, false, err
+		}
+		exists = true
+		for d := range strings.SplitSeq(obj.GetAnnotations()[manifests.ServedDomainsAnnotation], ",") {
+			if d != "" {
+				seen[d] = true
+			}
+		}
+	}
+	// The Certificate is part of the data plane too: it keeps being
+	// renewed for every name it lists, so a revoked domain on it
+	// counts as served even before any workload exists.
+	cert, err := r.ownedCertificate(ctx, server)
+	if err != nil {
+		return nil, false, err
+	}
+	if cert != nil {
+		exists = true
+		names, _, _ := unstructured.NestedStringSlice(cert.Object, "spec", "dnsNames")
+		own := render.ServiceFQDN(server.Name, server.Namespace, render.ComponentPostfix)
+		for _, n := range names {
+			if n != own {
+				seen[n] = true
+			}
+		}
+	}
+	return slices.Sorted(maps.Keys(seen)), exists, nil
+}
+
+// clusterIssuerRefused reports whether the server references a shared
+// ClusterIssuer the operator was not started to allow (ADR 0003).
+func (r *MailServerReconciler) clusterIssuerRefused(server *cnmsv1alpha1.MailServer) bool {
+	return server.Spec.TLS.IssuerRef.Kind == clusterIssuerKind && !r.AllowClusterIssuers
+}
+
+// deleteCertificate removes the Certificate of the server if it owns
+// one.
+func (r *MailServerReconciler) deleteCertificate(ctx context.Context, server *cnmsv1alpha1.MailServer) error {
+	cert, err := r.ownedCertificate(ctx, server)
+	if err != nil || cert == nil {
+		return err
+	}
+	return client.IgnoreNotFound(r.Delete(ctx, cert))
+}
+
+// ownedCertificate returns the Certificate of the server, or nil when
+// there is none, the cert-manager CRDs are not installed, or the
+// object is not controlled by the server.
+func (r *MailServerReconciler) ownedCertificate(ctx context.Context, server *cnmsv1alpha1.MailServer) (*unstructured.Unstructured, error) {
+	installed, err := r.crdsAvailable(ctx, crdCertificate)
+	if err != nil || !installed {
+		return nil, err
+	}
+	cert := &unstructured.Unstructured{}
+	cert.SetGroupVersionKind(certificateGVK)
+	err = r.Get(ctx, types.NamespacedName{Name: server.Name, Namespace: server.Namespace}, cert)
+	if errors.IsNotFound(err) || (err == nil && !metav1.IsControlledBy(cert, server)) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return cert, nil
 }
 
 // emitAuthorizationEvent records a Warning Event when domains became
@@ -770,7 +921,7 @@ func kindName(obj client.Object) string {
 	if u, ok := obj.(*unstructured.Unstructured); ok {
 		return u.GetKind()
 	}
-	return strings.TrimPrefix(fmt.Sprintf("%T", obj), "*")
+	return reflect.TypeOf(obj).Elem().Name()
 }
 
 // applyObject creates obj if it does not exist and updates the

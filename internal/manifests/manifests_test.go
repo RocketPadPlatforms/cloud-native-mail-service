@@ -699,6 +699,29 @@ func TestBuildWithoutAuthorizedDomains(t *testing.T) {
 	}
 }
 
+// Every workload records the domains it serves, outside the pod
+// template so the annotation never rolls pods.
+func TestBuildRecordsServedDomains(t *testing.T) {
+	for _, tc := range []struct {
+		domains []string
+		want    string
+	}{
+		{[]string{domainB, domainA}, domainA + "," + domainB},
+		{nil, ""},
+	} {
+		dp := buildPlaneFor(t, nil, nil, tc.domains)
+		if len(dp.Workloads) != 4 {
+			t.Fatalf("workloads = %d, want 4", len(dp.Workloads))
+		}
+		for _, w := range dp.Workloads {
+			got, ok := w.GetAnnotations()[ServedDomainsAnnotation]
+			if !ok || got != tc.want {
+				t.Errorf("%s: %s = %q (set %t), want %q", w.GetName(), ServedDomainsAnnotation, got, ok, tc.want)
+			}
+		}
+	}
+}
+
 func configMapNameOf(t *testing.T, dp *DataPlane, c render.Component) string {
 	t.Helper()
 	for _, o := range dp.Configs {
