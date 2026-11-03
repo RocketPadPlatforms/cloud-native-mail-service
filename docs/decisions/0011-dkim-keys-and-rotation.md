@@ -234,18 +234,29 @@ shorter than the interval). Each key is **pending**, **active** or
    defer all mail until the records exist (in `manual` mode that can be
    days). The status shows the records unverified until they are
    published.
-2. **Start.** When the newest key is at least `interval` old (from its
-   `created` annotation) and no key is pending, create the new key. It is
-   **pending**: its record is added to the required records and
-   published; it does not sign.
+2. **Start.** Per algorithm: when the active key is at least `interval`
+   old (from its `created` annotation) and no key of that algorithm is
+   pending, create the new key. It is **pending**: its record is added to
+   the required records and published; it does not sign. A key is never
+   created under a selector that already exists (a restored Secret is
+   adopted, not replaced): if today's selector is taken, the creation
+   waits for the next UTC day. Changing `selectorPrefix` avoids the wait.
 3. **Activate.** When the pending record has been verified (ADR 0012) for
    at least 15 minutes (a constant, covering lag between authoritative
    servers), the pending key becomes active and the previous key
    **retiring** with `until = now + overlap`. A newly enabled Ed25519
-   follows the same path: RSA keeps signing, so nothing waits on it.
+   follows the same path: RSA keeps signing, so nothing waits on it. The
+   hold is tracked per pending selector. A lookup that answers "not
+   verified" restarts the hold; a temporary error leaves it alone. If
+   several pending keys of one algorithm are ready, the newest wins and
+   the older ones, which would never sign, retire with the same overlap.
 4. **Retire.** At `until` the record leaves the required set (the
    `DNSEndpoint` entry is removed, or the status stops listing it) and the
-   key Secret is deleted.
+   key Secret is deleted. Turning `ed25519` off retires its active key the
+   same way and drops a pending one at once, since it never signed.
+   RSA is mandatory: if the annotation names no usable RSA key (stale
+   after a manual Secret deletion), the oldest existing RSA key signs at
+   once, or a new one is created, without waiting for DNS.
 5. **Stall.** A pending key whose record never verifies leaves the old key
    signing indefinitely; condition `DKIMRotation=False` with reason
    `AwaitingDNS`, never a silent switch.
@@ -265,13 +276,17 @@ overlap is shorter than the interval.
 |---|---|---|
 | Key material | key Secret (generated) or user Secret (BYO) | no, hence "never regenerate" |
 | Key creation time and algorithm | Secret annotations; the date is also in the name | yes |
-| Which keys are active, retiring (with `until`), and when the pending key was first verified | annotation `cnms.rpp.gmbh/rotation` on the `MailDomain` (JSON, `{"active": [...], "retiring": [{"selector", "until"}], "verifiedAt"}`) | partly |
+| Which keys are active, retiring (with `until`), and when the pending key was first verified | annotation `cnms.rpp.gmbh/rotation` on the `MailDomain` (JSON, `{"v": 1, "active": [...], "retiring": [{"selector", "until"}], "verifiedAt": {"<selector>": "<time>"}}`; `verifiedAt` is per pending selector, because a newly enabled Ed25519 key can be pending next to a rotating RSA key) | partly |
 | Pending keys | implicit: a key Secret of the domain that is neither active nor retiring | yes |
 | BYO key set and `signing` flags | spec | n/a |
 | Everything in `status` | status | yes |
 
 The annotation is written after the Secret exists (create, then record),
-so a crash in between leaves a key that is implicitly pending. A GitOps
+so a crash in between leaves a key that is implicitly pending. A value
+that is not valid JSON or has an unknown version is treated as absent
+(section 8) and reported as a warning; unknown fields are ignored. The
+encoding is deterministic (sorted, UTC, second precision), so an
+unchanged state never rewrites the annotation. A GitOps
 tool that prunes annotations must be told to ignore this one; the docs
 say so (same as for claim bindings, plan section 3).
 
@@ -281,8 +296,9 @@ say so (same as for claim bindings, plan section 3).
   well): the first reconcile derives the state conservatively. Per
   algorithm the **oldest** key is active (it is the one that has been in
   DNS longest), all others are pending, and the retiring list is empty;
-  the normal state machine then continues with DNS verification, so a
-  newer verified key takes over within one hold period. Keys that exist
+  the derived state is then written to the annotation and the normal
+  state machine continues with DNS verification, so a newer verified key
+  takes over within one hold period. Keys that exist
   are never regenerated. Overlap and hold clocks restart, which only
   lengthens them.
 - **Restore without the Secrets** (the default: k8up does not back them
