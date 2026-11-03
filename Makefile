@@ -94,6 +94,11 @@ test-e2e: setup-test-e2e manifests generate fmt vet docker-build-data-plane ## R
 cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
 	@$(KIND) delete cluster --name $(KIND_CLUSTER)
 
+.PHONY: check-network-policy
+check-network-policy: kustomize ## Check that the static network policy kustomizations build.
+	"$(KUSTOMIZE)" build config/network-policy >/dev/null
+	"$(KUSTOMIZE)" build config/network-policy/smtp-egress-deny >/dev/null
+
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
 	"$(GOLANGCI_LINT)" run

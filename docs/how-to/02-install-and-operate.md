@@ -145,6 +145,10 @@ users:
     mailbox: testuser@example.com     # full address
 ```
 
+Usernames and mailboxes are lower-cased (Dovecot lower-cases logins) and
+must be unique when compared case-insensitively; a duplicate is rejected
+and the server stays on its previous configuration.
+
 The mailbox addresses also form Postfix's recipient table
 (`virtual_mailbox_maps`): with mailboxes enabled, port 25 rejects an
 unknown recipient of the server's domains at SMTP time (`550 5.1.1`)

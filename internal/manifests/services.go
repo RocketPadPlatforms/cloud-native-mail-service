@@ -263,8 +263,11 @@ func networkPolicies(server *cnmsv1alpha1.MailServer) []client.Object {
 	// Rspamd reaches its public services on purpose: the shipped
 	// fuzzy_check module talks to fuzzy.rspamd.com (UDP 11335) and the
 	// shipped maps are fetched from https://maps.rspamd.com (TCP 443).
-	// Private, link-local (cloud metadata) and unique-local ranges are
-	// excluded, so the allow does not open in-cluster services.
+	// Private, shared (CGNAT), loopback, link-local (cloud metadata)
+	// and unique-local ranges are excluded, so the allow does not open
+	// in-cluster services. shortcut: pods with global-unicast IPv6
+	// addresses (EKS IPv6, ...) are not excluded; list the pod and
+	// service CIDRs once the API can carry them (ADR 0006).
 	external := func(cidr string, except ...string) networkingv1.NetworkPolicyPeer {
 		return networkingv1.NetworkPolicyPeer{IPBlock: &networkingv1.IPBlock{CIDR: cidr, Except: except}}
 	}
@@ -277,7 +280,8 @@ func networkPolicies(server *cnmsv1alpha1.MailServer) []client.Object {
 			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
 			Egress: []networkingv1.NetworkPolicyEgressRule{{
 				To: []networkingv1.NetworkPolicyPeer{
-					external("0.0.0.0/0", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"),
+					external("0.0.0.0/0", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+						"100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16"),
 					external("::/0", "fc00::/7", "fe80::/10"),
 				},
 				Ports: []networkingv1.NetworkPolicyPort{

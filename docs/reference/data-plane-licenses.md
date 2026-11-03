@@ -16,7 +16,7 @@ re-checked when an image major version changes (project plan, section 9).
 | redis_exporter | v1.96.0 | MIT | Upstream `oliver006/redis_exporter` |
 | Mailpit (e2e sink only) | v1.32.0 | MIT | Upstream `axllent/mailpit` |
 | BusyBox | 1.37.0 (Debian 1:1.37.0-6) | GPL-2.0-only | Installed in the CNMS Postfix image (queue-metrics and Rspamd metrics sidecars) |
-| Debian base packages | trixie | Mixed, including GPL and LGPL | Base of the CNMS Postfix image and of the upstream Rspamd and Valkey images |
+| Debian base packages | trixie | Mixed, including GPL and LGPL | Base of the CNMS Postfix image and of the upstream Rspamd, Dovecot (`debian:13-slim`) and Valkey images |
 
 ## Copyleft components
 

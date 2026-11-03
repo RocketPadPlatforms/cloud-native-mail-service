@@ -593,9 +593,22 @@ func TestRspamdEgressPolicy(t *testing.T) {
 		rule.Ports[1].Port.IntVal != render.PortRspamdFuzzy || *rule.Ports[1].Protocol != corev1.ProtocolUDP {
 		t.Errorf("egress-rspamd ports = %+v, want TCP 443 and UDP 11335", rule.Ports)
 	}
-	if len(rule.To) != 2 || rule.To[0].IPBlock.CIDR != "0.0.0.0/0" || rule.To[1].IPBlock.CIDR != "::/0" ||
-		!slices.Contains(rule.To[0].IPBlock.Except, "169.254.0.0/16") {
-		t.Errorf("egress-rspamd peers = %+v", rule.To)
+	if len(rule.To) != 2 || rule.To[0].IPBlock.CIDR != "0.0.0.0/0" || rule.To[1].IPBlock.CIDR != "::/0" {
+		t.Fatalf("egress-rspamd peers = %+v", rule.To)
+	}
+	// Private, shared (CGNAT), loopback and link-local (cloud metadata)
+	// IPv4 ranges; unique-local and link-local IPv6.
+	for _, cidr := range []string{
+		"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16",
+	} {
+		if !slices.Contains(rule.To[0].IPBlock.Except, cidr) {
+			t.Errorf("egress-rspamd IPv4 except %v misses %s", rule.To[0].IPBlock.Except, cidr)
+		}
+	}
+	for _, cidr := range []string{"fc00::/7", "fe80::/10"} {
+		if !slices.Contains(rule.To[1].IPBlock.Except, cidr) {
+			t.Errorf("egress-rspamd IPv6 except %v misses %s", rule.To[1].IPBlock.Except, cidr)
+		}
 	}
 }
 

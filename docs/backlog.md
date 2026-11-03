@@ -32,6 +32,9 @@ scoped; nothing here is committed.
 - Operator-driven PVC resize for the Postfix queue and the mail
   volume (expand the PVCs, then allow `queueStorage`/`storage` edits);
   today the sizes are immutable and resized manually (ADR 0010).
+- `MailServer` field to opt out of the Rspamd egress policy (public
+  TCP 443 and UDP 11335, ADR 0006) for clusters that do not want the
+  fuzzy and map traffic; the policy is always rendered today.
 - Optional Rspamd message history (`MailServer` field with a retention
   period and subject privacy); disabled today (ADR 0005).
 - Phase 5 (`MailDomain`, DKIM): a "never unsigned" guard in Rspamd, a

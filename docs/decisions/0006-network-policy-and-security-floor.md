@@ -52,11 +52,16 @@ narrowing of port-25 egress arrives with Phase 7.
       waits for the fuzzy timeout, the fuzzy module scores nothing and
       the map fetches fail forever. The targets are external, so the
       peers are `0.0.0.0/0` and `::/0` ipBlocks, with the private,
-      link-local (cloud metadata) and unique-local ranges excepted so
-      the allow does not open in-cluster services. Other pods get no
-      such allow. Operators who do not want the traffic can delete the
-      `<server>-egress-rspamd` policy; there is no API field for it
-      yet.
+      shared (`100.64.0.0/10`), loopback, link-local (cloud metadata)
+      and unique-local ranges excepted so the allow does not open
+      in-cluster services. Limit: clusters whose pods or Services have
+      global-unicast IPv6 addresses (EKS IPv6 and similar) are not
+      excluded by these ranges, so the allow reaches in-cluster
+      endpoints on TCP 443 and UDP 11335 there; the excepted ranges
+      cannot be configured yet. Other pods get no
+      such allow. There is no opt-out yet: the operator recreates a
+      deleted `<server>-egress-rspamd` policy on the next reconcile,
+      and no `MailServer` field switches it off (backlog).
 2. **Port-25 egress deny for non-CNMS pods is a static, admin-owned
    manifest, not an operator-rendered policy.** A plain
    `NetworkPolicy` can only allow, so "everything except port 25" had
@@ -125,7 +130,9 @@ narrowing of port-25 egress arrives with Phase 7.
    `AUTH` on 587 before STARTTLS is not advertised (or 503). The
    port-25 egress deny (item 2) is not part of the e2e suite: kind's
    default CNI does not implement Cilium policies, so the manifest is
-   only checked with `kustomize build`.
+   only checked to build: `make check-network-policy` runs
+   `kustomize build` on it and runs in the lint workflow. That does not
+   validate the Cilium schema or the policy's effect.
 
 ## Consequences
 
