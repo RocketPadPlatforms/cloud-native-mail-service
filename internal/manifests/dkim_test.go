@@ -37,7 +37,7 @@ func dkimKey(secret, key, selector string, available bool) render.DKIMKey {
 
 // buildWithKeys builds the object set for the authorized domains and
 // their signing keys.
-func buildWithKeys(t *testing.T, domains []string, keys ...render.DomainKeys) (*DataPlane, *render.RenderRequest) {
+func buildWithKeys(t *testing.T, domains []string, keys ...render.DomainKeys) *DataPlane {
 	t.Helper()
 	req := &render.RenderRequest{Server: testServer(t, nil), AuthorizedDomains: domains, DKIMKeys: keys}
 	renders := map[render.Component]*render.RenderResult{}
@@ -52,7 +52,7 @@ func buildWithKeys(t *testing.T, domains []string, keys ...render.DomainKeys) (*
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	return dp, req
+	return dp
 }
 
 func rspamdWorkload(t *testing.T, dp *DataPlane) *appsv1.Deployment {
@@ -66,9 +66,9 @@ func rspamdWorkload(t *testing.T, dp *DataPlane) *appsv1.Deployment {
 	return nil
 }
 
-func volumeNamed(pod corev1.PodSpec, name string) *corev1.Volume {
+func dkimVolumeOf(pod corev1.PodSpec) *corev1.Volume {
 	for i := range pod.Volumes {
-		if pod.Volumes[i].Name == name {
+		if pod.Volumes[i].Name == dkimVolumeName {
 			return &pod.Volumes[i]
 		}
 	}
@@ -76,7 +76,7 @@ func volumeNamed(pod corev1.PodSpec, name string) *corev1.Volume {
 }
 
 func TestRspamdMountsOnlyAvailableActiveKeys(t *testing.T) {
-	dp, _ := buildWithKeys(t, []string{domainB, domainA},
+	dp := buildWithKeys(t, []string{domainB, domainA},
 		render.DomainKeys{Domain: domainA, Keys: []render.DKIMKey{
 			dkimKey("a-dkim-cnms-ed25519-20261103", "private.key", "cnms-ed25519-20261103", true),
 			dkimKey("a-dkim-cnms-20261103", "private.key", "cnms-20261103", true),
@@ -91,7 +91,7 @@ func TestRspamdMountsOnlyAvailableActiveKeys(t *testing.T) {
 	)
 	dep := rspamdWorkload(t, dp)
 	pod := dep.Spec.Template.Spec
-	vol := volumeNamed(pod, dkimVolumeName)
+	vol := dkimVolumeOf(pod)
 	if vol == nil || vol.Projected == nil {
 		t.Fatalf("no projected dkim volume: %+v", pod.Volumes)
 	}
@@ -143,10 +143,10 @@ func TestRspamdMountsOnlyAvailableActiveKeys(t *testing.T) {
 }
 
 func TestRspamdWithoutKeysHasNoDKIMVolume(t *testing.T) {
-	dp, _ := buildWithKeys(t, []string{domainA},
+	dp := buildWithKeys(t, []string{domainA},
 		render.DomainKeys{Domain: domainA, Keys: []render.DKIMKey{dkimKey("gone", "private.key", "s1", false)}})
 	pod := rspamdWorkload(t, dp).Spec.Template.Spec
-	if volumeNamed(pod, dkimVolumeName) != nil {
+	if dkimVolumeOf(pod) != nil {
 		t.Error("no key is available, so no volume is wanted")
 	}
 	// The domain still fails closed: the guard names the selector.
@@ -173,7 +173,7 @@ func configMapOf(t *testing.T, dp *DataPlane, c render.Component) *corev1.Config
 // The guard script is mounted where Rspamd loads it, by the workload
 // and by the validation Job (configtest rejects a broken script).
 func TestRspamdGuardScriptIsMounted(t *testing.T) {
-	dp, _ := buildWithKeys(t, []string{domainA},
+	dp := buildWithKeys(t, []string{domainA},
 		render.DomainKeys{Domain: domainA, Keys: []render.DKIMKey{dkimKey("k", "private.key", "s1", true)}})
 	isLua := func(m corev1.VolumeMount) bool {
 		return m.Name == configVolumeName && m.MountPath == "/etc/rspamd/rspamd.local.lua" && m.SubPath == render.RspamdLocalLua && m.ReadOnly
@@ -203,7 +203,7 @@ func TestRspamdGuardScriptIsMounted(t *testing.T) {
 // the pod template references Secrets, never their content.
 func TestDKIMKeyBytesStayOutOfConfigAndTemplates(t *testing.T) {
 	const marker = "-----BEGIN PRIVATE KEY-----"
-	dp, _ := buildWithKeys(t, []string{domainA},
+	dp := buildWithKeys(t, []string{domainA},
 		render.DomainKeys{Domain: domainA, Keys: []render.DKIMKey{dkimKey("a-dkim-s1", "private.key", "s1", true)}})
 	for _, o := range dp.Configs {
 		if cm, ok := o.(*corev1.ConfigMap); ok {
@@ -221,7 +221,7 @@ func TestDKIMKeyBytesStayOutOfConfigAndTemplates(t *testing.T) {
 // not in the hash.
 func TestRspamdHashFollowsSelectorsNotSecrets(t *testing.T) {
 	hashOf := func(secret string, selector string, available bool) (string, string) {
-		dp, _ := buildWithKeys(t, []string{domainA},
+		dp := buildWithKeys(t, []string{domainA},
 			render.DomainKeys{Domain: domainA, Keys: []render.DKIMKey{dkimKey(secret, "private.key", selector, available)}})
 		dep := rspamdWorkload(t, dp)
 		return dep.Spec.Template.Annotations[ConfigHashAnnotation], configMapOf(t, dp, render.ComponentRspamd).Name
@@ -238,9 +238,9 @@ func TestRspamdHashFollowsSelectorsNotSecrets(t *testing.T) {
 	}
 	// ...but it does change what the pods mount.
 	mounted := func(secret string) string {
-		dp, _ := buildWithKeys(t, []string{domainA},
+		dp := buildWithKeys(t, []string{domainA},
 			render.DomainKeys{Domain: domainA, Keys: []render.DKIMKey{dkimKey(secret, "private.key", "s1", true)}})
-		return volumeNamed(rspamdWorkload(t, dp).Spec.Template.Spec, dkimVolumeName).Projected.Sources[0].Secret.Name
+		return dkimVolumeOf(rspamdWorkload(t, dp).Spec.Template.Spec).Projected.Sources[0].Secret.Name
 	}
 	if mounted("s-a") != "s-a" || mounted("s-b") != "s-b" {
 		t.Error("the pod template must name the Secret that holds the key")
@@ -254,9 +254,9 @@ func TestRevokedDomainLeavesSignerAndGuard(t *testing.T) {
 		{Domain: domainA, Keys: []render.DKIMKey{dkimKey("a-s1", "private.key", "s1", true)}},
 		{Domain: domainB, Keys: []render.DKIMKey{dkimKey("b-s1", "private.key", "s1", true)}},
 	}
-	both, _ := buildWithKeys(t, []string{domainA, domainB}, keys...)
-	onlyA, _ := buildWithKeys(t, []string{domainA}, keys...)
-	none, _ := buildWithKeys(t, nil, keys...)
+	both := buildWithKeys(t, []string{domainA, domainB}, keys...)
+	onlyA := buildWithKeys(t, []string{domainA}, keys...)
+	none := buildWithKeys(t, nil, keys...)
 
 	cfg := func(dp *DataPlane) map[string]string { return configMapOf(t, dp, render.ComponentRspamd).Data }
 	for _, f := range []string{"dkim_signing.conf", render.RspamdLocalLua} {
@@ -273,10 +273,10 @@ func TestRevokedDomainLeavesSignerAndGuard(t *testing.T) {
 	if !strings.Contains(cfg(none)[render.RspamdLocalLua], "local required = {\n}\n") {
 		t.Error("the guard of a server without domains has no empty table")
 	}
-	if volumeNamed(rspamdWorkload(t, none).Spec.Template.Spec, dkimVolumeName) != nil {
+	if dkimVolumeOf(rspamdWorkload(t, none).Spec.Template.Spec) != nil {
 		t.Error("a server without domains mounts keys")
 	}
-	if got := volumeNamed(rspamdWorkload(t, onlyA).Spec.Template.Spec, dkimVolumeName); got == nil || len(got.Projected.Sources) != 1 {
+	if got := dkimVolumeOf(rspamdWorkload(t, onlyA).Spec.Template.Spec); got == nil || len(got.Projected.Sources) != 1 {
 		t.Errorf("the revoked domain's key is still mounted: %+v", got)
 	}
 }

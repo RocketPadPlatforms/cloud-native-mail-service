@@ -261,7 +261,10 @@ dkim:
   not held back: the new configuration is no worse than the old for that
   domain, and holding it would stall every other change of the server.
   Secrets are not watched, so the controller looks for a missing key again
-  every minute.
+  every minute. A generated key whose Secret no longer parses is not
+  replaced (a new key under the same selector would not match the
+  published record), so outbound mail stays deferred until the Secret
+  content is restored; `DKIMKeysValid` names the key.
 - Mount modes: `defaultMode: 0440` with the pod `fsGroup` of the Rspamd
   group (11333, which is also the uid of the `_rspamd` user in the pinned
   image; the pod already sets it), read-only root file system unchanged.

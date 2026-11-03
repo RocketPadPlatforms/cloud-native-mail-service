@@ -43,13 +43,10 @@ const (
 // testRequest builds a RenderRequest for the test MailServer. Domains
 // are intentionally passed unsorted; without keys they appear in the
 // guard only, which makes their outbound mail fail closed.
-func testRequest(t *testing.T, mutate func(*v1alpha1.MailServer)) *render.RenderRequest {
+func testRequest(t *testing.T) *render.RenderRequest {
 	t.Helper()
 	server := &v1alpha1.MailServer{
 		ObjectMeta: metav1.ObjectMeta{Name: testName, Namespace: testNamespace},
-	}
-	if mutate != nil {
-		mutate(server)
 	}
 	return &render.RenderRequest{
 		Server:            server,
@@ -94,7 +91,7 @@ func TestRenderConfigFiles(t *testing.T) {
 		{golden: "default.dkim_signing.conf", key: "dkim_signing.conf"},
 		{golden: "default.rspamd.local.lua", key: render.RspamdLocalLua},
 	}
-	res, err := New().Render(testRequest(t, nil))
+	res, err := New().Render(testRequest(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +128,7 @@ func TestRenderErrors(t *testing.T) {
 }
 
 func TestRenderResultCommands(t *testing.T) {
-	res, err := New().Render(testRequest(t, nil))
+	res, err := New().Render(testRequest(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +160,7 @@ func TestRenderResultCommands(t *testing.T) {
 // With every domain revoked the guard still renders, with an empty
 // table: nothing is served, so nothing is required.
 func TestRenderWithoutAuthorizedDomains(t *testing.T) {
-	req := testRequest(t, nil)
+	req := testRequest(t)
 	req.AuthorizedDomains = nil
 	// Keys of a revoked domain must not reach the configuration.
 	req.DKIMKeys = []render.DomainKeys{{Domain: domainA, Keys: []render.DKIMKey{{Selector: "s1", Available: true}}}}
@@ -185,7 +182,7 @@ func key(selector string) render.DKIMKey {
 func dkimRequests(t *testing.T) map[string]*render.RenderRequest {
 	t.Helper()
 	with := func(domains []string, keys ...render.DomainKeys) *render.RenderRequest {
-		req := testRequest(t, nil)
+		req := testRequest(t)
 		req.AuthorizedDomains, req.DKIMKeys = domains, keys
 		return req
 	}
@@ -236,14 +233,17 @@ func TestGuardAndSigningListTheSameSelectors(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			var signing, guard []string
-			for _, m := range signingSelector.FindAllStringSubmatch(res.ConfigData["dkim_signing.conf"], -1) {
+			signed := signingSelector.FindAllStringSubmatch(res.ConfigData["dkim_signing.conf"], -1)
+			guarded := guardOption.FindAllStringSubmatch(res.ConfigData[render.RspamdLocalLua], -1)
+			signing := make([]string, 0, len(signed))
+			guard := make([]string, 0, len(guarded))
+			for _, m := range signed {
 				if m[2] != m[3] {
 					t.Errorf("key path names selector %q, the entry %q", m[2], m[3])
 				}
 				signing = append(signing, m[1]+":s="+m[3])
 			}
-			for _, m := range guardOption.FindAllStringSubmatch(res.ConfigData[render.RspamdLocalLua], -1) {
+			for _, m := range guarded {
 				guard = append(guard, m[1]+":s="+m[2])
 			}
 			slices.Sort(signing)

@@ -95,9 +95,11 @@ A postfilter symbol `CNMS_DKIM_GUARD` in `rspamd.local.lua`, rendered by
 the Rspamd renderer from the same data as `dkim_signing.conf`, with the
 table `required` that maps every domain the `MailServer` serves (authorized,
 ADR 0003) to the `domain:s=selector` options its active keys must have
-produced. A domain without a usable key has an empty list. The file is
-mounted with a `subPath` at `/etc/rspamd/rspamd.local.lua`; the Rspamd
-validation Job mounts it too (ADR 0009).
+produced. A domain with no active key has an empty list; a domain whose
+active key cannot be read keeps its selector (ADR 0011), so the signature
+stays required and cannot appear. The file is mounted with a `subPath` at
+`/etc/rspamd/rspamd.local.lua`; the Rspamd validation Job mounts it too
+(ADR 0009).
 
 ```lua
 -- CNMS never-unsigned guard. Rendered file: required maps each served
@@ -170,8 +172,10 @@ rspamd_config:register_symbol({
 })
 ```
 
-The listing is the file that was run; the renderer only generates the
-`required` table. Behaviour, run against the pinned image with two
+The listing is the file that was run (`internal/render/rspamd/guard.lua`);
+the renderer only generates the `required` table, and the signing
+configuration comes from the same keys (a render test compares the two).
+Behaviour, run against the pinned image with two
 selectors per domain:
 
 | Case | Result |
@@ -208,11 +212,15 @@ selectors per domain:
   signed. Postfix bounces locally submitted mail that is rejected this way
   back to its sender; the SMTP client gets a 554 5.7.1 on submission.
 - **Known gap**, deliberately not closed here: an authenticated message
-  whose From domain the server does not serve is not guarded. It belongs
-  to Postfix-side controls (sender-login maps, ADR 0008 backlog);
-  deferring it in the signer would only retry a message that can never
-  be signed. The sender-login binding of Phase 3 closes it (backlog entry
-  exists). A held (`quarantine`) message is guarded like any other.
+  whose From domain the server does not serve is not guarded, and an
+  authenticated user can put any served domain in the header From and get
+  it signed (`allow_hdrfrom_mismatch` is true). Deferring it in the signer
+  would only retry a message that can never be signed. The sender-login
+  binding of Phase 3 (ADR 0008 backlog) does not close this gap:
+  `reject_sender_login_mismatch` checks only the envelope sender. A check
+  of the header From against the login is a separate backlog item, on the
+  Rspamd or milter side. A held (`quarantine`) message is guarded like any
+  other.
 
 ### 4. Failure semantics
 

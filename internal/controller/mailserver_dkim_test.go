@@ -35,7 +35,14 @@ import (
 	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/render"
 )
 
-const rspamdObjectName = testServerName + "-rspamd"
+// rspamdObjectName is the Rspamd Deployment of the test server; byoSecret
+// and the byoKey* names are the Secret and data keys of own-key specs.
+const (
+	rspamdObjectName = testServerName + "-rspamd"
+	byoSecret        = "byo"
+	byoKeyS1         = "s1.key"
+	byoKeyS2         = "s2.key"
+)
 
 func rspamdDeploymentG(ns string) *appsv1.Deployment {
 	dep := &appsv1.Deployment{}
@@ -75,10 +82,10 @@ func mountedKeysG(ns string) []string {
 	return out
 }
 
-func byoKey(selector, secret, key string, signing bool) cnmsv1alpha1.DKIMKey {
+func byoKey(selector, key string, signing bool) cnmsv1alpha1.DKIMKey {
 	return cnmsv1alpha1.DKIMKey{
 		Selector:  selector,
-		SecretRef: cnmsv1alpha1.SecretKeyReference{Name: secret, Key: key},
+		SecretRef: cnmsv1alpha1.SecretKeyReference{Name: byoSecret, Key: key},
 		Signing:   new(signing),
 	}
 }
@@ -142,8 +149,8 @@ var _ = Describe("MailServer DKIM keys", func() {
 	})
 
 	It("uses bring-your-own keys that sign and leaves the others out", func() {
-		createSecretG(ns, "byo", map[string][]byte{"s1.key": pemKeyG(dkim.RSA), "s2.key": pemKeyG(dkim.Ed25519)})
-		useOwnKeys(byoKey("s1", "byo", "s1.key", true), byoKey("s2", "byo", "s2.key", false))
+		createSecretG(ns, byoSecret, map[string][]byte{byoKeyS1: pemKeyG(dkim.RSA), byoKeyS2: pemKeyG(dkim.Ed25519)})
+		useOwnKeys(byoKey("s1", byoKeyS1, true), byoKey("s2", byoKeyS2, false))
 		deployG(r, ns, testServerName)
 
 		Expect(mountedKeysG(ns)).To(Equal([]string{"byo/s1.key -> " + domain + "/s1.key"}))
@@ -163,19 +170,19 @@ var _ = Describe("MailServer DKIM keys", func() {
 		}{
 			{"has no key at all yet", func() {}, "no active signing key yet"},
 			{"has a key Secret that is missing", func() {
-				useOwnKeys(byoKey("s1", "byo", "s1.key", true))
+				useOwnKeys(byoKey("s1", byoKeyS1, true))
 			}, `Secret "byo" not found`},
 			{"has a Secret without the key", func() {
-				createSecretG(ns, "byo", map[string][]byte{"other": []byte("x")})
-				useOwnKeys(byoKey("s1", "byo", "s1.key", true))
+				createSecretG(ns, byoSecret, map[string][]byte{"other": []byte("x")})
+				useOwnKeys(byoKey("s1", byoKeyS1, true))
 			}, `has no key "s1.key"`},
 			{"has a key that does not parse", func() {
-				createSecretG(ns, "byo", map[string][]byte{"s1.key": []byte("not a key")})
-				useOwnKeys(byoKey("s1", "byo", "s1.key", true))
+				createSecretG(ns, byoSecret, map[string][]byte{byoKeyS1: []byte("not a key")})
+				useOwnKeys(byoKey("s1", byoKeyS1, true))
 			}, "is not usable"},
 			{"has an RSA key below the size floor", func() {
-				createSecretG(ns, "byo", map[string][]byte{"s1.key": shortRSAKeyG()})
-				useOwnKeys(byoKey("s1", "byo", "s1.key", true))
+				createSecretG(ns, byoSecret, map[string][]byte{byoKeyS1: shortRSAKeyG()})
+				useOwnKeys(byoKey("s1", byoKeyS1, true))
 			}, "is not usable"},
 		}
 		for _, tc := range unusable {
@@ -245,14 +252,14 @@ var _ = Describe("MailServer DKIM keys", func() {
 		})
 
 		It("picks the key up without a validation Job once it can be read", func() {
-			useOwnKeys(byoKey("s1", "byo", "s1.key", true))
+			useOwnKeys(byoKey("s1", byoKeyS1, true))
 			deployG(r, ns, testServerName)
 			hash := podTemplateHash(getStatefulSetG(ns, testServerName+"-postfix"))
 			rspamdHash := rspamdDeploymentG(ns).Spec.Template.Annotations["cnms.rpp.gmbh/config-hash"]
 			jobs := len(jobsG(ns, testServerName, "rspamd"))
 			Expect(mountedKeysG(ns)).To(BeEmpty())
 
-			createSecretG(ns, "byo", map[string][]byte{"s1.key": pemKeyG(dkim.RSA)})
+			createSecretG(ns, byoSecret, map[string][]byte{byoKeyS1: pemKeyG(dkim.RSA)})
 			reconcileServerG(r, ns, testServerName)
 
 			Expect(mountedKeysG(ns)).To(Equal([]string{"byo/s1.key -> " + domain + "/s1.key"}))
@@ -356,13 +363,13 @@ func TestActiveKeyRefs(t *testing.T) {
 	}
 
 	md.Annotations = map[string]string{dkim.AnnotationRotation: dkim.Encode(dkim.State{
-		Active:   []string{"cnms-20261103", "cnms-ed25519-20261103"},
+		Active:   []string{"rsa-sel", "ed-sel"},
 		Retiring: []dkim.RetiringKey{{Selector: "old", Until: time.Now()}},
 	})}
 	got := activeKeyRefs(md)
-	want := []keyRef{
-		{"cnms-20261103", "ex-dkim-cnms-20261103", "private.key"},
-		{"cnms-ed25519-20261103", "ex-dkim-cnms-ed25519-20261103", "private.key"},
+	want := []keyRef{ // the state is sorted
+		{"ed-sel", "ex-dkim-ed-sel", "private.key"},
+		{"rsa-sel", "ex-dkim-rsa-sel", "private.key"},
 	}
 	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
 		t.Errorf("generated keys = %v, want %v", got, want)
@@ -376,10 +383,10 @@ func TestActiveKeyRefs(t *testing.T) {
 	// Own keys come from the spec, the annotation is ignored, and only
 	// keys that sign count.
 	md.Spec.DKIM = &cnmsv1alpha1.DKIM{Keys: []cnmsv1alpha1.DKIMKey{
-		{Selector: "a", SecretRef: cnmsv1alpha1.SecretKeyReference{Name: "s", Key: "a.key"}},
-		{Selector: "b", SecretRef: cnmsv1alpha1.SecretKeyReference{Name: "s", Key: "b.key"}, Signing: new(false)},
+		{Selector: "a", SecretRef: cnmsv1alpha1.SecretKeyReference{Name: "s", Key: "k1.key"}},
+		{Selector: "b", SecretRef: cnmsv1alpha1.SecretKeyReference{Name: "s", Key: "k2.key"}, Signing: new(false)},
 	}}
-	if got := activeKeyRefs(md); len(got) != 1 || got[0] != (keyRef{"a", "s", "a.key"}) {
+	if got := activeKeyRefs(md); len(got) != 1 || got[0] != (keyRef{"a", "s", "k1.key"}) {
 		t.Errorf("own keys = %v", got)
 	}
 }

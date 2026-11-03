@@ -3,8 +3,8 @@
 CNMS is a Kubernetes operator that runs and manages email servers on
 Kubernetes. It is a control plane: it renders configuration for proven
 software and manages its lifecycle — **Postfix** (SMTP in/out, relay),
-**Rspamd** with **Valkey** (spam filtering, SPF/DMARC checks, rate limits;
-DKIM signing is planned), and **Dovecot** (IMAP, LMTP, SASL authentication).
+**Rspamd** with **Valkey** (spam filtering, SPF/DMARC checks, rate limits,
+DKIM signing), and **Dovecot** (IMAP, LMTP, SASL authentication).
 
 - API group: `cnms.rpp.gmbh` (current version `v1alpha1`)
 - Repository: `github.com/RocketPadPlatforms/cloud-native-mail-service`
@@ -16,11 +16,12 @@ DKIM signing is planned), and **Dovecot** (IMAP, LMTP, SASL authentication).
 published for every release. The project plan and phase status are in
 [docs/roadmap.md](docs/roadmap.md).
 
-> **DKIM signing is not implemented yet** (Phase 5): outbound mail currently
-> leaves unsigned. Users come only from the static test users (a test
-> feature); a `MailDirectory` is checked for existence but not queried until
-> Phase 3, so recipient validation and login know no other user. Do not send
-> production mail from a CNMS server yet.
+> Mail of authenticated senders is signed with the DKIM keys of the
+> `MailDomain`; a served domain without a usable key defers its outbound
+> mail (`451 4.7.1`) instead of sending it unsigned. Users come only from
+> the static test users (a test feature); a `MailDirectory` is checked for
+> existence but not queried until Phase 3, so recipient validation and login
+> know no other user. Do not send production mail from a CNMS server yet.
 
 ## Key properties
 
@@ -28,8 +29,8 @@ published for every release. The project plan and phase status are in
   keeps flowing.
 - Reputation isolation between `MailServer`s: own instances, queues, IPs,
   DKIM keys, and HELO names; own Rspamd and Valkey per `MailServer`
-  (instances, queues, Rspamd and Valkey today; DKIM keys in Phase 5, sending
-  addresses in Phase 7).
+  (instances, queues, Rspamd, Valkey and DKIM keys today; sending addresses
+  in Phase 7).
 - No message content in etcd; no MTA is written by the operator.
 - Users come from an external directory (LDAP/SQL first, OIDC later) — the
   operator configures Postfix/Dovecot to query it. Environments without a

@@ -11,13 +11,9 @@ authorizes domains with `MailDomainGrant`s.
 API version `v1alpha1`. The `MailServer` controller evaluates the grants
 and enforces the result on the data plane, and the `MailDomain`
 controller evaluates the same rule for the domain itself: only an
-authorized `MailDomain` gets DKIM keys and DNS records. Derived-name
+authorized `MailDomain` gets DKIM keys and DNS records, and the data plane
+signs only for the authorized domains of a server. Derived-name
 conflicts are not detected yet (marked below).
-:::
-
-:::danger
-The `MailDomain` controller creates DKIM keys, but the data plane does not
-sign with them yet, so outbound mail still leaves unsigned.
 :::
 
 ## The grant model
@@ -126,8 +122,10 @@ For a `MailServer` this means:
   domains of that server stop too until the problem is fixed.
 - Sender-address binding on submission is not enforced yet (backlog), so a
   login that still exists can use a revoked domain as sender address until
-  the Phase 3 binding lands; the data plane does not sign with the DKIM
-  keys yet.
+  the Phase 3 binding lands. The data plane no longer signs for the revoked
+  domain (its keys are removed from the Rspamd configuration and the key
+  Secrets are kept), so such mail leaves unsigned: the guard covers served
+  domains only ([ADR 0013](../decisions/0013-never-unsigned-guard.md)).
 
 ## Wiring-level bypasses
 

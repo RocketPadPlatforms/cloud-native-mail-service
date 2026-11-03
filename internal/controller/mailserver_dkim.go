@@ -25,8 +25,10 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
 
 	cnmsv1alpha1 "github.com/RocketPadPlatforms/cloud-native-mail-service/api/v1alpha1"
 	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/dkim"
@@ -174,6 +176,31 @@ func dkimCondition(rendered []string, k *dkimKeys) (metav1.ConditionStatus, stri
 	return metav1.ConditionFalse, ReasonDKIMKeysMissing, fmt.Sprintf(
 		"outbound mail of the domains below is deferred until they have a usable signing key; inbound mail is not affected: %s",
 		strings.Join(k.problems, "; "))
+}
+
+// reconcileDKIMKeys collects the keys of the rendered domains and
+// reports them in DKIMKeysAvailable, with a Warning Event when a key
+// became missing.
+func (r *MailServerReconciler) reconcileDKIMKeys(ctx context.Context, server *cnmsv1alpha1.MailServer, claims []cnmsv1alpha1.MailDomain, rendered []string) (*dkimKeys, error) {
+	keys, err := r.collectDKIMKeys(ctx, server, claims, rendered)
+	if err != nil {
+		return nil, err
+	}
+	conds := &server.Status.Conditions
+	prev := meta.FindStatusCondition(*conds, ConditionDKIMKeysAvailable).DeepCopy()
+	status, reason, message := dkimCondition(rendered, keys)
+	setCondition(conds, server.Generation, ConditionDKIMKeysAvailable, status, reason, message)
+	r.emitDKIMEvent(server, prev, status, message)
+	return keys, nil
+}
+
+// requeue shortens the delay of res while a key is missing: key Secrets
+// are not watched, so the controller looks for the key again.
+func (k *dkimKeys) requeue(res ctrl.Result) ctrl.Result {
+	if len(k.problems) > 0 {
+		res.RequeueAfter = min(res.RequeueAfter, dkimKeyRetry)
+	}
+	return res
 }
 
 // emitDKIMEvent records a Warning Event when keys became missing or the

@@ -108,6 +108,33 @@ func TestRenderMainCF(t *testing.T) {
 	}
 }
 
+// ADR 0013: Postfix needs nothing more for signing. Mail from
+// sendmail(1) and re-injected mail go through the same milter as SMTP
+// mail (non_smtpd_milters), a milter that fails tempfails, and the
+// content filter stays off for mail Postfix generates itself
+// (internal_mail_filter_classes unset) until a Postfix with
+// {postfix_internal_origin} is pinned.
+func TestMainCFSignsThroughTheMilterOnly(t *testing.T) {
+	req := testRequest(t, nil)
+	req.DKIMKeys = []render.DomainKeys{{Domain: domainA, Keys: []render.DKIMKey{{Selector: "s1", Available: true}}}}
+	for _, got := range []string{renderMainCF(req), renderMasterCF(req)} {
+		if strings.Contains(got, "internal_mail_filter_classes") {
+			t.Error("internal_mail_filter_classes must stay unset (ADR 0013)")
+		}
+	}
+	main := renderMainCF(req)
+	milter := "inet:" + render.ServiceFQDN(testName, testNamespace, render.ComponentRspamd) + ":11332"
+	for _, want := range []string{
+		"\nsmtpd_milters = " + milter + "\n",
+		"\nnon_smtpd_milters = " + milter + "\n",
+		"\nmilter_default_action = tempfail\n",
+	} {
+		if !strings.Contains(main, want) {
+			t.Errorf("main.cf misses %q", strings.TrimSpace(want))
+		}
+	}
+}
+
 func TestRenderMasterCF(t *testing.T) {
 	tests := []struct {
 		name   string
