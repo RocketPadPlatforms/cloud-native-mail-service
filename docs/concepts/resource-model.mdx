@@ -86,11 +86,20 @@ publishes), MTA-STS, and TLS-RPT.
   lists every required record and whether a lookup verified it; the admin
   creates the records with the hoster. In `externalDNS` mode the operator
   creates `DNSEndpoint` resources.
-- DKIM configuration (`selectorPrefix`, rotation `interval` and `overlap`) is
-  spec. Selector names are `<prefix>-<yyyymmdd>` (UTC creation date of the
-  key), so a rotation publishes a new selector next to the old one. The
-  rotation schedule progress is recorded in the `cnms.rpp.gmbh/rotation`
-  annotation so it survives a restore without status.
+- DKIM configuration is spec. Either the operator generates the keys
+  (`selectorPrefix`, optional `ed25519` second signature, rotation `interval`
+  and `overlap`, default overlap 120h so deferred mail stays verifiable), or you
+  bring your own keys by Secret reference in `keys` (the recommended production
+  setup; you own the selectors and the rotation schedule). Generated selector
+  names are `<prefix>-<yyyymmdd>` (UTC creation date of the key), so a
+  rotation publishes a new selector next to the old one. The rotation
+  schedule progress is recorded in the `cnms.rpp.gmbh/rotation` annotation so
+  it survives a restore without status.
+- `spf` lists the sending sources (`ip4`, `ip6`, up to 5 `include`s and a
+  `qualifier`); `dmarc` can set `subdomainPolicy` and
+  `nonExistentSubdomainPolicy`; `mtaSts` is report-only and has a `mode`
+  (CNMS does not serve the policy); TLS-RPT needs a report address in
+  `tlsRpt.rua` or `dmarc.rua`.
 - `status.records` is the contract for DNS verification: every required
   record with name, type, expected value, and `verified` state.
 

@@ -65,10 +65,27 @@ warnings: they never feed into `Ready`.
 
 The condition is informational: it never feeds back into authorization.
 
-## MailDomain and MailDirectory
+## MailDomain
 
-No controller sets conditions on these resources yet. The API
-reserves `Ready` on both (`MailDomain`: records published and verified,
-Phase 5; `MailDirectory`: directory reachable, Phase 3), and the
-`Ready` printer column stays empty until then. Their domains are
-authorized and reported on the `MailServer` (`DomainsAuthorized`).
+No controller sets these conditions yet (Phase 5, [ADR 0011](../decisions/0011-dkim-keys-and-rotation.md)
+and [ADR 0012](../decisions/0012-dns-records-and-dmarc.md)); the
+`Ready` printer column stays empty until then. The names are fixed in
+the API and the Go constants (`internal/controller`).
+
+| Condition | Meaning |
+|---|---|
+| `Authorized` | a grant covers the domain for the namespace and it is unique; `False` reasons `NotGranted`, `DuplicateDomain`, `PublicSuffix` |
+| `DKIMKeysValid` | every key is present and is RSA of at least 2048 bits or Ed25519 |
+| `DKIMRotation` | `False` with reason `AwaitingDNS` while a pending key waits for its DNS record; the old key keeps signing |
+| `RecordsVerified` | a lookup found every required record; `Unknown` with reason `LookupFailing` when lookups fail temporarily |
+| `DNSPublished` | `externalDNS` mode: the `DNSEndpoint` is managed; `False` with reason `ExternalDNSNotInstalled` without the CRD |
+| `SPFReady` | `False` with reason `NoSendingSources` when no source is known, so no record is generated |
+| `MTASTSReady` | MTA-STS enabled and a policy exists |
+| `Ready` | authorized, keys valid and every required record verified |
+
+## MailDirectory
+
+No controller sets conditions on this resource yet. The API reserves
+`Ready` (directory reachable, Phase 3), and the `Ready` printer column
+stays empty until then. Its domains are authorized and reported on the
+`MailServer` (`DomainsAuthorized`).

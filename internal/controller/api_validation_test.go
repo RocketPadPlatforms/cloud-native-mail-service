@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -30,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	cnmsv1alpha1 "github.com/RocketPadPlatforms/cloud-native-mail-service/api/v1alpha1"
 )
@@ -42,13 +44,16 @@ var apiNSCounter int
 
 // Names shared by the cases of this file.
 const (
-	apiDomainName    = "dom"
-	apiDirectoryName = "dir"
-	mtaStsName       = "mta-sts." + testDomain
-	ldapHostField    = "spec.ldap.host"
-	dmarcRuaField    = "spec.dmarc.rua"
-	domainField      = "spec.domain"
-	domainRefField   = "spec.domains[0].name"
+	apiDomainName     = "dom"
+	apiDirectoryName  = "dir"
+	mtaStsName        = "mta-sts." + testDomain
+	ldapHostField     = "spec.ldap.host"
+	dmarcRuaField     = "spec.dmarc.rua"
+	domainField       = "spec.domain"
+	domainRefField    = "spec.domains[0].name"
+	dkimSelectorField = "spec.dkim.keys[0].selector"
+	spfIncludeField   = "spec.spf.include"
+	algRSA            = "rsa"
 )
 
 // apiCase is one create attempt: an empty wantErr means the object
@@ -289,9 +294,215 @@ var _ = Describe("API validation of DKIM rotation", func() {
 		{name: "rejects an interval below 24h", mutate: rotation("1h", str("1m")), wantErr: rotationMsg},
 		{name: "rejects a negative interval", mutate: rotation("-48h", str("1h")), wantErr: rotationMsg},
 		{name: "rejects an overlap equal to the interval", mutate: rotation("48h", str("48h")), wantErr: rotationMsg},
+		{name: "rejects a zero overlap", mutate: rotation("720h", str("0s")), wantErr: "overlap must be positive"},
+		{name: "rejects a negative overlap", mutate: rotation("720h", str("-1h")), wantErr: "overlap must be positive"},
 		{name: "rejects the default overlap for a 24h interval", mutate: rotation("24h", nil), wantErr: rotationMsg},
+		{name: "rejects the default overlap for a 5 day interval", mutate: rotation("120h", nil), wantErr: "set overlap explicitly"},
+		{name: "rejects the default overlap for a 4 day interval", mutate: rotation("96h", nil), wantErr: "set overlap explicitly"},
+		{name: "accepts a 4 day interval with an explicit overlap", mutate: rotation("96h", str("48h"))},
+		{name: "accepts a 6 day interval with the default overlap", mutate: rotation("144h", nil)},
 		{name: "rejects an interval that is not a duration", mutate: rotation("soon", nil), wantErr: "spec.dkim.rotation"},
 	})
+
+	It("defaults the overlap to 120h", func() {
+		apiNSCounter++
+		ns := fmt.Sprintf("cnms-api-%d", apiNSCounter)
+		Expect(k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}})).To(Succeed())
+		Expect(rotation("720h", nil)(ns)).To(Succeed())
+		d := &cnmsv1alpha1.MailDomain{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: ns, Name: apiDomainName}, d)).To(Succeed())
+		Expect(d.Spec.DKIM.Rotation.Overlap.Duration).To(Equal(120 * time.Hour))
+	})
+})
+
+var _ = Describe("API validation of DKIM keys", func() {
+	key := func(selector string, signing *bool) cnmsv1alpha1.DKIMKey {
+		return cnmsv1alpha1.DKIMKey{
+			Selector:  selector,
+			SecretRef: cnmsv1alpha1.SecretKeyReference{Name: "example-dkim", Key: selector + ".key"},
+			Signing:   signing,
+		}
+	}
+	dkim := func(d cnmsv1alpha1.DKIM) func(string) error {
+		return func(ns string) error {
+			_, err := createDomain(ns, func(md *cnmsv1alpha1.MailDomain) { md.Spec.DKIM = &d })
+			return err
+		}
+	}
+	keys := func(k ...cnmsv1alpha1.DKIMKey) func(string) error {
+		return dkim(cnmsv1alpha1.DKIM{Keys: k})
+	}
+	rotation := &cnmsv1alpha1.DKIMRotation{Interval: metav1.Duration{Duration: 720 * time.Hour}}
+	many := make([]cnmsv1alpha1.DKIMKey, 9)
+	for i := range many {
+		many[i] = key(fmt.Sprintf("s%d", i), nil)
+	}
+	const (
+		excludesMsg = "keys excludes rotation, ed25519 and selectorPrefix"
+		signingMsg  = "at least one key must have signing set to true"
+		keysField   = "spec.dkim.keys"
+	)
+	runAPICases([]apiCase{
+		{name: "accepts generated keys with Ed25519 and rotation", mutate: dkim(cnmsv1alpha1.DKIM{Ed25519: new(true), Rotation: rotation})},
+		{name: "accepts one key that signs by default", mutate: keys(key("s2026a", nil))},
+		{name: "accepts a signing key and a published one", mutate: keys(key("s2026a", new(true)), key("s2027a", new(false)))},
+		{name: "accepts eight keys", mutate: keys(many[:8]...)},
+		{name: "rejects nine keys", mutate: keys(many...), wantErr: keysField},
+		{name: "rejects duplicate selectors", mutate: keys(key("s2026a", nil), key("s2026a", new(false))), wantErr: "Duplicate value"},
+		{name: "rejects keys that do not sign", mutate: keys(key("s2026a", new(false)), key("s2027a", new(false))), wantErr: signingMsg},
+		{name: "rejects keys with rotation", mutate: dkim(cnmsv1alpha1.DKIM{Keys: []cnmsv1alpha1.DKIMKey{key("s2026a", nil)}, Rotation: rotation}), wantErr: excludesMsg},
+		{name: "rejects keys with ed25519 false", mutate: dkim(cnmsv1alpha1.DKIM{Keys: []cnmsv1alpha1.DKIMKey{key("s2026a", nil)}, Ed25519: new(false)}), wantErr: excludesMsg},
+		{name: "rejects keys with a selector prefix", mutate: dkim(cnmsv1alpha1.DKIM{Keys: []cnmsv1alpha1.DKIMKey{key("s2026a", nil)}, SelectorPrefix: new("cnms")}), wantErr: excludesMsg},
+		{name: "rejects a selector with an upper-case letter", mutate: keys(key("S2026", nil)), wantErr: dkimSelectorField},
+		{name: "rejects a selector with a dot", mutate: keys(key("a.b", nil)), wantErr: dkimSelectorField},
+		{name: "rejects a 64 character selector", mutate: keys(key(strings.Repeat("a", 64), nil)), wantErr: dkimSelectorField},
+		{name: "rejects a Secret key with a slash", mutate: keys(cnmsv1alpha1.DKIMKey{
+			Selector: "s2026a", SecretRef: cnmsv1alpha1.SecretKeyReference{Name: "example-dkim", Key: "../key"},
+		}), wantErr: "spec.dkim.keys[0].secretRef.key"},
+		{name: "rejects a Secret name with an upper-case letter", mutate: keys(cnmsv1alpha1.DKIMKey{
+			Selector: "s2026a", SecretRef: cnmsv1alpha1.SecretKeyReference{Name: "Example", Key: "k"},
+		}), wantErr: "spec.dkim.keys[0].secretRef.name"},
+	})
+
+	It("signs with a listed key by default", func() {
+		apiNSCounter++
+		ns := fmt.Sprintf("cnms-api-%d", apiNSCounter)
+		Expect(k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}})).To(Succeed())
+		Expect(keys(key("s2026a", nil))(ns)).To(Succeed())
+		d := &cnmsv1alpha1.MailDomain{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: ns, Name: apiDomainName}, d)).To(Succeed())
+		Expect(d.Spec.DKIM.Keys[0].Signing).To(HaveValue(BeTrue()))
+		Expect(d.Spec.DKIM.SelectorPrefix).To(BeNil())
+	})
+})
+
+var _ = Describe("API validation of SPF, DMARC, MTA-STS and TLS-RPT", func() {
+	spec := func(mutate func(*cnmsv1alpha1.MailDomainSpec)) func(string) error {
+		return func(ns string) error {
+			_, err := createDomain(ns, func(d *cnmsv1alpha1.MailDomain) { mutate(&d.Spec) })
+			return err
+		}
+	}
+	spf := func(s cnmsv1alpha1.SPF) func(string) error {
+		return spec(func(ms *cnmsv1alpha1.MailDomainSpec) { ms.SPF = &s })
+	}
+	dmarc := func(d cnmsv1alpha1.DMARC) func(string) error {
+		return spec(func(ms *cnmsv1alpha1.MailDomainSpec) { ms.DMARC = &d })
+	}
+	tlsRpt := func(rua, dmarcRua *string) func(string) error {
+		return spec(func(ms *cnmsv1alpha1.MailDomainSpec) {
+			ms.TLSRPT = &cnmsv1alpha1.TLSRPT{Enabled: new(true), Rua: rua}
+			if dmarcRua != nil {
+				ms.DMARC = &cnmsv1alpha1.DMARC{Rua: dmarcRua}
+			}
+		})
+	}
+	many := func(n int, f func(int) string) []string {
+		out := make([]string, n)
+		for i := range out {
+			out[i] = f(i)
+		}
+		return out
+	}
+	v4 := "must be an IPv4 address or CIDR"
+	v6 := "must be an IPv6 address or CIDR"
+	runAPICases([]apiCase{
+		{name: "accepts SPF sources and a qualifier", mutate: spf(cnmsv1alpha1.SPF{
+			IP4: []string{"203.0.113.10", "198.51.100.0/24"}, IP6: []string{"2001:db8::1", "2001:db8::/32"},
+			Include: []string{"_spf.example.net", "spf.example.com"}, Qualifier: new("fail"),
+		})},
+		{name: "rejects an IPv6 address in ip4", mutate: spf(cnmsv1alpha1.SPF{IP4: []string{"2001:db8::1"}}), wantErr: v4},
+		{name: "rejects a host name in ip4", mutate: spf(cnmsv1alpha1.SPF{IP4: []string{"host.example.net"}}), wantErr: v4},
+		{name: "rejects an IPv4 prefix length above 32", mutate: spf(cnmsv1alpha1.SPF{IP4: []string{"203.0.113.0/33"}}), wantErr: v4},
+		{name: "rejects an ip4 value that injects a mechanism", mutate: spf(cnmsv1alpha1.SPF{IP4: []string{"203.0.113.1 include:evil.example"}}), wantErr: v4},
+		{name: "rejects an IPv4 address in ip6", mutate: spf(cnmsv1alpha1.SPF{IP6: []string{"203.0.113.1"}}), wantErr: v6},
+		{name: "rejects an IPv6 prefix length above 128", mutate: spf(cnmsv1alpha1.SPF{IP6: []string{"2001:db8::/129"}}), wantErr: v6},
+		{name: "accepts 16 ip4 entries", mutate: spf(cnmsv1alpha1.SPF{IP4: many(16, func(i int) string { return fmt.Sprintf("203.0.113.%d", i) })})},
+		{name: "rejects 17 ip4 entries", mutate: spf(cnmsv1alpha1.SPF{IP4: many(17, func(i int) string { return fmt.Sprintf("203.0.113.%d", i) })}), wantErr: "spec.spf.ip4"},
+		{name: "accepts 5 includes", mutate: spf(cnmsv1alpha1.SPF{Include: many(5, func(i int) string { return fmt.Sprintf("spf%d.example.net", i) })})},
+		{name: "rejects 6 includes", mutate: spf(cnmsv1alpha1.SPF{Include: many(6, func(i int) string { return fmt.Sprintf("spf%d.example.net", i) })}), wantErr: spfIncludeField},
+		{name: "rejects an include with a space", mutate: spf(cnmsv1alpha1.SPF{Include: []string{"a.example.net -all"}}), wantErr: spfIncludeField},
+		{name: "rejects an include with a macro", mutate: spf(cnmsv1alpha1.SPF{Include: []string{"%{i}.example.net"}}), wantErr: spfIncludeField},
+		{name: "rejects an include without a dot", mutate: spf(cnmsv1alpha1.SPF{Include: []string{"example"}}), wantErr: spfIncludeField},
+		{name: "rejects an unknown qualifier", mutate: spf(cnmsv1alpha1.SPF{Qualifier: new("pass")}), wantErr: "spec.spf.qualifier"},
+
+		{name: "accepts subdomain policies", mutate: dmarc(cnmsv1alpha1.DMARC{SubdomainPolicy: new("reject"), NonExistentSubdomainPolicy: new("quarantine")})},
+		{name: "rejects an unknown subdomain policy", mutate: dmarc(cnmsv1alpha1.DMARC{SubdomainPolicy: new("block")}), wantErr: "spec.dmarc.subdomainPolicy"},
+		{name: "rejects an unknown non-existent subdomain policy", mutate: dmarc(cnmsv1alpha1.DMARC{NonExistentSubdomainPolicy: new("")}), wantErr: "spec.dmarc.nonExistentSubdomainPolicy"},
+
+		{name: "accepts an MTA-STS mode", mutate: spec(func(ms *cnmsv1alpha1.MailDomainSpec) {
+			ms.MTAStS = &cnmsv1alpha1.MTAStS{Enabled: new(true), Mode: new("enforce")}
+		})},
+		{name: "rejects an unknown MTA-STS mode", mutate: spec(func(ms *cnmsv1alpha1.MailDomainSpec) {
+			ms.MTAStS = &cnmsv1alpha1.MTAStS{Mode: new("report")}
+		}), wantErr: "spec.mtaSts.mode"},
+
+		{name: "accepts enabled TLS-RPT with its own address", mutate: tlsRpt(new("tls@example.org"), nil)},
+		{name: "accepts enabled TLS-RPT with the DMARC address", mutate: tlsRpt(nil, new("dmarc@example.org"))},
+		{name: "rejects enabled TLS-RPT without an address", mutate: tlsRpt(nil, nil), wantErr: "tlsRpt.enabled requires a report address"},
+	})
+
+	It("applies the defaults of SPF and MTA-STS", func() {
+		apiNSCounter++
+		ns := fmt.Sprintf("cnms-api-%d", apiNSCounter)
+		Expect(k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}})).To(Succeed())
+		Expect(spec(func(ms *cnmsv1alpha1.MailDomainSpec) {
+			ms.SPF = &cnmsv1alpha1.SPF{IP4: []string{"203.0.113.1"}}
+			ms.MTAStS = &cnmsv1alpha1.MTAStS{}
+		})(ns)).To(Succeed())
+		d := &cnmsv1alpha1.MailDomain{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: ns, Name: apiDomainName}, d)).To(Succeed())
+		Expect(d.Spec.SPF.Qualifier).To(HaveValue(Equal("softfail")))
+		Expect(d.Spec.MTAStS.Mode).To(HaveValue(Equal("testing")))
+	})
+})
+
+var _ = Describe("API validation of the MailDomain name", func() {
+	named := func(name string) func(string) error {
+		return func(ns string) error {
+			d := &cnmsv1alpha1.MailDomain{
+				ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+				Spec:       cnmsv1alpha1.MailDomainSpec{Domain: testDomain},
+			}
+			return k8sClient.Create(ctx, d)
+		}
+	}
+	runAPICases([]apiCase{
+		{name: "accepts a 63 character name", mutate: named(strings.Repeat("a", 63))},
+		{name: "rejects a 64 character name", mutate: named(strings.Repeat("a", 64)), wantErr: "at most 63 characters"},
+	})
+})
+
+var _ = Describe("API validation of MailDomain DKIM status", func() {
+	runAPICases([]apiCase{{
+		name: "accepts active, pending and retiring keys",
+		mutate: func(ns string) error {
+			d, err := createDomain(ns, nil)
+			Expect(err).NotTo(HaveOccurred())
+			now := metav1.Now()
+			d.Status.DKIM = &cnmsv1alpha1.DKIMStatus{
+				Active: []cnmsv1alpha1.DKIMKeyStatus{
+					{Selector: "cnms-20261103", Algorithm: algRSA, KeyCreated: &now},
+					{Selector: "cnms-ed25519-20261103", Algorithm: "ed25519", KeyCreated: &now},
+				},
+				Pending:      []cnmsv1alpha1.DKIMKeyStatus{{Selector: "cnms-20261203", Algorithm: algRSA, KeyCreated: &now}},
+				Retiring:     []cnmsv1alpha1.DKIMKeyStatus{{Selector: "cnms-20260803", Algorithm: algRSA, KeyCreated: &now, Until: &now}},
+				NextRotation: &now,
+			}
+			return k8sClient.Status().Update(ctx, d)
+		},
+	}, {
+		name: "rejects a key with an unknown algorithm",
+		mutate: func(ns string) error {
+			d, err := createDomain(ns, nil)
+			Expect(err).NotTo(HaveOccurred())
+			d.Status.DKIM = &cnmsv1alpha1.DKIMStatus{
+				Active: []cnmsv1alpha1.DKIMKeyStatus{{Selector: "cnms-20261103", Algorithm: "ecdsa"}},
+			}
+			return k8sClient.Status().Update(ctx, d)
+		},
+		wantErr: "status.dkim.active[0].algorithm",
+	}})
 })
 
 var _ = Describe("API validation of storage and topology spread", func() {

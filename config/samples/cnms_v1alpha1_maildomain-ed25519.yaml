@@ -1,0 +1,17 @@
+# Generated keys with a second, Ed25519 signature next to the RSA one
+# (RFC 8463). Receivers that do not know Ed25519 ignore it. This
+# replaces cnms_v1alpha1_maildomain.yaml (same domain), so it is not part
+# of the kustomization.
+apiVersion: cnms.rpp.gmbh/v1alpha1
+kind: MailDomain
+metadata:
+  labels:
+    app.kubernetes.io/name: cloud-native-mail-service
+    app.kubernetes.io/managed-by: kustomize
+  name: maildomain-ed25519-sample
+spec:
+  domain: example.org
+  dkim:
+    ed25519: true
+    rotation:
+      interval: 720h

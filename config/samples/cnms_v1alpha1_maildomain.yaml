@@ -8,17 +8,31 @@ metadata:
 spec:
   domain: example.org
   dnsMode: manual
+  # The operator generates an RSA-2048 key and rotates it. For your own
+  # keys see cnms_v1alpha1_maildomain-byo-keys.yaml.
   dkim:
     selectorPrefix: cnms
     rotation:
       interval: 2160h
-      overlap: 24h
+      # The default overlap is 120h, which covers the Postfix queue
+      # lifetime of 5 days. An interval of 5 days or less needs an
+      # explicit, shorter overlap.
+      overlap: 120h
+  spf:
+    ip4:
+      - 203.0.113.0/24
+    ip6:
+      - 2001:db8::/32
+    qualifier: softfail
   dmarc:
-    policy: none
+    policy: quarantine
     rua: dmarc-feedback@example.org
+    # t=y: receivers that implement RFC 9989 apply the policy one level
+    # lower (here quarantine as none).
     testing: true
   mtaSts:
     enabled: false
+    mode: testing
   tlsRpt:
     enabled: true
     rua: tls-rpt@example.org
