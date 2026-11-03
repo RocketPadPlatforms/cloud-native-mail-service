@@ -152,23 +152,35 @@ func (e *authorizationEvaluator) Evaluate() authorization {
 	}
 	for _, ref := range e.server.Spec.Domains {
 		claim := e.claim(ref.Name)
-		switch {
-		case claim == nil:
+		if claim == nil {
 			fail(ReasonDomainNotFound, "MailDomain %q not found in namespace %q", ref.Name, e.server.Namespace)
-		case e.mode == AuthorizationAllowlist && !e.granted(claim.domain):
-			fail(ReasonNotGranted, "no MailDomainGrant covering %q for namespace %q", claim.domain, e.server.Namespace)
-		default:
-			if n := e.claimsFor(claim.domain); n > 1 {
-				fail(ReasonDuplicateDomain,
-					"domain %q is claimed by %d MailDomain objects; every claimant is blocked until the duplicate is resolved",
-					claim.domain, n)
-				continue
-			}
-			res.domains = append(res.domains, claim.domain)
+			continue
 		}
+		if f := e.authorize(e.server.Namespace, claim.domain); f != nil {
+			res.failures = append(res.failures, *f)
+			continue
+		}
+		res.domains = append(res.domains, claim.domain)
 	}
 	slices.Sort(res.domains)
 	return res
+}
+
+// authorize decides whether a MailDomain of namespace may use domain:
+// nil when it may, else the failure (ADR 0003). The MailDomain
+// controller calls it for the claim it reconciles, so both controllers
+// reach the same verdict.
+func (e *authorizationEvaluator) authorize(namespace, domain string) *domainFailure {
+	if e.mode == AuthorizationAllowlist && !e.granted(namespace, domain) {
+		return &domainFailure{ReasonNotGranted,
+			fmt.Sprintf("no MailDomainGrant covering %q for namespace %q", domain, namespace)}
+	}
+	if n := e.claimsFor(domain); n > 1 {
+		return &domainFailure{ReasonDuplicateDomain, fmt.Sprintf(
+			"domain %q is claimed by %d MailDomain objects; every claimant is blocked until the duplicate is resolved",
+			domain, n)}
+	}
+	return nil
 }
 
 // claim looks up the MailDomain object ref in the server's namespace.
@@ -204,13 +216,13 @@ func (e *authorizationEvaluator) claimsFor(domain string) int {
 	return n
 }
 
-// granted reports whether a grant covering domain names the server's
-// namespace. The most specific matching grant owns the domain: a grant
-// for sub.example.org carves it out of a grant for example.org with
+// granted reports whether a grant covering domain names namespace. The
+// most specific matching grant owns the domain: a grant for
+// sub.example.org carves it out of a grant for example.org with
 // includeSubdomains (DNS-delegation semantics, ADR 0003).
-func (e *authorizationEvaluator) granted(domain string) bool {
+func (e *authorizationEvaluator) granted(namespace, domain string) bool {
 	owner, found := e.owner(domain)
-	return found && owner.namespace == e.server.Namespace
+	return found && owner.namespace == namespace
 }
 
 // owner returns the most specific grant covering domain.
