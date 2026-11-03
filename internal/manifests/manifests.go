@@ -107,6 +107,7 @@ const (
 	validateContainerName     = "validate"
 	queueMetricsContainerName = "queue-metrics"
 	certReloadContainerName   = "cert-reload"
+	waitTLSContainerName      = "wait-tls"
 	rspamdMetricsContainer    = "rspamd-metrics"
 	tmpVolumeName             = "tmp"
 	configVolumeName          = "config"
@@ -496,6 +497,23 @@ while :; do
     fi
   fi
 done`
+	return []string{"sh", "-c", script}
+}
+
+// waitForTLSFiles is the command of the Dovecot init container: it
+// returns once the certificate and key files exist and are not empty.
+// It waits without a limit (a missing certificate is not an error of
+// the pod) and logs once a minute so `kubectl logs -c wait-tls` shows
+// why the pod is in Init.
+func waitForTLSFiles(dir string) []string {
+	script := `set -eu
+n=0
+until [ -s ` + dir + "/" + TLSCertFile + ` ] && [ -s ` + dir + "/" + TLSKeyFile + ` ]; do
+  [ $((n % 6)) -ne 0 ] || echo "Waiting for the TLS certificate Secret"
+  n=$((n + 1))
+  sleep 10
+done
+echo "TLS certificate found"`
 	return []string{"sh", "-c", script}
 }
 

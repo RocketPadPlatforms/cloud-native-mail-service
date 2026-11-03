@@ -119,7 +119,10 @@ Postfix 3.11.7, Valkey 9.1.2):
   catch a service that fails at runtime (for example a `master.cf`
   entry for a daemon that does not exist) or a certificate that cannot
   be loaded: a missing certificate file at startup is fatal for
-  Dovecot, which is unchanged by this ADR.
+  Dovecot. The Dovecot pod avoids the crash loop before cert-manager
+  has issued the Secret with an init container that waits for the
+  certificate files; a certificate that is present but invalid still
+  fails the container.
 - The operator reads the Job condition only; surfacing the validator
   output in the condition would need `pods/log` access (backlog).
 - The validation of the Postfix queue (`postfix check`) runs against an

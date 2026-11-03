@@ -10,15 +10,21 @@
 # be dovecot_config_version; unknown settings are fatal.
 dovecot_config_version = 2.4.3
 dovecot_storage_version = 2.4.3
-# Mailboxes disabled: auth-only mode (no IMAP, no mail
-# storage). The lmtp listener stays for config uniformity;
-# Postfix in send-only mode does not LMTP-deliver (ADR 0004).
-protocols = lmtp
+# Mailboxes disabled: auth-only mode. No protocol, so no
+# IMAP and no LMTP listener (Postfix in send-only mode does
+# not LMTP-deliver, ADR 0004); only the auth service runs
+# ("starting up without any protocols"; verified).
+protocols =
 log_path = /dev/stdout
 base_dir = /var/run/dovecot
 state_dir = /var/run/dovecot
 default_internal_user = vmail
 default_internal_group = vmail
+# The rootless image has no dovenull account and its non-root
+# master cannot switch users: any other login user is fatal
+# ("fchown() failed ... Operation not permitted"; verified).
+# The login processes therefore run as vmail; their chroot is
+# the only separation from the mail store.
 default_login_user = vmail
 mail_uid = vmail
 mail_gid = vmail
@@ -44,17 +50,7 @@ ssl_server {
 # names "auth-master" and "auth-userdb" select other protocols.
 service auth {
   inet_listener auth {
-    port = 4190
-  }
-}
-# Internal LMTP hop (Postfix virtual_transport): plain TCP by
-# design (ADR 0006). `ssl = no` keeps the listener exempt from
-# the global `ssl = required` (without it 2.4 forces implicit
-# TLS on the listener; verified).
-service lmtp {
-  inet_listener lmtp {
-    port = 24
-    ssl = no
+    port = 12345
   }
 }
 # Phase 2 test source: the passwd-file rendered into this same

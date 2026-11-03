@@ -120,6 +120,13 @@ func TestRenderResultCommands(t *testing.T) {
 	if !strings.Contains(joined, "valkey-cli -p 6379 ping") {
 		t.Errorf("validate command does not ping the rendered port: %v", res.ValidateCommand)
 	}
+	// The start-up wait is a bounded poll, not a fixed sleep.
+	if !strings.Contains(joined, "until ") || !strings.Contains(joined, "-le 50") || strings.Contains(joined, "sleep 1 ") {
+		t.Errorf("validate command must poll the ping with a timeout: %v", res.ValidateCommand)
+	}
+	if !strings.Contains(joined, "shutdown nosave") {
+		t.Errorf("validate command must shut the server down: %v", res.ValidateCommand)
+	}
 	if len(res.ReloadCommand) != 0 {
 		t.Errorf("unexpected reload command: %v", res.ReloadCommand)
 	}

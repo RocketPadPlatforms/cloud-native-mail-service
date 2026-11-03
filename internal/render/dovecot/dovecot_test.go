@@ -107,6 +107,26 @@ func TestRenderDovecotConf(t *testing.T) {
 	}
 }
 
+// Auth-only mode runs no protocol: no IMAP and no LMTP service.
+func TestAuthOnlyHasNoLMTP(t *testing.T) {
+	res, err := New().Render(testRequest(t, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	conf := res.ConfigData["dovecot.conf"]
+	if !strings.Contains(conf, "\nprotocols =\n") {
+		t.Error("auth-only must render an empty protocols list")
+	}
+	for _, s := range []string{"service lmtp", "inet_listener lmtp", "service imap-login"} {
+		if strings.Contains(conf, s) {
+			t.Errorf("auth-only configuration contains %q", s)
+		}
+	}
+	if !strings.Contains(conf, "inet_listener auth") {
+		t.Error("auth-only configuration must keep the auth listener")
+	}
+}
+
 func TestRenderUsers(t *testing.T) {
 	t.Run("default", func(t *testing.T) {
 		res, err := New().Render(testRequest(t, nil))

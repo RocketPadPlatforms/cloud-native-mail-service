@@ -36,11 +36,22 @@ const (
 	PortRspamdNormal     int32 = 11333 // normal (scanner) worker, pod-internal: the proxy worker forwards to it
 	PortRspamdFuzzy      int32 = 11335 // outbound only: the fuzzy storage of rspamd.com (UDP, SRV _fuzzy._tcp.rspamd.com)
 
-	// Dovecot.
-	PortDovecotLMTP  int32 = 24   // LMTP for Postfix virtual_transport
-	PortDovecotAuth  int32 = 4190 // internal auth protocol (Postfix SASL)
-	PortDovecotIMAP  int32 = 143
-	PortDovecotIMAPS int32 = 993
+	// Dovecot. The image runs as the non-root vmail user, which can
+	// bind a port below 1024 only where the node sets
+	// net.ipv4.ip_unprivileged_port_start low (verified: an added
+	// NET_BIND_SERVICE does not help a non-root process without
+	// ambient capabilities, which Kubernetes cannot grant). Dovecot
+	// therefore listens on the unprivileged ports of the official
+	// image's rootless configuration (the *Listen constants) and the
+	// Service maps the well-known ports to them. NetworkPolicies and
+	// probes see the listen ports.
+	PortDovecotLMTP        int32 = 24    // Service port: LMTP for Postfix virtual_transport
+	PortDovecotLMTPListen  int32 = 31024 // LMTP listener
+	PortDovecotAuth        int32 = 12345 // internal auth protocol (Postfix SASL); not 4190, which is ManageSieve
+	PortDovecotIMAP        int32 = 143   // Service port
+	PortDovecotIMAPListen  int32 = 31143 // IMAP listener
+	PortDovecotIMAPS       int32 = 993   // Service port
+	PortDovecotIMAPSListen int32 = 31993 // IMAPS listener
 
 	// Valkey.
 	PortValkey        int32 = 6379
@@ -65,7 +76,7 @@ func ComponentPorts(c Component) []int32 {
 	case ComponentRspamd:
 		return []int32{PortRspamdMilter, PortRspamdMetrics}
 	case ComponentDovecot:
-		return []int32{PortDovecotLMTP, PortDovecotAuth}
+		return []int32{PortDovecotLMTPListen, PortDovecotAuth}
 	case ComponentValkey:
 		return []int32{PortValkey, PortValkeyMetrics}
 	default:

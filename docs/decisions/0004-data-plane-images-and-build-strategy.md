@@ -47,13 +47,14 @@ container image with a known user, writable paths, and a log path
    consistent with "auth-only Dovecot for submission" and with the
    LMTP flow (Postfix delivers to Dovecot, never the other way around).
    The auth channel crosses the pod boundary as plain TCP:
-   `smtpd_sasl_path = inet:<dovecot-service>:4190`. Verified against
+   `smtpd_sasl_path = inet:<dovecot-service>:12345`. Verified against
    the 3.11.7 source: the dovecot SASL client connects to `inet:`
    paths without TLS. The Dovecot listener must be named `auth` to
    serve the auth-client protocol the client speaks; the names
    `auth-master` and `auth-userdb` serve other protocols. The same
-   container serves the LMTP listener (port 24) used by
-   `virtual_transport`.
+   container serves the LMTP listener (Service port 24) used by
+   `virtual_transport`, only when mailboxes are enabled: in auth-only
+   mode Dovecot runs without any protocol and has no LMTP listener.
 3. **Dovecot image:** official `dovecot/dovecot:2.4.5` (rootless,
    hardened). Rendered config is mounted at `/etc/dovecot`; mail
    storage (when enabled) is an RWO volume mounted at `/srv/mail`,
@@ -85,7 +86,13 @@ container image with a known user, writable paths, and a log path
    constant (version tag + digest) in one package, consumed by the
    renderers and the e2e suite; a Renovate regex manager updates them.
    Base images of CNMS-built Dockerfiles are pinned by digest
-   (Renovate dockerfile manager).
+   (Renovate dockerfile manager). The CNMS-built images are fully
+   qualified under the project's registry namespace
+   (`ghcr.io/rocketpadplatforms/cnms-postfix`, `cnms-e2e-client`): a
+   short name such as `cnms/postfix` would resolve to a Docker Hub
+   namespace CNMS does not control. They carry the version tag only
+   until a CI workflow publishes them; the digest pin follows then
+   (backlog).
 7. **E2E-only images:** a swaks client image
    (`debian:trixie-slim` + `swaks` + `openssl` + `curl`, apt swaks
    `20201014.0` upstream) and `axllent/mailpit:v1.32.0` (MIT; the

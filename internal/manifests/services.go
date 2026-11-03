@@ -70,16 +70,16 @@ func services(server *cnmsv1alpha1.MailServer) []client.Object {
 		},
 	}
 
-	// Dovecot (LMTP + internal auth protocol; IMAP only with mail
-	// storage).
+	// Dovecot (internal auth protocol; LMTP and IMAP only with mail
+	// storage, auth-only mode has no other listener).
 	dovecotPorts := []corev1.ServicePort{
-		{Name: "lmtp", Port: render.PortDovecotLMTP, TargetPort: intstr.FromInt32(render.PortDovecotLMTP)},
 		{Name: "auth", Port: render.PortDovecotAuth, TargetPort: intstr.FromInt32(render.PortDovecotAuth)},
 	}
 	if mailboxesEnabled(server) {
 		dovecotPorts = append(dovecotPorts,
-			corev1.ServicePort{Name: "imap", Port: render.PortDovecotIMAP, TargetPort: intstr.FromInt32(render.PortDovecotIMAP)},
-			corev1.ServicePort{Name: "imaps", Port: render.PortDovecotIMAPS, TargetPort: intstr.FromInt32(render.PortDovecotIMAPS)})
+			corev1.ServicePort{Name: "lmtp", Port: render.PortDovecotLMTP, TargetPort: intstr.FromInt32(render.PortDovecotLMTPListen)},
+			corev1.ServicePort{Name: "imap", Port: render.PortDovecotIMAP, TargetPort: intstr.FromInt32(render.PortDovecotIMAPListen)},
+			corev1.ServicePort{Name: "imaps", Port: render.PortDovecotIMAPS, TargetPort: intstr.FromInt32(render.PortDovecotIMAPSListen)})
 	}
 	dovecot := corev1.Service{
 		ObjectMeta: objectMeta(server, render.ServiceName(server.Name, render.ComponentDovecot), render.ComponentDovecot),
@@ -162,7 +162,11 @@ func serverInboundTrafficPolicyPtr(server *cnmsv1alpha1.MailServer) *string {
 // NetworkPolicy; it ships as a static CiliumClusterwideNetworkPolicy
 // example (config/network-policy, ADR 0006).
 func networkPolicies(server *cnmsv1alpha1.MailServer) []client.Object {
-	componentPorts := []int32{render.PortRspamdMilter, render.PortDovecotLMTP, render.PortDovecotAuth, render.PortValkey}
+	// Pod ports: a policy sees the port behind the Service.
+	componentPorts := []int32{render.PortRspamdMilter, render.PortDovecotAuth, render.PortValkey}
+	if mailboxesEnabled(server) {
+		componentPorts = append(componentPorts, render.PortDovecotLMTPListen)
+	}
 	metricsPorts := []int32{render.PortPostfixMetrics, render.PortRspamdMetrics, render.PortValkeyMetrics}
 	anywhere := func() networkingv1.NetworkPolicyPeer {
 		return networkingv1.NetworkPolicyPeer{
@@ -203,7 +207,7 @@ func networkPolicies(server *cnmsv1alpha1.MailServer) []client.Object {
 	}
 	if mailboxesEnabled(server) {
 		ingressPorts = append(ingressPorts,
-			portOf(render.PortDovecotIMAP), portOf(render.PortDovecotIMAPS))
+			portOf(render.PortDovecotIMAPListen), portOf(render.PortDovecotIMAPSListen))
 	}
 	componentPortSpecs := make([]networkingv1.NetworkPolicyPort, 0, len(componentPorts))
 	for _, p := range componentPorts {

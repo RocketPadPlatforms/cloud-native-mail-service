@@ -28,10 +28,10 @@ isolation, see [resource model](../concepts/resource-model.md)):
 |-----------|------|------------------|
 | Postfix   | SMTP in/out, relay, submission | 25 (postscreen), 587 (submission), 9150 (metrics) |
 | Rspamd    | filtering, DKIM, rate limits | 11332 (milter), 9151 (metrics) |
-| Dovecot   | IMAP, LMTP delivery, SASL auth | 24 (LMTP), 4190 (auth protocol), 143/993 (IMAP, mailboxes only) |
+| Dovecot   | IMAP, LMTP delivery, SASL auth | 12345 (auth protocol), 24 (LMTP) and 143/993 (IMAP), the last two with mailboxes only |
 | Valkey    | Rspamd state (one set per server) | 6379, 9121 (metrics) |
 
-Ports 24 and 4190 (Postfix→Dovecot) and 6379 (Rspamd→Valkey) are
+Ports 24 and 12345 (Postfix→Dovecot) and 6379 (Rspamd→Valkey) are
 internal: each is reachable only from the pods of the same
 `MailServer` (NetworkPolicies,
 [ADR 0006](../decisions/0006-network-policy-and-security-floor.md)).
@@ -112,8 +112,10 @@ started.
   (143/993), LMTP delivery from Postfix, and SASL auth. Mail is stored
   on the RWO volume below.
 - **Mailboxes disabled, submission enabled**: Dovecot runs in
-  **auth-only mode** (no IMAP, no mail volume). It serves only the SASL
-  backend for Postfix submission; Postfix does not LMTP-deliver to it.
+  **auth-only mode** (no IMAP, no LMTP listener, no mail volume). It
+  serves only the SASL backend for Postfix submission; Postfix does not
+  LMTP-deliver to it, and the Service, the NetworkPolicies and the
+  probes know the auth port only.
 
 ### TLS and listeners
 
@@ -122,12 +124,31 @@ started.
 - **993 (imaps): implicit TLS.**
 - **143 (imap):** plaintext sessions are possible, but `AUTH` is only
   offered after `STARTTLS` — credentials never travel unencrypted.
-- **24 (LMTP) and 4190 (auth protocol):** plain TCP by design; both are
+- **24 (LMTP) and 12345 (auth protocol):** plain TCP by design; both are
   reachable only from the Postfix pods of the same `MailServer` via the
   NetworkPolicies.
+- **Listen ports:** the Service ports 24, 143 and 993 map to the
+  container ports 31024, 31143 and 31993. The image runs as the
+  non-root `vmail` user, which can only bind a port below 1024 where
+  the node lowers `net.ipv4.ip_unprivileged_port_start`; an added
+  `NET_BIND_SERVICE` capability does not help a non-root process
+  (Kubernetes cannot grant ambient capabilities; verified with
+  `dovecot/dovecot:2.4.5`). NetworkPolicies and probes use the
+  container ports.
 - The certificate comes from the `spec.tls` cert-manager Issuer
   (Secret default `<name>-tls`) and is mounted at `/etc/dovecot/ssl`.
   Certificate renewals trigger a **reload**, not a pod restart.
+- **Before the certificate exists:** Dovecot 2.4.5 does not start
+  without its certificate files (fatal at startup, whatever `ssl` is),
+  and it cannot serve without TLS. The pod therefore waits in the
+  `wait-tls` init container (`Init:0/1`, see `kubectl logs -c
+  wait-tls`) until cert-manager has issued the Secret, instead of
+  crash-looping. Postfix behaves differently: it starts, its smtpd
+  logs `disabling TLS support`, port 25 accepts plain-text mail, and
+  submission offers no `AUTH` (`530 5.7.0 Must issue a STARTTLS command
+  first`) until the cert-reload sidecar reloads the certificate once
+  the Secret appears (within about 30 seconds). Both behaviours were
+  checked with the pinned images.
 
 ### Volumes and ownership
 
@@ -160,7 +181,14 @@ users:
 
 Usernames and mailboxes are lower-cased (Dovecot lower-cases logins) and
 must be unique when compared case-insensitively; a duplicate is rejected
-and the server stays on its previous configuration.
+and the server stays on its previous configuration. A username consists
+of `[a-z0-9._-]` after lower-casing (it is a path component of the home
+directory): it must not start with a dot or contain `..`, `/` or a colon.
+No field may contain a colon (the passwd-file separator) or a control
+character. Plaintext password schemes (`{PLAIN}`, `{CLEAR}`,
+`{CLEARTEXT}`) and the unsalted `{PLAIN-*}` schemes (`{PLAIN-MD5}`,
+`{PLAIN-TRUNC}`, ...) are rejected, whatever their case; use a salted
+scheme such as `{SHA512-CRYPT}` or `{ARGON2ID}`.
 
 The mailbox addresses also form Postfix's recipient table
 (`virtual_mailbox_maps`): with mailboxes enabled, port 25 rejects an
