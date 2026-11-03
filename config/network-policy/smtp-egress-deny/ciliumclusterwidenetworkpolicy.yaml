@@ -8,8 +8,9 @@
 # docs/how-to/block-direct-smtp-egress.md for the design, the verification
 # steps and the residual limitations.
 #
-# - A deny rule beats any allow rule (Cilium and Kubernetes NetworkPolicies
-#   alike), so an exemption can only be expressed by not selecting the pod.
+# - A deny rule beats any allow rule (Cilium egressDeny; Kubernetes
+#   NetworkPolicies have no deny rules), so an exemption can only be expressed
+#   by not selecting the pod.
 # - enableDefaultDeny keeps the selected pods out of default-deny: the policy
 #   only removes port 25 and changes nothing else.
 # - Rule 1 selects all pods outside the listed namespaces. Rule 2 selects the

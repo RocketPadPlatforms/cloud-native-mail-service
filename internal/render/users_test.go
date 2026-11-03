@@ -58,6 +58,17 @@ func TestParseStaticUsers(t *testing.T) {
 		}
 	})
 
+	t.Run("username is lower-cased", func(t *testing.T) {
+		users, err := ParseStaticUsers([]byte(strings.Replace(valid,
+			"username: testuser", "username: TestUser", 1)))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if users[0].Username != "testuser" {
+			t.Fatalf("got username %q, want it lower-cased", users[0].Username)
+		}
+	})
+
 	t.Run("crypt magic hash", func(t *testing.T) {
 		_, err := ParseStaticUsers([]byte(strings.Replace(valid,
 			"'{SHA512-CRYPT}$6$salt$hash'", "$6$salt$hash", 1)))
@@ -179,6 +190,42 @@ func TestParseStaticUsers(t *testing.T) {
     mailbox: testuser2@example.com
 `,
 			wantErr: `users[1]: duplicate username "testuser"`,
+		},
+		{
+			name: "usernames differing only in case",
+			doc: `users:
+  - username: testuser
+    passwordHash: '{SHA512-CRYPT}x'
+    mailbox: testuser@example.com
+  - username: TestUser
+    passwordHash: '{SHA512-CRYPT}y'
+    mailbox: testuser2@example.com
+`,
+			wantErr: `users[1]: duplicate username "testuser"`,
+		},
+		{
+			name: "duplicate mailboxes",
+			doc: `users:
+  - username: one
+    passwordHash: '{SHA512-CRYPT}x'
+    mailbox: shared@example.com
+  - username: two
+    passwordHash: '{SHA512-CRYPT}y'
+    mailbox: shared@example.com
+`,
+			wantErr: `users[1]: duplicate mailbox "shared@example.com"`,
+		},
+		{
+			name: "mailboxes differing only in case",
+			doc: `users:
+  - username: one
+    passwordHash: '{SHA512-CRYPT}x'
+    mailbox: shared@example.com
+  - username: two
+    passwordHash: '{SHA512-CRYPT}y'
+    mailbox: Shared@Example.COM
+`,
+			wantErr: `users[1]: duplicate mailbox "shared@example.com"`,
 		},
 		{
 			name: "long username",
