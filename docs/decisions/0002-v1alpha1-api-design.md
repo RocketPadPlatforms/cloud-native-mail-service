@@ -63,8 +63,10 @@ or removed before `v1beta1`.
 - **`DirectoryType`** is a named string type with constants
   (`DirectoryTypeLDAP`, `DirectoryTypeSQL`); the `oidc` type is added with its
   phase.
-- **Samples** in `config/samples` are validated against the generated CRDs in
-  envtest (schema, defaults, CEL), plus negative tests for the key CEL rules.
+- **Samples** in `config/samples` (including the scenarios in
+  `config/samples/full-setup/`) are validated against the generated CRDs in
+  envtest (schema, defaults, CEL, unknown fields), plus negative tests for the
+  key CEL rules. They are the single source of examples: the docs embed them.
 - **API reference** is generated from the Go types with
   `crd-ref-docs@v0.3.0` (`make api-ref`) into `docs/reference/api.md`. The
   upstream repository is archived at v0.3.0; it is a build-time tool, pinned

@@ -1,0 +1,24 @@
+# DRAFT: part of a complete example scenario, not an agreed reference.
+# The external LDAP directory that holds the accounts. CNMS only queries
+# it (recipient validation, authentication); it never writes to it.
+apiVersion: cnms.rpp.gmbh/v1alpha1
+kind: MailDirectory
+metadata:
+  labels:
+    app.kubernetes.io/name: cloud-native-mail-service
+    app.kubernetes.io/managed-by: kustomize
+  name: corp-ldap
+spec:
+  type: ldap
+  ldap:
+    host: ldap.example.com
+    port: 389
+    tls:
+      mode: StartTLS
+      caSecretRef:
+        name: mail-ldap-ca
+    baseDN: ou=people,dc=example,dc=com
+    bindDN: cn=lookup,ou=services,dc=example,dc=com
+    bindSecretRef:
+      name: mail-ldap-bind
+    userFilter: "(mail={user})"

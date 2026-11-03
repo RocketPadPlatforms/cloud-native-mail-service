@@ -8,6 +8,10 @@
 # and cnms_v1alpha1_sample-static-users.yaml) are not listed here: they need
 # the operator flag --enable-insecure-test-features and replace the
 # MailDirectory of cnms_v1alpha1_mailserver.yaml.
+# The draft scenario in full-setup/ is a separate kustomization (names and
+# domains differ from the samples above, so both can be applied):
+#   kubectl create namespace mail-full-setup
+#   kubectl apply -n mail-full-setup -k config/samples/full-setup
 resources:
 - cnms_v1alpha1_mailserver.yaml
 - cnms_v1alpha1_maildomain.yaml

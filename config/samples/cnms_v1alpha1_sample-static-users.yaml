@@ -1,5 +1,5 @@
 # Test users for cnms_v1alpha1_mailserver-static-users.yaml (see
-# docs/how-to/02-install-and-operate.md). The Secret holds crypt(3)
+# docs/how-to/02-install-and-operate.mdx). The Secret holds crypt(3)
 # password hashes, never plaintext passwords.
 apiVersion: v1
 kind: Secret

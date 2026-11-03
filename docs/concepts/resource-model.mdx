@@ -1,3 +1,9 @@
+import CodeBlock from '@theme/CodeBlock';
+import GrantSample from '../../config/samples/full-setup/maildomaingrant.yaml';
+import ServerSample from '../../config/samples/full-setup/mailserver.yaml';
+import DomainSample from '../../config/samples/full-setup/maildomain.yaml';
+import DirectorySample from '../../config/samples/full-setup/maildirectory.yaml';
+
 # Resource model
 
 CNMS v1alpha1 (API group `cnms.rpp.gmbh`) currently defines four resources.
@@ -35,6 +41,8 @@ grant per exact domain and the name is normalized by the API server.
 precedence. The operator enforces the grants and fails closed; without a
 matching grant a domain is inactive.
 
+<CodeBlock language="yaml" title="config/samples/full-setup/maildomaingrant.yaml">{GrantSample}</CodeBlock>
+
 ### `MailServer`
 
 A tenant-facing mail system: inbound (port 25) and submission (port 587)
@@ -66,6 +74,8 @@ Key spec fields:
   Prometheus Operator integration (`auto`/`enabled`/`disabled`), and k8up
   backup annotations.
 
+<CodeBlock language="yaml" title="config/samples/full-setup/mailserver.yaml">{ServerSample}</CodeBlock>
+
 ### `MailDomain`
 
 Owns the public DNS records of one domain: DKIM (selector + key rotation with
@@ -84,6 +94,8 @@ publishes), MTA-STS, and TLS-RPT.
 - `status.records` is the contract for DNS verification: every required
   record with name, type, expected value, and `verified` state.
 
+<CodeBlock language="yaml" title="config/samples/full-setup/maildomain.yaml">{DomainSample}</CodeBlock>
+
 ### `MailDirectory`
 
 Points at the external user directory (accounts are managed outside CNMS):
@@ -91,6 +103,13 @@ Points at the external user directory (accounts are managed outside CNMS):
 Postfix recipient validation (unknown recipients tempfail when the directory
 is down) and Dovecot authentication (submission and IMAP). `status` carries a
 `Ready` condition for reachability.
+
+<CodeBlock language="yaml" title="config/samples/full-setup/maildirectory.yaml">{DirectorySample}</CodeBlock>
+
+The files above are part of the draft scenario in
+`config/samples/full-setup/`; the
+[install and operate guide](../how-to/02-install-and-operate.mdx#example-scenario)
+shows how to apply it.
 
 ## How they fit together
 

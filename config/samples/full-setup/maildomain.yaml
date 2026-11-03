@@ -1,0 +1,45 @@
+# DRAFT: part of a complete example scenario, not an agreed reference.
+# Two domains served by one MailServer. dnsMode manual: the required DNS
+# records are listed in each MailDomain's status for you to create at
+# your DNS host.
+apiVersion: cnms.rpp.gmbh/v1alpha1
+kind: MailDomain
+metadata:
+  labels:
+    app.kubernetes.io/name: cloud-native-mail-service
+    app.kubernetes.io/managed-by: kustomize
+  name: example-com
+spec:
+  domain: example.com
+  dnsMode: manual
+  dkim:
+    selectorPrefix: cnms
+    rotation:
+      interval: 2160h
+      overlap: 24h
+  dmarc:
+    policy: quarantine
+    rua: dmarc-feedback@example.com
+    testing: true
+  mtaSts:
+    enabled: false
+  tlsRpt:
+    enabled: true
+    rua: tls-rpt@example.com
+---
+apiVersion: cnms.rpp.gmbh/v1alpha1
+kind: MailDomain
+metadata:
+  labels:
+    app.kubernetes.io/name: cloud-native-mail-service
+    app.kubernetes.io/managed-by: kustomize
+  name: example-net
+spec:
+  domain: example.net
+  dnsMode: manual
+  dkim:
+    selectorPrefix: cnms
+  dmarc:
+    policy: none
+    rua: dmarc-feedback@example.net
+    testing: true
