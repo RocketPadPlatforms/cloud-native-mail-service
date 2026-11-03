@@ -273,14 +273,10 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	// The signing keys of the domains that are rendered (ADR 0011). A
 	// domain without a usable key is still served; its outbound mail
 	// fails closed in the guard, so the rollout does not wait for it.
-	keys, err := r.collectDKIMKeys(ctx, server, domains.Items, renderDomains)
+	keys, err := r.reconcileDKIMKeys(ctx, server, domains.Items, renderDomains)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	prevDKIM := meta.FindStatusCondition(*conds, ConditionDKIMKeysAvailable).DeepCopy()
-	dkimStatus, dkimReason, dkimMessage := dkimCondition(renderDomains, keys)
-	setCondition(conds, generation, ConditionDKIMKeysAvailable, dkimStatus, dkimReason, dkimMessage)
-	r.emitDKIMEvent(server, prevDKIM, dkimStatus, dkimMessage)
 
 	// Render and apply the data plane.
 	certCRDs, err := r.crdsAvailable(ctx, crdCertificate)
@@ -363,11 +359,7 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	setCondition(conds, generation, conditionReady,
 		conditionStatus(reason == ReasonReady), reason, message)
 	res, err := r.finish(ctx, server, orig, prevReady)
-	if err == nil && dkimStatus == metav1.ConditionFalse {
-		// Key Secrets are not watched: look for the missing key again.
-		res.RequeueAfter = min(res.RequeueAfter, dkimKeyRetry)
-	}
-	return res, err
+	return keys.requeue(res), err
 }
 
 // applyGuarded applies the render for domains and users. If the

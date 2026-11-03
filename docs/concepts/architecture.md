@@ -22,7 +22,7 @@ import Mermaid from '@theme/Mermaid';
     subgraph dp ["Data plane (one isolated set per MailServer)"]
         LB["Service (LoadBalancer)<br/>25 inbound, 587 submission"] --> PF["Postfix (StatefulSet)<br/>SMTP in, submission, outbound"]
         PF -->|"LMTP"| DC["Dovecot<br/>IMAP, LMTP, SASL auth"]
-        PF -->|"milter (inet:) + tempfail"| RP["Rspamd (Deployment)<br/>filtering, rate limits<br/>(DKIM signing: Phase 5)"]
+        PF -->|"milter (inet:) + tempfail"| RP["Rspamd (Deployment)<br/>filtering, rate limits<br/>DKIM signing + guard"]
         RP --- VK["Valkey<br/>(rate limits, reputation, Bayes)"]
     end
     CFG --> PF
@@ -56,7 +56,7 @@ namespace — nothing is shared between servers
 | Workload | Kind | Role |
 |---|---|---|
 | Postfix | StatefulSet, 2+ replicas | SMTP in (port 25 behind postscreen), submission (587), outbound delivery; one queue PVC per replica |
-| Rspamd | Deployment, 2+ replicas | Filtering, SPF/DMARC checks, rate limits; DKIM signing arrives in Phase 5 |
+| Rspamd | Deployment, 2+ replicas | Filtering, SPF/DMARC checks, rate limits, DKIM signing with a guard that defers unsigned mail ([DKIM signing](dkim-signing.md)) |
 | Valkey | one instance per server | Rspamd state (rate limits, reputation, Bayes) |
 | Dovecot | StatefulSet, single replica | IMAP, LMTP delivery from Postfix, SASL authentication for submission |
 

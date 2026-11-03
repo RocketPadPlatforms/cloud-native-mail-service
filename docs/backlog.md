@@ -9,6 +9,10 @@ committed.
 - Bind the submission login to the sender address (`smtpd_sender_login_maps`
   plus `reject_sender_login_mismatch` on port 587; ADR 0008 amendment). Not
   rendered today, so any authenticated user can use any sender address.
+- Bind the header From to the login: sender-login maps check only
+  `MAIL FROM`, so an authenticated user can still put any served domain in
+  the header From and get it signed; this needs an Rspamd or milter-side
+  check (ADR 0013, section 3).
 - `MailDirectory` has no controller yet: the empty scaffold was removed so
   the operator holds no write access to it. Phase 3 re-scaffolds it with
   `kubebuilder create api --group cnms --version v1alpha1 --kind MailDirectory
@@ -30,14 +34,13 @@ committed.
 - Make the Secrets of bring-your-own keys cheaper to follow: they are read
   every five minutes because Secrets are not cached; a metadata-only watch
   on labelled Secrets would react at once.
-- A "never unsigned" guard in Rspamd: a postfilter Lua rule that calls
-  `task:set_pre_result('soft reject', ...)` for authenticated or local mail
-  without `DKIM_SIGNED`. Exempt the empty-sender mail Postfix generates itself
-  (bounces, notifications): the Postfix MILTER_README says `non_smtpd_milters`
-  must not reject or tempfail it. Also decide
-  `internal_mail_filter_classes = bounce, notify` (whether locally generated
-  bounces are signed) with the same caveats; not set today. Check key
-  presence before rollout.
+- Sign the bounces and notifications Postfix generates itself
+  (`internal_mail_filter_classes = bounce, notify`): revisit with a Postfix
+  that sets `{postfix_internal_origin}`, so the guard can tell them from
+  `sendmail` mail (ADR 0013).
+- Run the guard test table against the pinned Rspamd image in CI, and test
+  that a re-injected message (`postsuper -r`, queue rescue) is guarded
+  correctly (ADR 0013, section 6).
 - DNS TXT proof of control on `MailDomainGrant` (`verification.dnsTXT`), for
   self-service domain onboarding (see ADR 0003).
 - Additive `MailDomainGrant` fields: `allowedClusterIssuers`,
@@ -49,6 +52,14 @@ committed.
 - Reconsider a ValidatingAdmissionPolicy for early rejection (dropped in
   ADR 0003).
 - DANE/DNSSEC automation.
+- Tighten the DMARC `rua`/`ruf` (and `tlsRpt.rua`) address pattern to
+  printable ASCII without `#` (the local part of a `mailto:` URI).
+- When PROXY protocol is added to the inbound Service, a client must not be
+  able to claim `127.0.0.1` or `::1`: that address is in `sign_networks` and
+  counts as a signed source for the guard (ADR 0013).
+- Keep Ed25519 keys published for the overlap when `ed25519` is switched off
+  on a `MailDomain` that has no rotation annotation (today they are deleted
+  at once).
 
 ## Phase 7: IP management
 
@@ -56,6 +67,9 @@ committed.
 
 ## Phase 9: hardening, backup and observability
 
+- Metric and alert for the deferrals of the DKIM guard (`451 4.7.1`,
+  `cnms_dkim_guard`) and for a `MailServer` whose `DKIMKeysAvailable` stays
+  `False` (ADR 0013).
 - Sync the k8up annotations onto the PVCs of an existing StatefulSet (the
   claim templates are immutable, so toggling `spec.backup.enabled` or
   upgrading does not reach volumes that already exist) and remove them when

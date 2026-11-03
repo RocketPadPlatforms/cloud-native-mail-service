@@ -6,8 +6,8 @@ sidebar_label: Overview
 
 CNMS is a Kubernetes operator by Rocket Pad Platforms that runs and manages
 email servers on Kubernetes: **Postfix** (SMTP in/out, relay), **Rspamd**
-with **Valkey** (spam filtering, SPF/DMARC checks, rate limits; DKIM signing
-is planned), and **Dovecot** (IMAP, LMTP, SASL authentication).
+with **Valkey** (spam filtering, SPF/DMARC checks, rate limits, DKIM
+signing), and **Dovecot** (IMAP, LMTP, SASL authentication).
 
 The operator is a control plane, not an MTA: it renders configuration for
 proven software and manages its lifecycle. Control plane and data plane are
@@ -17,11 +17,12 @@ separate — if the operator is down, mail keeps flowing.
 change. Upgrade notes are published for every release.
 
 :::danger
-**DKIM signing is not implemented yet** (Phase 5): outbound mail currently
-leaves unsigned. Users come only from the static test users (a test
-feature); a `MailDirectory` is checked for existence but not queried until
-Phase 3, so recipient validation and login know no other user. Do not send
-production mail from a CNMS server yet.
+Mail of authenticated senders is signed with the DKIM keys of the
+`MailDomain`; a served domain without a usable key defers its outbound
+mail (`451 4.7.1`) instead of sending it unsigned. Users come only from
+the static test users (a test feature); a `MailDirectory` is checked for
+existence but not queried until Phase 3, so recipient validation and login
+know no other user. Do not send production mail from a CNMS server yet.
 :::
 
 ## What CNMS gives you
@@ -29,15 +30,18 @@ production mail from a CNMS server yet.
 - **Mail servers as custom resources.** Declare a `MailServer` and CNMS runs
   the full data plane — Postfix, Rspamd, Valkey and Dovecot — with
   production-grade defaults: TLS, rate limits and recipient validation
-  (against the static test users until the directory phase); DKIM signing
-  follows with the `MailDomain` phase.
+  (against the static test users until the directory phase), and DKIM
+  signing with the keys of the `MailDomain`.
 - **Reputation isolation.** Every `MailServer` owns its workloads, queues,
   sending addresses, DKIM keys and HELO names, so several mail systems on
-  one cluster never share sender reputation. Workloads, queues, Rspamd and
-  Valkey are isolated today; DKIM keys follow in Phase 5 and sending
-  addresses in Phase 7.
+  one cluster never share sender reputation. Workloads, queues, Rspamd,
+  Valkey and DKIM keys are isolated today; sending addresses follow in
+  Phase 7.
 - **Mail is never lost to a component outage.** Filtering or lookup
   failures delay mail (4xx and queueing) — they never reject it.
+- **Mail is never sent unsigned.** Mail of authenticated senders and
+  Postfix's own non-SMTP mail leaves signed or not at all: a domain
+  without a usable key defers its outbound mail until it has one.
 - **Users stay outside the operator by default.** Mailboxes and accounts come
   from an external directory (LDAP or SQL); CNMS only configures Postfix and
   Dovecot to query it. Environments without a directory service use

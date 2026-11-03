@@ -30,8 +30,9 @@ func TestActiveKeys(t *testing.T) {
 		},
 	}
 	selectors := func(domain string) []string {
-		var out []string
-		for _, k := range req.ActiveKeys(domain) {
+		keys := req.ActiveKeys(domain)
+		out := make([]string, 0, len(keys))
+		for _, k := range keys {
 			out = append(out, k.Selector)
 		}
 		return out

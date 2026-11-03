@@ -3,14 +3,9 @@
 The design rule for every component failure is the same: **mail must
 never be lost because a component is down.** Outages produce
 temporary failures (4xx responses and queueing), never permanent
-rejections, and never lost messages. Outgoing mail must never leave
-unsigned once DKIM signing exists.
-
-:::danger
-**DKIM signing is not implemented yet** (Phase 5): outbound mail
-currently leaves unsigned. The "nothing unsigned is sent" statements
-below describe the target behaviour and do not hold until then.
-:::
+rejections, and never lost messages. Mail of authenticated senders
+and Postfix's own non-SMTP mail must never leave unsigned: it is
+signed or deferred ([ADR 0013](../decisions/0013-never-unsigned-guard.md)).
 
 This page describes the intended behaviour; the chaos e2e suite
 (kill a Postfix pod, kill Rspamd, stop the operator, ...) proves it
@@ -21,8 +16,9 @@ from the hardening phase on.
 | Failure | Behaviour |
 |---|---|
 | Operator down | Mail keeps flowing; rollouts, rotation and status updates pause |
-| Rspamd down (all replicas) | Mail tempfails into the Postfix queues (4xx to remote senders); nothing unsigned is sent (once DKIM signing exists) |
-| Valkey down | Rspamd degrades (rate limits and learned state unavailable); mail still flows (and is signed once DKIM signing exists) |
+| Rspamd down (all replicas) | Mail tempfails into the Postfix queues (4xx to remote senders); nothing unsigned is sent |
+| Rspamd up, but a domain has no usable DKIM key | Outbound mail of that domain is deferred (`451 4.7.1`, the sender keeps it); inbound mail and the other domains are not affected; `DKIMKeysAvailable=False` names the key |
+| Valkey down | Rspamd degrades (rate limits and learned state unavailable); mail still flows and is still signed |
 | User directory down | Unknown-recipient lookups tempfail (4xx, not 5xx); Dovecot authentication fails so submission is deferred by the sender |
 | Postfix replica lost | Queued mail survives on the per-replica queue PVC; remaining replicas keep serving; the lost replica is replaced |
 | Scale-down of Postfix | Not supported yet: the queue move is not implemented, so decreasing `postfix.replicas` is rejected |
@@ -56,10 +52,27 @@ the mail is not accepted unsigned and not rejected. Mail that
 Postfix receives locally (`sendmail`, `postdrop`) is filtered through
 `non_smtpd_milters`, so it is held the same way. Mail that Postfix
 generates itself (bounces, notifications) skips the filter, because
-`internal_mail_filter_classes` is not set yet (backlog). Once DKIM signing exists (Phase 5), a missing signature
-must also result in a tempfail for authenticated senders, so an
-up-but-broken filter cannot release unsigned mail; that guard is not
-implemented yet.
+`internal_mail_filter_classes` is not set (Postfix 3.11.7 cannot tell
+that mail from `sendmail` mail, [ADR 0013](../decisions/0013-never-unsigned-guard.md)),
+so bounces are unsigned.
+
+### Rspamd up, but nothing to sign with
+
+A reachable filter is not enough: Rspamd passes a message through
+unsigned when its key is missing. A guard in the Rspamd configuration
+therefore checks that every message of an authenticated sender, or of
+Postfix itself, from a served domain carries the signature of every
+active key of the domain. If one is missing, Rspamd answers soft reject,
+Postfix replies `451 4.7.1` at the end of DATA, and the sending client
+keeps the mail and retries. Unauthenticated mail (including mail from
+other pods), mail of domains the server does not serve, and mail
+that is rejected anyway are not touched. A message with several `From`
+addresses, one of them in a served domain, can never be signed and is
+rejected with `554 5.7.1`. A guard that fails with an error logs it and
+defers the mail of authenticated senders and Postfix's own `sendmail(1)`
+mail (loopback with a sender) too. The key Secrets are read through
+a mounted volume, so a deleted Secret defers the domain's mail instead of
+sending it unsigned or crashing the pod.
 
 ### Valkey down
 

@@ -25,8 +25,9 @@ How domain authorization works is explained in
 Not every resource has a controller yet. `MailServer`, `MailDomain` and
 `MailDomainGrant` are reconciled. `MailDomain` generates and rotates DKIM
 keys and lists and verifies its DNS records
-([how-to](../how-to/dkim-keys-and-dns-records.mdx)); the data plane does
-not sign with the keys yet. `MailDirectory` is API only: the `MailServer`
+([how-to](../how-to/dkim-keys-and-dns-records.mdx)), and the `MailServer`
+hands the active keys to Rspamd ([DKIM signing](dkim-signing.md)).
+`MailDirectory` is API only: the `MailServer`
 controller reads its existence, but nothing queries a directory and its
 status stays empty. See the [roadmap](../roadmap.md) for the phase of
 each part.
@@ -64,8 +65,8 @@ Key spec fields:
   a `MailIPPoolClaim`) or `relay` (a smart host; the `MailRelay` resource
   arrives with the relay phase).
 - `domains` — the `MailDomain`s this server handles: they are accepted
-  for delivery and submission once authorized, and signed with DKIM from
-  Phase 5 on.
+  for delivery and submission once authorized, and their outbound mail
+  is signed with the DKIM keys of the `MailDomain`.
 - `tls` — the cert-manager issuer the server certificate comes from.
 - `submission`, `mailboxes` — enable submission (on by default) and Dovecot
   mail storage (off by default). With submission on and mailboxes off,

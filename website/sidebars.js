@@ -23,6 +23,7 @@ module.exports = {
       items: [
         'concepts/resource-model',
         'concepts/domain-authorization',
+        'concepts/dkim-signing',
         'concepts/architecture',
         'concepts/control-vs-data-plane',
         'concepts/reputation-isolation',

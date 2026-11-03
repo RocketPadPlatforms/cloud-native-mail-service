@@ -8,7 +8,7 @@ Background on how CNMS works:
 - [Control plane vs data plane](control-vs-data-plane.md) (why mail flows when the operator is down)
 - [Reputation isolation](reputation-isolation.md) (one mail system, one reputation)
 - [Failure modes](failure-modes.md) (what happens when a component goes down)
+- [DKIM signing and rotation](dkim-signing.md) (keys, the never-unsigned guard, rotation)
 - IP pools and claims (arrives with the IP management phase)
-- DKIM key rotation (arrives with the domain phase)
 
 See the [roadmap](../roadmap.md).

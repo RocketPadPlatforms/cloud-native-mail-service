@@ -12,8 +12,11 @@ arrives with the release (Phase 10).
 :::
 
 :::danger
-**DKIM signing is not implemented yet** (Phase 5): outbound mail leaves
-unsigned. Do not send production mail from a CNMS server before then.
+Outbound mail of authenticated senders is signed with the keys of the
+`MailDomain` ([DKIM keys](dkim-keys-and-dns-records.mdx)). A served
+domain without a usable key defers its outbound mail (`451 4.7.1`)
+instead of sending it unsigned. Users come only from the static test
+users, so do not send production mail from a CNMS server yet.
 :::
 
 ## Install

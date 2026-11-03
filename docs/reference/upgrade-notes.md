@@ -27,7 +27,7 @@ prune the old field names.
 - **`MailDomain.spec.dkim.rotation.overlap` defaults to 120h** (was
   24h), which covers the Postfix queue lifetime of 5 days. An interval
   of 5 days or less is rejected unless `overlap` is set to a shorter
-  value.
+  value. The overlap must be positive.
 - **`MailDomain.spec.dmarc.testing` publishes `t=y`** with its RFC 9989
   meaning (receivers apply the policy one level lower), not "evaluated
   but not enforced".
@@ -55,8 +55,12 @@ prune the old field names.
   `cnms.rpp.gmbh/maildomain`, no owner reference, kept when the
   `MailDomain` is deleted) and the annotation `cnms.rpp.gmbh/rotation`.
   Tell your GitOps tool to ignore that annotation. An unauthorized
-  domain gets neither. Its status lists the required DNS records; the
-  data plane does not sign with the keys yet.
+  domain gets neither. Its status lists the required DNS records.
+- **The MTA-STS policy lists the hosts of the `MailServer`s** that serve
+  the domain (the primary domain of each server). Without such a server
+  `MTASTSReady` is `False` with reason `NoMailServer` and there is no
+  policy. The `MailDomain` controller needs `get`, `list` and `watch` on
+  `mailservers` (the operator role has them already).
 - **New operator flag `--dns-resolver=host:port`** (default: the system
   resolver of the pod) for the verification of the records.
 - **New RBAC:** `patch` on `maildomains` (the annotation), and, for the
@@ -69,9 +73,34 @@ prune the old field names.
 - **`externalDNS` mode needs `--managed-record-types=TXT`** on the
   external-dns instance and a tenant-proof setup, see
   [DKIM keys and DNS records](../how-to/dkim-keys-and-dns-records.mdx).
+- **A selector with more than one DKIM TXT record is not verified.**
+  Receivers cannot tell which record applies, so the operator no longer
+  switches signing to a key that they may not find. Remove the extra
+  records.
+- **A `MailServer` leaves out a domain that is a public suffix** such as
+  `co.uk` (`DomainsAuthorized`, reason `PublicSuffix`), as the
+  `MailDomain` controller already did.
 
 ### Data plane
 
+- **Outbound mail now fails closed without a DKIM key.** Rspamd signs
+  the mail of authenticated senders and Postfix's own non-SMTP mail with
+  the active keys of the `MailDomain`s a server serves, and a guard defers
+  such mail (`451 4.7.1`) when a signature is missing. Before, nothing was
+  signed and everything left unsigned. After the upgrade, a served domain
+  that has no usable key (a `MailDomain` that is not authorized or not
+  reconciled yet, your own key Secret missing or invalid) sends nothing
+  until it has one; `DKIMKeysAvailable` on the `MailServer` names it. Check
+  that every `MailDomain` of a server is `Authorized` and has its key
+  before the upgrade rolls Rspamd. Mail from a signed sender with several
+  `From` addresses, one of them in a served domain, is rejected with
+  `554 5.7.1` (locally submitted mail of that kind bounces to its
+  sender); it can never be signed. An error in the guard defers the mail
+  of authenticated senders and loopback mail with a sender. Unauthenticated
+  mail from other pods and the bounces Postfix generates are not signed.
+  The Rspamd pods roll once (a new `dkim_signing.conf` and
+  `rspamd.local.lua`, validated by a Job first), and mount the keys in a
+  read-only volume at `/etc/rspamd/dkim`.
 - **Dovecot listens on the container ports 31024 (LMTP), 31143 (IMAP)
   and 31993 (IMAPS)**; the Service ports stay 24, 143 and 993. The auth
   port is 12345. When the Dovecot pod rolls to the new ports there is a
