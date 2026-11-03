@@ -139,7 +139,7 @@ type TLS struct {
 	// `"<name>-tls"`.
 	// +optional
 	// +kubebuilder:validation:MaxLength=253
-	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`
 	SecretName *string `json:"secretName,omitempty"`
 }
 
@@ -153,7 +153,7 @@ type IssuerReference struct {
 	// Name of the issuer.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MaxLength=253
-	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`
 	Name string `json:"name"`
 }
 
@@ -195,7 +195,7 @@ type InsecureStaticUsers struct {
 	// Name of the Secret in the same namespace.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MaxLength=253
-	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`
 	SecretName string `json:"secretName"`
 }
 
@@ -212,11 +212,13 @@ type Mailboxes struct {
 	// change, and existing volumes are resized manually (ADR 0010).
 	// +optional
 	// +kubebuilder:default="10Gi"
+	// +kubebuilder:validation:XValidation:rule="quantity(string(self)).isGreaterThan(quantity('0'))",message="must be greater than zero"
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="storage is immutable; resize the PersistentVolumeClaim manually"
 	Storage *resource.Quantity `json:"storage,omitempty"`
 
 	// Per-user quota. Unset means no quota.
 	// +optional
+	// +kubebuilder:validation:XValidation:rule="quantity(string(self)).isGreaterThan(quantity('0'))",message="must be greater than zero"
 	Quota *resource.Quantity `json:"quota,omitempty"`
 }
 
@@ -235,6 +237,7 @@ type Postfix struct {
 	// change, and existing volumes are resized manually (ADR 0010).
 	// +optional
 	// +kubebuilder:default="1Gi"
+	// +kubebuilder:validation:XValidation:rule="quantity(string(self)).isGreaterThan(quantity('0'))",message="must be greater than zero"
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="queueStorage is immutable; resize the PersistentVolumeClaims manually"
 	QueueStorage *resource.Quantity `json:"queueStorage,omitempty"`
 }
@@ -263,15 +266,19 @@ type Valkey struct {
 	// enabled.
 	// +nullable
 	// +optional
+	// +kubebuilder:validation:XValidation:rule="quantity(string(self)).isGreaterThan(quantity('0'))",message="must be greater than zero"
 	Storage *resource.Quantity `json:"storage,omitempty"`
 }
 
 // Availability configures disruption budgets and topology spread.
 type Availability struct {
 	// Minimum available Postfix replicas (PodDisruptionBudget).
-	// Defaults to 1.
+	// Defaults to 1. An integer or a percentage such as "50%"; a
+	// string without "%" is rejected by the PodDisruptionBudget
+	// validation, so it is rejected here as well.
 	// +optional
-	// +kubebuilder:default="1"
+	// +kubebuilder:default=1
+	// +kubebuilder:validation:XValidation:rule="type(self) == int ? self >= 0 : self.matches('^(100|[1-9]?[0-9])%$')",message="must be a non-negative integer or a percentage such as 50%"
 	PostfixMinAvailable *intstr.IntOrString `json:"postfixMinAvailable,omitempty"`
 
 	// Topology spread constraints for mail server pods.
@@ -284,12 +291,15 @@ type Availability struct {
 type TopologySpread struct {
 	// Maximum allowed skew between topology domains. Defaults to 1.
 	// +optional
+	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:default=1
 	MaxSkew *int32 `json:"maxSkew,omitempty"`
 
-	// Topology key. Defaults to kubernetes.io/hostname.
+	// Topology key, a label key such as "topology.kubernetes.io/zone".
+	// Defaults to kubernetes.io/hostname.
 	// +optional
-	// +kubebuilder:validation:MaxLength=316
+	// +kubebuilder:validation:MaxLength=317
+	// +kubebuilder:validation:Pattern=`^([a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$`
 	// +kubebuilder:default="kubernetes.io/hostname"
 	TopologyKey *string `json:"topologyKey,omitempty"`
 }

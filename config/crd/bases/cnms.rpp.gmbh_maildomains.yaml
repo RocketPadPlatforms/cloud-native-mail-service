@@ -62,17 +62,25 @@ spec:
                       must survive a restore without status.
                     properties:
                       interval:
-                        description: Interval after which the key is rotated.
+                        description: Interval after which the key is rotated. At least
+                          24h.
+                        maxLength: 32
                         type: string
                       overlap:
                         default: 24h0m0s
                         description: |-
                           Overlap during which the old and the new selector are both
-                          valid. Defaults to 24h.
+                          valid. Defaults to 24h; must be shorter than the interval.
+                        maxLength: 32
                         type: string
                     required:
                     - interval
                     type: object
+                    x-kubernetes-validations:
+                    - message: interval must be at least 24h and longer than the overlap
+                        (default 24h)
+                      rule: duration(self.interval) >= duration('24h') && (!has(self.overlap)
+                        || duration(self.overlap) < duration(self.interval))
                   selector:
                     default: cnms
                     description: Selector of the current signing key. Defaults to
@@ -95,12 +103,22 @@ spec:
                     - reject
                     type: string
                   rua:
-                    description: Reporting address for aggregate reports (rua).
+                    description: |-
+                      Reporting address for aggregate reports (rua): a plain email
+                      address without the "mailto:" scheme, which the renderer adds.
+                      Characters that would end the URI or the tag (":", ";", ",", quotes,
+                      "!", whitespace) are rejected.
                     maxLength: 254
+                    pattern: ^[^\x00-\x20\x7f:;,"'!@<>?%\\]+@[a-zA-Z0-9]([-a-zA-Z0-9]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([-a-zA-Z0-9]{0,61}[a-zA-Z0-9])?)+$
                     type: string
                   ruf:
-                    description: Reporting address for failure reports (ruf).
+                    description: |-
+                      Reporting address for failure reports (ruf): a plain email
+                      address without the "mailto:" scheme, which the renderer adds.
+                      Characters that would end the URI or the tag (":", ";", ",", quotes,
+                      "!", whitespace) are rejected.
                     maxLength: 254
+                    pattern: ^[^\x00-\x20\x7f:;,"'!@<>?%\\]+@[a-zA-Z0-9]([-a-zA-Z0-9]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([-a-zA-Z0-9]{0,61}[a-zA-Z0-9])?)+$
                     type: string
                   testing:
                     default: false
@@ -122,20 +140,32 @@ spec:
               domain:
                 description: |-
                   Domain name, e.g. "example.org". Lowercase DNS name with at
-                  least two labels (A-labels only, no trailing dot).
+                  least two labels of up to 63 characters (A-labels only, no
+                  trailing dot). The last label starts with a letter, so an IP
+                  address is not a domain. The same rule applies to the name of a
+                  MailDomainGrant; keep the two patterns in sync. Immutable:
+                  DKIM keys, DNS records and the domain authorization belong to
+                  one domain; create a new MailDomain for another one.
                 maxLength: 253
-                pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$
+                pattern: ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?[.])+[a-z]([a-z0-9-]{0,61}[a-z0-9])?$
                 type: string
+                x-kubernetes-validations:
+                - message: domain is immutable; create a new MailDomain for another
+                    domain
+                  rule: self == oldSelf
               mtaSts:
                 description: MTA-STS policy publication.
                 properties:
                   enabled:
                     default: false
                     description: |-
-                      Publish an MTA-STS policy for this domain. Defaults to false.
-                      The policy endpoint (`https://mta-sts.<domain>/.well-known/
-                      mta-sts.txt`) is served by the CNMS policy server and requires a
-                      valid public certificate for the domain.
+                      Report the MTA-STS policy for this domain. Defaults to false.
+                      MTA-STS is report-only: CNMS does not serve the policy. The
+                      status holds the exact policy text, its id and the required
+                      "_mta-sts" TXT record; the policy has to be served by the
+                      operator of the domain at
+                      `https://mta-sts.<domain>/.well-known/mta-sts.txt` with a valid
+                      public certificate.
                     type: boolean
                 type: object
               tlsRpt:
@@ -146,9 +176,13 @@ spec:
                     description: Enable TLS-RPT for this domain. Defaults to false.
                     type: boolean
                   rua:
-                    description: Reporting address. Defaults to the DMARC rua when
-                      set.
+                    description: |-
+                      Reporting address: a plain email address without the "mailto:"
+                      scheme, which the renderer adds. Characters that would end the
+                      URI or the tag (":", ";", ",", quotes, "!", whitespace) are
+                      rejected. Defaults to the DMARC rua when set.
                     maxLength: 254
+                    pattern: ^[^\x00-\x20\x7f:;,"'!@<>?%\\]+@[a-zA-Z0-9]([-a-zA-Z0-9]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([-a-zA-Z0-9]{0,61}[a-zA-Z0-9])?)+$
                     type: string
                 type: object
             required:
@@ -241,10 +275,12 @@ spec:
                     type: string
                   policyId:
                     description: |-
-                      Monotonically increasing policy id. It changes whenever the
-                      policy content changes.
-                    format: int64
-                    type: integer
+                      Policy id of the "_mta-sts" TXT record. It is derived from the
+                      policy content (a truncated SHA-256), so it changes exactly
+                      when the policy changes and can be re-derived without status.
+                    maxLength: 32
+                    pattern: ^[a-zA-Z0-9]+$
+                    type: string
                 type: object
               observedGeneration:
                 description: ObservedGeneration is the generation of the spec last
@@ -254,7 +290,9 @@ spec:
               records:
                 description: |-
                   Records lists every DNS record required by this domain and
-                  whether a lookup verified it.
+                  whether a lookup verified it. The list is atomic: neither the
+                  name nor name and type identify a record, because one name can
+                  hold several records of the same type (MX, A).
                 items:
                   description: |-
                     DNSRecord is the desired state of one DNS record and its
@@ -285,10 +323,9 @@ spec:
                   - type
                   - value
                   type: object
+                maxItems: 64
                 type: array
-                x-kubernetes-list-map-keys:
-                - name
-                x-kubernetes-list-type: map
+                x-kubernetes-list-type: atomic
             type: object
         required:
         - spec

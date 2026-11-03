@@ -53,14 +53,18 @@ spec:
                 description: LDAP settings. Required when type is "ldap".
                 properties:
                   baseDN:
-                    description: Base DN for user searches.
+                    description: Base DN for user searches. Control characters are
+                      rejected.
                     maxLength: 256
+                    pattern: ^[^\x00-\x1f\x7f]*$
                     type: string
                   bindDN:
-                    description: Bind DN used for searches. Empty means an anonymous
-                      bind.
+                    description: |-
+                      Bind DN used for searches. Empty means an anonymous bind.
+                      Control characters are rejected.
                     maxLength: 256
                     nullable: true
+                    pattern: ^[^\x00-\x1f\x7f]*$
                     type: string
                   bindSecretRef:
                     description: |-
@@ -70,14 +74,16 @@ spec:
                       name:
                         description: Name of the Secret.
                         maxLength: 253
-                        pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                        pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
                         type: string
                     required:
                     - name
                     type: object
                   host:
-                    description: Server host.
+                    description: Server host name or IPv4 address, without a port
+                      (see port).
                     maxLength: 253
+                    pattern: ^[a-zA-Z0-9]([-a-zA-Z0-9]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([-a-zA-Z0-9]{0,61}[a-zA-Z0-9])?)*$
                     type: string
                   port:
                     description: |-
@@ -98,7 +104,7 @@ spec:
                           name:
                             description: Name of the Secret.
                             maxLength: 253
-                            pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                            pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
                             type: string
                         required:
                         - name
@@ -118,10 +124,18 @@ spec:
                     type: object
                   userFilter:
                     description: |-
-                      Search filter for users; %s is replaced with the user's mail
-                      address. Defaults to "(mail=%s)".
+                      Search filter for users. It must contain the engine-neutral
+                      placeholder {user} exactly once; it stands for the user's mail
+                      address. The renderer translates the placeholder and escapes
+                      the value for each engine (Postfix %s, Dovecot %{user}). Control
+                      characters and "%" are rejected. Defaults to "(mail={user})".
                     maxLength: 256
+                    pattern: ^[^\x00-\x1f\x7f%]*$
                     type: string
+                    x-kubernetes-validations:
+                    - message: userFilter must contain the placeholder {user} exactly
+                        once
+                      rule: self.split('{user}').size() == 2
                 required:
                 - baseDN
                 - host
@@ -137,12 +151,17 @@ spec:
                 description: SQL settings. Required when type is "sql".
                 properties:
                   database:
-                    description: Database name.
+                    description: |-
+                      Database name: letters, digits, "_", "-" and "." only, so that
+                      the value cannot add keywords to the connection string.
                     maxLength: 63
+                    pattern: ^[A-Za-z0-9_][A-Za-z0-9_.-]*$
                     type: string
                   host:
-                    description: Server host.
+                    description: Server host name or IPv4 address, without a port
+                      (see port).
                     maxLength: 253
+                    pattern: ^[a-zA-Z0-9]([-a-zA-Z0-9]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([-a-zA-Z0-9]{0,61}[a-zA-Z0-9])?)*$
                     type: string
                   passwordSecretRef:
                     description: Secret with the database password (key "password").
@@ -150,7 +169,7 @@ spec:
                       name:
                         description: Name of the Secret.
                         maxLength: 253
-                        pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                        pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
                         type: string
                     required:
                     - name
@@ -173,7 +192,7 @@ spec:
                           name:
                             description: Name of the Secret.
                             maxLength: 253
-                            pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                            pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
                             type: string
                         required:
                         - name
@@ -191,8 +210,11 @@ spec:
                         type: string
                     type: object
                   username:
-                    description: Database user.
+                    description: |-
+                      Database user: letters, digits, "_", "-" and "." only, so that
+                      the value cannot add keywords to the connection string.
                     maxLength: 63
+                    pattern: ^[A-Za-z0-9_][A-Za-z0-9_.-]*$
                     type: string
                 required:
                 - database
@@ -201,7 +223,9 @@ spec:
                 - username
                 type: object
               type:
-                description: Directory type.
+                description: |-
+                  Directory type. "sql" means PostgreSQL; other SQL servers are
+                  not supported.
                 enum:
                 - ldap
                 - sql

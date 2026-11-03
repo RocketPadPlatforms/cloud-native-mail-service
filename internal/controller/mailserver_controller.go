@@ -41,6 +41,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -72,6 +73,11 @@ const (
 	// hides client addresses from Postfix. It is a warning only: it
 	// never feeds into Ready.
 	ConditionClientIPPreserved = "ClientIPPreserved"
+	// ConditionNodeDrainable is false when the Postfix disruption
+	// budget allows no voluntary disruption, so a node drain waits
+	// until the budget or the replica count is changed. It is a
+	// warning only: it never feeds into Ready.
+	ConditionNodeDrainable = "NodeDrainable"
 	// conditionReady rolls up all other conditions.
 	conditionReady = "Ready"
 )
@@ -302,6 +308,8 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	setCondition(conds, generation, ConditionObservability, obsStatus, obsReason, obsMessage)
 	ipStatus, ipReason, ipMessage := clientIPPreserved(server)
 	setCondition(conds, generation, ConditionClientIPPreserved, ipStatus, ipReason, ipMessage)
+	drainStatus, drainReason, drainMessage := nodeDrainable(server)
+	setCondition(conds, generation, ConditionNodeDrainable, drainStatus, drainReason, drainMessage)
 	if g.want != nil && rollout.ready {
 		// This pass applied the workloads and their rollout finished:
 		// nothing runs the superseded configuration anymore. While a
@@ -524,6 +532,22 @@ func clientIPPreserved(server *cnmsv1alpha1.MailServer) (metav1.ConditionStatus,
 	}
 	return metav1.ConditionTrue, "Preserved",
 		"client addresses reach Postfix unchanged for postscreen and rate limits"
+}
+
+// nodeDrainable reports whether the Postfix disruption budget lets a
+// node drain evict a pod: the budget needs at least one replica more
+// than it keeps available.
+func nodeDrainable(server *cnmsv1alpha1.MailServer) (metav1.ConditionStatus, string, string) {
+	replicas := manifests.PostfixReplicas(server)
+	minAvailable := manifests.PostfixMinAvailable(server)
+	// An invalid percentage cannot get past the API; treat it as drainable.
+	keep, err := intstr.GetScaledValueFromIntOrPercent(&minAvailable, int(replicas), true)
+	if err == nil && keep >= int(replicas) {
+		return metav1.ConditionFalse, "BudgetBlocksDrain", fmt.Sprintf(
+			"postfixMinAvailable %s keeps all %d Postfix replicas available, so evicting a pod is never allowed and a node drain waits; add replicas or lower postfixMinAvailable",
+			minAvailable.String(), replicas)
+	}
+	return metav1.ConditionTrue, "Drainable", "the Postfix disruption budget allows evicting one pod at a time"
 }
 
 // setValidationCondition records the validation gate state and emits

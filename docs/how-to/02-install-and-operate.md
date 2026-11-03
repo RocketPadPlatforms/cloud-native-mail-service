@@ -63,7 +63,8 @@ the first failing sub-condition:
 | `WorkloadsReady` | every data-plane workload finished its rollout (latest spec observed, all replicas on the desired template and ready) | `Progressing` while converging, `RolloutStalled` after a Deployment exceeds its progress deadline or the workloads stay not ready for 10 minutes (the message lists which) |
 | `Observability` | the Prometheus Operator integration matches `spec.observability.prometheusOperator` (`auto` is the default) | `CRDsRequired` (setting `enabled` without the ServiceMonitor CRDs) |
 | `ClientIPPreserved` | Postfix sees the real client address (postscreen and the per-client rate limits depend on it); informational, never part of `Ready` | `ClusterTrafficPolicy` (`inbound.externalTrafficPolicy: Cluster` on a LoadBalancer Service source-NATs clients, so the rate limits count all senders together; use `Local`) |
-| `Ready` | all of the above (except `ClientIPPreserved`) | propagated reasons, e.g. `DirectoryNotFound`, `StaticUsersInvalid`, `OwnershipConflict`, `RelayNotAvailable` (Phase 6), `IpPoolClaimNotAvailable` (Phase 7) |
+| `NodeDrainable` | the Postfix disruption budget allows evicting one pod at a time; informational, never part of `Ready` | `BudgetBlocksDrain` (`postfixMinAvailable` keeps every replica available, for example the default `1` with `postfix.replicas: 1`, so a node drain waits; add replicas or lower the budget) |
+| `Ready` | all of the above (except `ClientIPPreserved` and `NodeDrainable`) | propagated reasons, e.g. `DirectoryNotFound`, `StaticUsersInvalid`, `OwnershipConflict`, `RelayNotAvailable` (Phase 6), `IpPoolClaimNotAvailable` (Phase 7) |
 
 The operator only changes objects it controls. If an object it needs
 (for example a Service named `<server>-postfix`) already exists and has

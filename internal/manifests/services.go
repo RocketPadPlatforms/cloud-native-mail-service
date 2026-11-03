@@ -295,13 +295,27 @@ func networkPolicies(server *cnmsv1alpha1.MailServer) []client.Object {
 	return []client.Object{ingress, egress, egressSMTP, egressRspamd}
 }
 
-// postfixPodDisruptionBudget is the Postfix disruption budget
-// (spec.availability.postfixMinAvailable, default 1).
-func postfixPodDisruptionBudget(server *cnmsv1alpha1.MailServer) *policyv1.PodDisruptionBudget {
-	minAvailable := intstr.FromInt32(1)
-	if server.Spec.Availability != nil && server.Spec.Availability.PostfixMinAvailable != nil {
-		minAvailable = *server.Spec.Availability.PostfixMinAvailable
+// PostfixReplicas is the effective number of Postfix replicas
+// (spec.postfix.replicas, default 2).
+func PostfixReplicas(server *cnmsv1alpha1.MailServer) int32 {
+	if server.Spec.Postfix == nil {
+		return 2
 	}
+	return int32Value(server.Spec.Postfix.Replicas, 2)
+}
+
+// PostfixMinAvailable is the effective minAvailable of the Postfix
+// disruption budget (spec.availability.postfixMinAvailable, default 1).
+func PostfixMinAvailable(server *cnmsv1alpha1.MailServer) intstr.IntOrString {
+	if server.Spec.Availability != nil && server.Spec.Availability.PostfixMinAvailable != nil {
+		return *server.Spec.Availability.PostfixMinAvailable
+	}
+	return intstr.FromInt32(1)
+}
+
+// postfixPodDisruptionBudget is the Postfix disruption budget.
+func postfixPodDisruptionBudget(server *cnmsv1alpha1.MailServer) *policyv1.PodDisruptionBudget {
+	minAvailable := PostfixMinAvailable(server)
 	return &policyv1.PodDisruptionBudget{
 		ObjectMeta: objectMeta(server, render.ServiceName(server.Name, render.ComponentPostfix), render.ComponentPostfix),
 		Spec: policyv1.PodDisruptionBudgetSpec{

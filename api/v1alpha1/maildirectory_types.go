@@ -39,7 +39,8 @@ const (
 //
 // +kubebuilder:validation:XValidation:rule="has(self.ldap) != has(self.sql) && ((self.type == 'ldap' && has(self.ldap)) || (self.type == 'sql' && has(self.sql)))",message="exactly one of ldap or sql must be set and must match type"
 type MailDirectorySpec struct {
-	// Directory type.
+	// Directory type. "sql" means PostgreSQL; other SQL servers are
+	// not supported.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Enum=ldap;sql
 	Type DirectoryType `json:"type"`
@@ -58,9 +59,10 @@ type MailDirectorySpec struct {
 // +kubebuilder:validation:XValidation:rule="!has(self.bindDN) || has(self.bindSecretRef)",message="bindSecretRef is required when bindDN is set"
 // +kubebuilder:validation:XValidation:rule="!has(self.bindDN) || !has(self.tls) || !has(self.tls.mode) || self.tls.mode != 'None'",message="bindDN must not be set when tls.mode is None (cleartext bind)"
 type LDAP struct {
-	// Server host.
+	// Server host name or IPv4 address, without a port (see port).
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-zA-Z0-9]([-a-zA-Z0-9]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([-a-zA-Z0-9]{0,61}[a-zA-Z0-9])?)*$`
 	Host string `json:"host"`
 
 	// Server port. Unset means the operator picks 389, or 636 when
@@ -74,15 +76,18 @@ type LDAP struct {
 	// +optional
 	TLS *LDAPTLS `json:"tls,omitempty"`
 
-	// Base DN for user searches.
+	// Base DN for user searches. Control characters are rejected.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MaxLength=256
+	// +kubebuilder:validation:Pattern=`^[^\x00-\x1f\x7f]*$`
 	BaseDN string `json:"baseDN"`
 
 	// Bind DN used for searches. Empty means an anonymous bind.
+	// Control characters are rejected.
 	// +nullable
 	// +optional
 	// +kubebuilder:validation:MaxLength=256
+	// +kubebuilder:validation:Pattern=`^[^\x00-\x1f\x7f]*$`
 	BindDN *string `json:"bindDN,omitempty"`
 
 	// Secret with the bind password (key "password"). Required when
@@ -90,10 +95,15 @@ type LDAP struct {
 	// +optional
 	BindSecretRef *SecretReference `json:"bindSecretRef,omitempty"`
 
-	// Search filter for users; %s is replaced with the user's mail
-	// address. Defaults to "(mail=%s)".
+	// Search filter for users. It must contain the engine-neutral
+	// placeholder {user} exactly once; it stands for the user's mail
+	// address. The renderer translates the placeholder and escapes
+	// the value for each engine (Postfix %s, Dovecot %{user}). Control
+	// characters and "%" are rejected. Defaults to "(mail={user})".
 	// +optional
 	// +kubebuilder:validation:MaxLength=256
+	// +kubebuilder:validation:Pattern=`^[^\x00-\x1f\x7f%]*$`
+	// +kubebuilder:validation:XValidation:rule="self.split('{user}').size() == 2",message="userFilter must contain the placeholder {user} exactly once"
 	UserFilter *string `json:"userFilter,omitempty"`
 }
 
@@ -132,9 +142,10 @@ type SQLTLS struct {
 
 // SQL configures a SQL user directory (PostgreSQL).
 type SQL struct {
-	// Server host.
+	// Server host name or IPv4 address, without a port (see port).
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-zA-Z0-9]([-a-zA-Z0-9]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([-a-zA-Z0-9]{0,61}[a-zA-Z0-9])?)*$`
 	Host string `json:"host"`
 
 	// Server port. Defaults to 5432.
@@ -144,14 +155,18 @@ type SQL struct {
 	// +kubebuilder:default=5432
 	Port *int32 `json:"port,omitempty"`
 
-	// Database name.
+	// Database name: letters, digits, "_", "-" and "." only, so that
+	// the value cannot add keywords to the connection string.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9_][A-Za-z0-9_.-]*$`
 	Database string `json:"database"`
 
-	// Database user.
+	// Database user: letters, digits, "_", "-" and "." only, so that
+	// the value cannot add keywords to the connection string.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9_][A-Za-z0-9_.-]*$`
 	Username string `json:"username"`
 
 	// Secret with the database password (key "password").

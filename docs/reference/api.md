@@ -29,7 +29,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `postfixMinAvailable` _[IntOrString](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#intorstring-intstr-util)_ | Minimum available Postfix replicas (PodDisruptionBudget).<br />Defaults to 1. | 1 | Optional: \{\} <br /> |
+| `postfixMinAvailable` _[IntOrString](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#intorstring-intstr-util)_ | Minimum available Postfix replicas (PodDisruptionBudget).<br />Defaults to 1. An integer or a percentage such as "50%"; a<br />string without "%" is rejected by the PodDisruptionBudget<br />validation, so it is rejected here as well. | 1 | Optional: \{\} <br /> |
 | `topologySpread` _[TopologySpread](#topologyspread)_ | Topology spread constraints for mail server pods. |  | Optional: \{\} <br /> |
 
 
@@ -79,8 +79,8 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `interval` _[Duration](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#duration-v1-meta)_ | Interval after which the key is rotated. |  | Required: \{\} <br /> |
-| `overlap` _[Duration](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#duration-v1-meta)_ | Overlap during which the old and the new selector are both<br />valid. Defaults to 24h. | 24h0m0s | Optional: \{\} <br /> |
+| `interval` _[Duration](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#duration-v1-meta)_ | Interval after which the key is rotated. At least 24h. |  | MaxLength: 32 <br />Required: \{\} <br />Type: string <br /> |
+| `overlap` _[Duration](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#duration-v1-meta)_ | Overlap during which the old and the new selector are both<br />valid. Defaults to 24h; must be shorter than the interval. | 24h0m0s | MaxLength: 32 <br />Type: string <br />Optional: \{\} <br /> |
 
 
 #### DKIMStatus
@@ -115,8 +115,8 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `policy` _string_ | Enforcement policy. Defaults to "none". | none | Enum: [none quarantine reject] <br />Optional: \{\} <br /> |
-| `rua` _string_ | Reporting address for aggregate reports (rua). |  | MaxLength: 254 <br />Optional: \{\} <br /> |
-| `ruf` _string_ | Reporting address for failure reports (ruf). |  | MaxLength: 254 <br />Optional: \{\} <br /> |
+| `rua` _string_ | Reporting address for aggregate reports (rua): a plain email<br />address without the "mailto:" scheme, which the renderer adds.<br />Characters that would end the URI or the tag (":", ";", ",", quotes,<br />"!", whitespace) are rejected. |  | MaxLength: 254 <br />Pattern: `^[^\x00-\x20\x7f:;,"'!@<>?%\\]+@[a-zA-Z0-9]([-a-zA-Z0-9]\{0,61\}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([-a-zA-Z0-9]\{0,61\}[a-zA-Z0-9])?)+$` <br />Optional: \{\} <br /> |
+| `ruf` _string_ | Reporting address for failure reports (ruf): a plain email<br />address without the "mailto:" scheme, which the renderer adds.<br />Characters that would end the URI or the tag (":", ";", ",", quotes,<br />"!", whitespace) are rejected. |  | MaxLength: 254 <br />Pattern: `^[^\x00-\x20\x7f:;,"'!@<>?%\\]+@[a-zA-Z0-9]([-a-zA-Z0-9]\{0,61\}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([-a-zA-Z0-9]\{0,61\}[a-zA-Z0-9])?)+$` <br />Optional: \{\} <br /> |
 | `testing` _boolean_ | Testing mode: the t= tag is set, so policies are evaluated but<br />not enforced. Defaults to false. | false | Optional: \{\} <br /> |
 
 
@@ -204,7 +204,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `secretName` _string_ | Name of the Secret in the same namespace. |  | MaxLength: 253 <br />Pattern: `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$` <br />Required: \{\} <br /> |
+| `secretName` _string_ | Name of the Secret in the same namespace. |  | MaxLength: 253 <br />Pattern: `^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$` <br />Required: \{\} <br /> |
 
 
 #### IssuerReference
@@ -221,7 +221,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `kind` _string_ | Kind of the issuer. |  | Enum: [Issuer ClusterIssuer] <br />Required: \{\} <br /> |
-| `name` _string_ | Name of the issuer. |  | MaxLength: 253 <br />Pattern: `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$` <br />Required: \{\} <br /> |
+| `name` _string_ | Name of the issuer. |  | MaxLength: 253 <br />Pattern: `^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$` <br />Required: \{\} <br /> |
 
 
 #### LDAP
@@ -237,13 +237,13 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `host` _string_ | Server host. |  | MaxLength: 253 <br />Required: \{\} <br /> |
+| `host` _string_ | Server host name or IPv4 address, without a port (see port). |  | MaxLength: 253 <br />Pattern: `^[a-zA-Z0-9]([-a-zA-Z0-9]\{0,61\}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([-a-zA-Z0-9]\{0,61\}[a-zA-Z0-9])?)*$` <br />Required: \{\} <br /> |
 | `port` _integer_ | Server port. Unset means the operator picks 389, or 636 when<br />tls.mode is LDAPS. |  | Maximum: 65535 <br />Minimum: 1 <br />Optional: \{\} <br /> |
 | `tls` _[LDAPTLS](#ldaptls)_ | Transport security. Defaults to StartTLS with verification. |  | Optional: \{\} <br /> |
-| `baseDN` _string_ | Base DN for user searches. |  | MaxLength: 256 <br />Required: \{\} <br /> |
-| `bindDN` _string_ | Bind DN used for searches. Empty means an anonymous bind. |  | MaxLength: 256 <br />Optional: \{\} <br /> |
+| `baseDN` _string_ | Base DN for user searches. Control characters are rejected. |  | MaxLength: 256 <br />Pattern: `^[^\x00-\x1f\x7f]*$` <br />Required: \{\} <br /> |
+| `bindDN` _string_ | Bind DN used for searches. Empty means an anonymous bind.<br />Control characters are rejected. |  | MaxLength: 256 <br />Pattern: `^[^\x00-\x1f\x7f]*$` <br />Optional: \{\} <br /> |
 | `bindSecretRef` _[SecretReference](#secretreference)_ | Secret with the bind password (key "password"). Required when<br />bindDN is set. |  | Optional: \{\} <br /> |
-| `userFilter` _string_ | Search filter for users; %s is replaced with the user's mail<br />address. Defaults to "(mail=%s)". |  | MaxLength: 256 <br />Optional: \{\} <br /> |
+| `userFilter` _string_ | Search filter for users. It must contain the engine-neutral<br />placeholder \{user\} exactly once; it stands for the user's mail<br />address. The renderer translates the placeholder and escapes<br />the value for each engine (Postfix %s, Dovecot %\{user\}). Control<br />characters and "%" are rejected. Defaults to "(mail=\{user\})". |  | MaxLength: 256 <br />Pattern: `^[^\x00-\x1f\x7f%]*$` <br />Optional: \{\} <br /> |
 
 
 #### LDAPTLS
@@ -276,7 +276,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `enabled` _boolean_ | Publish an MTA-STS policy for this domain. Defaults to false.<br />The policy endpoint (`https://mta-sts.<domain>/.well-known/<br />mta-sts.txt`) is served by the CNMS policy server and requires a<br />valid public certificate for the domain. | false | Optional: \{\} <br /> |
+| `enabled` _boolean_ | Report the MTA-STS policy for this domain. Defaults to false.<br />MTA-STS is report-only: CNMS does not serve the policy. The<br />status holds the exact policy text, its id and the required<br />"_mta-sts" TXT record; the policy has to be served by the<br />operator of the domain at<br />`https://mta-sts.<domain>/.well-known/mta-sts.txt` with a valid<br />public certificate. | false | Optional: \{\} <br /> |
 
 
 #### MTAStSStatus
@@ -292,7 +292,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `policyId` _integer_ | Monotonically increasing policy id. It changes whenever the<br />policy content changes. |  | Optional: \{\} <br /> |
+| `policyId` _string_ | Policy id of the "_mta-sts" TXT record. It is derived from the<br />policy content (a truncated SHA-256), so it changes exactly<br />when the policy changes and can be re-derived without status. |  | MaxLength: 32 <br />Pattern: `^[a-zA-Z0-9]+$` <br />Optional: \{\} <br /> |
 | `policy` _string_ | Exact policy content to publish at the policy endpoint. |  | Optional: \{\} <br /> |
 
 
@@ -334,7 +334,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `type` _[DirectoryType](#directorytype)_ | Directory type. |  | Enum: [ldap sql] <br />Required: \{\} <br /> |
+| `type` _[DirectoryType](#directorytype)_ | Directory type. "sql" means PostgreSQL; other SQL servers are<br />not supported. |  | Enum: [ldap sql] <br />Required: \{\} <br /> |
 | `ldap` _[LDAP](#ldap)_ | LDAP settings. Required when type is "ldap". |  | Optional: \{\} <br /> |
 | `sql` _[SQL](#sql)_ | SQL settings. Required when type is "sql". |  | Optional: \{\} <br /> |
 
@@ -460,7 +460,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `domain` _string_ | Domain name, e.g. "example.org". Lowercase DNS name with at<br />least two labels (A-labels only, no trailing dot). |  | MaxLength: 253 <br />Pattern: `^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$` <br />Required: \{\} <br /> |
+| `domain` _string_ | Domain name, e.g. "example.org". Lowercase DNS name with at<br />least two labels of up to 63 characters (A-labels only, no<br />trailing dot). The last label starts with a letter, so an IP<br />address is not a domain. The same rule applies to the name of a<br />MailDomainGrant; keep the two patterns in sync. Immutable:<br />DKIM keys, DNS records and the domain authorization belong to<br />one domain; create a new MailDomain for another one. |  | MaxLength: 253 <br />Pattern: `^([a-z0-9]([a-z0-9-]\{0,61\}[a-z0-9])?[.])+[a-z]([a-z0-9-]\{0,61\}[a-z0-9])?$` <br />Required: \{\} <br /> |
 | `dnsMode` _string_ | DNS mode: "manual" (default) reports the required records in<br />the status for the operator to create; "externalDNS" creates<br />DNSEndpoint resources. | manual | Enum: [manual externalDNS] <br />Optional: \{\} <br /> |
 | `dkim` _[DKIM](#dkim)_ | DKIM signing configuration. |  | Optional: \{\} <br /> |
 | `dmarc` _[DMARC](#dmarc)_ | DMARC policy. Records published by CNMS use DMARC1 semantics<br />(RFC 9989-9991). |  | Optional: \{\} <br /> |
@@ -482,7 +482,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `observedGeneration` _integer_ | ObservedGeneration is the generation of the spec last applied. |  | Optional: \{\} <br /> |
-| `records` _[DNSRecord](#dnsrecord) array_ | Records lists every DNS record required by this domain and<br />whether a lookup verified it. |  | Optional: \{\} <br /> |
+| `records` _[DNSRecord](#dnsrecord) array_ | Records lists every DNS record required by this domain and<br />whether a lookup verified it. The list is atomic: neither the<br />name nor name and type identify a record, because one name can<br />hold several records of the same type (MX, A). |  | MaxItems: 64 <br />Optional: \{\} <br /> |
 | `dkim` _[DKIMStatus](#dkimstatus)_ | DKIM reports the current signing state. |  | Optional: \{\} <br /> |
 | `mtaSts` _[MTAStSStatus](#mtastsstatus)_ | MTAStS reports the published policy state. |  | Optional: \{\} <br /> |
 | `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#condition-v1-meta) array_ | Conditions represent the current state of the MailDomain. The<br />"Ready" condition is true when the required records are<br />published and verified. |  | Optional: \{\} <br /> |
@@ -596,7 +596,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `name` _string_ | Name of the referenced resource. |  | MaxLength: 253 <br />Pattern: `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$` <br />Required: \{\} <br /> |
+| `name` _string_ | Name of the referenced resource. |  | MaxLength: 253 <br />Pattern: `^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$` <br />Required: \{\} <br /> |
 
 
 #### Observability
@@ -695,10 +695,10 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `host` _string_ | Server host. |  | MaxLength: 253 <br />Required: \{\} <br /> |
+| `host` _string_ | Server host name or IPv4 address, without a port (see port). |  | MaxLength: 253 <br />Pattern: `^[a-zA-Z0-9]([-a-zA-Z0-9]\{0,61\}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([-a-zA-Z0-9]\{0,61\}[a-zA-Z0-9])?)*$` <br />Required: \{\} <br /> |
 | `port` _integer_ | Server port. Defaults to 5432. | 5432 | Maximum: 65535 <br />Minimum: 1 <br />Optional: \{\} <br /> |
-| `database` _string_ | Database name. |  | MaxLength: 63 <br />Required: \{\} <br /> |
-| `username` _string_ | Database user. |  | MaxLength: 63 <br />Required: \{\} <br /> |
+| `database` _string_ | Database name: letters, digits, "_", "-" and "." only, so that<br />the value cannot add keywords to the connection string. |  | MaxLength: 63 <br />Pattern: `^[A-Za-z0-9_][A-Za-z0-9_.-]*$` <br />Required: \{\} <br /> |
+| `username` _string_ | Database user: letters, digits, "_", "-" and "." only, so that<br />the value cannot add keywords to the connection string. |  | MaxLength: 63 <br />Pattern: `^[A-Za-z0-9_][A-Za-z0-9_.-]*$` <br />Required: \{\} <br /> |
 | `passwordSecretRef` _[SecretReference](#secretreference)_ | Secret with the database password (key "password"). |  | Required: \{\} <br /> |
 | `tls` _[SQLTLS](#sqltls)_ | Transport security. Defaults to verify-full. |  | Optional: \{\} <br /> |
 
@@ -736,7 +736,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `name` _string_ | Name of the Secret. |  | MaxLength: 253 <br />Pattern: `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$` <br />Required: \{\} <br /> |
+| `name` _string_ | Name of the Secret. |  | MaxLength: 253 <br />Pattern: `^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$` <br />Required: \{\} <br /> |
 
 
 #### Submission
@@ -770,7 +770,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `issuerRef` _[IssuerReference](#issuerreference)_ | Issuer used to request the certificate. |  | Required: \{\} <br /> |
-| `secretName` _string_ | Name of the Secret the certificate is written to. Defaults to<br />`"<name>-tls"`. |  | MaxLength: 253 <br />Pattern: `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$` <br />Optional: \{\} <br /> |
+| `secretName` _string_ | Name of the Secret the certificate is written to. Defaults to<br />`"<name>-tls"`. |  | MaxLength: 253 <br />Pattern: `^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$` <br />Optional: \{\} <br /> |
 
 
 #### TLSRPT
@@ -787,7 +787,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `enabled` _boolean_ | Enable TLS-RPT for this domain. Defaults to false. | false | Optional: \{\} <br /> |
-| `rua` _string_ | Reporting address. Defaults to the DMARC rua when set. |  | MaxLength: 254 <br />Optional: \{\} <br /> |
+| `rua` _string_ | Reporting address: a plain email address without the "mailto:"<br />scheme, which the renderer adds. Characters that would end the<br />URI or the tag (":", ";", ",", quotes, "!", whitespace) are<br />rejected. Defaults to the DMARC rua when set. |  | MaxLength: 254 <br />Pattern: `^[^\x00-\x20\x7f:;,"'!@<>?%\\]+@[a-zA-Z0-9]([-a-zA-Z0-9]\{0,61\}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([-a-zA-Z0-9]\{0,61\}[a-zA-Z0-9])?)+$` <br />Optional: \{\} <br /> |
 
 
 #### TopologySpread
@@ -804,8 +804,8 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `maxSkew` _integer_ | Maximum allowed skew between topology domains. Defaults to 1. | 1 | Optional: \{\} <br /> |
-| `topologyKey` _string_ | Topology key. Defaults to kubernetes.io/hostname. | kubernetes.io/hostname | MaxLength: 316 <br />Optional: \{\} <br /> |
+| `maxSkew` _integer_ | Maximum allowed skew between topology domains. Defaults to 1. | 1 | Minimum: 1 <br />Optional: \{\} <br /> |
+| `topologyKey` _string_ | Topology key, a label key such as "topology.kubernetes.io/zone".<br />Defaults to kubernetes.io/hostname. | kubernetes.io/hostname | MaxLength: 317 <br />Pattern: `^([a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]\{0,61\}[A-Za-z0-9])?$` <br />Optional: \{\} <br /> |
 
 
 #### Valkey

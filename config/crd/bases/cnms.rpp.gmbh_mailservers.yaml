@@ -53,11 +53,17 @@ spec:
                     anyOf:
                     - type: integer
                     - type: string
-                    default: "1"
+                    default: 1
                     description: |-
                       Minimum available Postfix replicas (PodDisruptionBudget).
-                      Defaults to 1.
+                      Defaults to 1. An integer or a percentage such as "50%"; a
+                      string without "%" is rejected by the PodDisruptionBudget
+                      validation, so it is rejected here as well.
                     x-kubernetes-int-or-string: true
+                    x-kubernetes-validations:
+                    - message: must be a non-negative integer or a percentage such
+                        as 50%
+                      rule: 'type(self) == int ? self >= 0 : self.matches(''^(100|[1-9]?[0-9])%$'')'
                   topologySpread:
                     description: Topology spread constraints for mail server pods.
                     properties:
@@ -66,11 +72,15 @@ spec:
                         description: Maximum allowed skew between topology domains.
                           Defaults to 1.
                         format: int32
+                        minimum: 1
                         type: integer
                       topologyKey:
                         default: kubernetes.io/hostname
-                        description: Topology key. Defaults to kubernetes.io/hostname.
-                        maxLength: 316
+                        description: |-
+                          Topology key, a label key such as "topology.kubernetes.io/zone".
+                          Defaults to kubernetes.io/hostname.
+                        maxLength: 317
+                        pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$
                         type: string
                     type: object
                 type: object
@@ -91,7 +101,7 @@ spec:
                   name:
                     description: Name of the referenced resource.
                     maxLength: 253
-                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
                     type: string
                 required:
                 - name
@@ -112,7 +122,7 @@ spec:
                     name:
                       description: Name of the referenced resource.
                       maxLength: 253
-                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
                       type: string
                   required:
                   - name
@@ -163,6 +173,9 @@ spec:
                     description: Per-user quota. Unset means no quota.
                     pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                     x-kubernetes-int-or-string: true
+                    x-kubernetes-validations:
+                    - message: must be greater than zero
+                      rule: quantity(string(self)).isGreaterThan(quantity('0'))
                   storage:
                     anyOf:
                     - type: integer
@@ -175,6 +188,8 @@ spec:
                     pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                     x-kubernetes-int-or-string: true
                     x-kubernetes-validations:
+                    - message: must be greater than zero
+                      rule: quantity(string(self)).isGreaterThan(quantity('0'))
                     - message: storage is immutable; resize the PersistentVolumeClaim
                         manually
                       rule: self == oldSelf
@@ -211,7 +226,7 @@ spec:
                           name:
                             description: Name of the referenced resource.
                             maxLength: 253
-                            pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                            pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
                             type: string
                         required:
                         - name
@@ -226,7 +241,7 @@ spec:
                           name:
                             description: Name of the referenced resource.
                             maxLength: 253
-                            pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                            pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
                             type: string
                         required:
                         - name
@@ -253,6 +268,8 @@ spec:
                     pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                     x-kubernetes-int-or-string: true
                     x-kubernetes-validations:
+                    - message: must be greater than zero
+                      rule: quantity(string(self)).isGreaterThan(quantity('0'))
                     - message: queueStorage is immutable; resize the PersistentVolumeClaims
                         manually
                       rule: self == oldSelf
@@ -295,7 +312,7 @@ spec:
                       secretName:
                         description: Name of the Secret in the same namespace.
                         maxLength: 253
-                        pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                        pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
                         type: string
                     required:
                     - secretName
@@ -318,7 +335,7 @@ spec:
                       name:
                         description: Name of the issuer.
                         maxLength: 253
-                        pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                        pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
                         type: string
                     required:
                     - kind
@@ -329,7 +346,7 @@ spec:
                       Name of the Secret the certificate is written to. Defaults to
                       `"<name>-tls"`.
                     maxLength: 253
-                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
                     type: string
                 required:
                 - issuerRef
@@ -353,6 +370,9 @@ spec:
                     nullable: true
                     pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                     x-kubernetes-int-or-string: true
+                    x-kubernetes-validations:
+                    - message: must be greater than zero
+                      rule: quantity(string(self)).isGreaterThan(quantity('0'))
                 type: object
                 x-kubernetes-validations:
                 - message: storage is required when persistence is enabled

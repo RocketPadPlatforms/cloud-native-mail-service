@@ -487,6 +487,14 @@ var _ = Describe("MailServer controller", func() {
 			Expect(*pdb.Spec.MinAvailable).To(Equal(minAv))
 		})
 
+		It("creates the PDB with the default minAvailable of an empty availability", func() {
+			reconcile("mail", func(s *cnmsv1alpha1.MailServer) {
+				s.Spec.Availability = &cnmsv1alpha1.Availability{}
+			})
+			pdb := getPDBG(ns, postfixObjectName)
+			Expect(*pdb.Spec.MinAvailable).To(Equal(intstr.FromInt32(1)))
+		})
+
 		It("creates the valkey PVC only with persistence", func() {
 			reconcile("mail-off", nil)
 			err := k8sClient.Get(ctx, types.NamespacedName{
@@ -558,6 +566,33 @@ var _ = Describe("MailServer controller", func() {
 			reconcileServerG(newReconcilerG(AuthorizationAllowlist, true), ns, "mail")
 			status, _, _ = serverConditionG(ns, "mail", ConditionClientIPPreserved)
 			Expect(status).To(Equal(metav1.ConditionTrue))
+		})
+
+		It("warns about a budget that blocks node drains without failing Ready", func() {
+			reconcile("mail", func(s *cnmsv1alpha1.MailServer) {
+				s.Spec.Postfix = &cnmsv1alpha1.Postfix{Replicas: new(int32(1))}
+			})
+			status, reason, _ := serverConditionG(ns, "mail", ConditionNodeDrainable)
+			Expect(status).To(Equal(metav1.ConditionFalse))
+			Expect(reason).To(Equal("BudgetBlocksDrain"))
+			_, readyReason, _ := serverConditionG(ns, "mail", conditionReady)
+			Expect(readyReason).ToNot(Equal("BudgetBlocksDrain"))
+
+			mutateServerG(ns, func(s *cnmsv1alpha1.MailServer) {
+				s.Spec.Postfix.Replicas = new(int32(2))
+			})
+			reconcileServerG(newReconcilerG(AuthorizationAllowlist, true), ns, "mail")
+			status, _, _ = serverConditionG(ns, "mail", ConditionNodeDrainable)
+			Expect(status).To(Equal(metav1.ConditionTrue))
+		})
+
+		It("reports a full percentage budget as blocking node drains", func() {
+			pct := intstr.FromString("100%")
+			reconcile("mail", func(s *cnmsv1alpha1.MailServer) {
+				s.Spec.Availability = &cnmsv1alpha1.Availability{PostfixMinAvailable: &pct}
+			})
+			status, _, _ := serverConditionG(ns, "mail", ConditionNodeDrainable)
+			Expect(status).To(Equal(metav1.ConditionFalse))
 		})
 
 		It("reports the observed generation", func() {

@@ -150,8 +150,9 @@ spec:
         - spec
         type: object
         x-kubernetes-validations:
-        - message: name must be a domain with at least two labels, e.g. example.org
-          rule: self.metadata.name.matches('^[a-z0-9]([a-z0-9-]*[a-z0-9])?([.][a-z0-9]([a-z0-9-]*[a-z0-9])?)+$')
+        - message: name must be a domain with at least two labels of up to 63 characters,
+            the last one starting with a letter, e.g. example.org
+          rule: self.metadata.name.matches('^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?[.])+[a-z]([a-z0-9-]{0,61}[a-z0-9])?$')
     served: true
     storage: true
     subresources:
