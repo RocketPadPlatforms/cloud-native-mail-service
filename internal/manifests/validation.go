@@ -144,7 +144,10 @@ func validationVolumes(server *cnmsv1alpha1.MailServer, c render.Component, r *r
 			}},
 			append(configSubPathMounts(), queueMount())
 	case render.ComponentRspamd:
-		return []corev1.Volume{config}, localDMount()
+		// The keys are not mounted: configtest does not read key files,
+		// and a missing key must not hold back the rollout (ADR 0011);
+		// the controller checks them when it renders.
+		return []corev1.Volume{config}, rspamdConfigMounts()
 	case render.ComponentDovecot:
 		// `doveconf -n` reads neither the users file nor the
 		// certificate, so only the configuration is mounted; it

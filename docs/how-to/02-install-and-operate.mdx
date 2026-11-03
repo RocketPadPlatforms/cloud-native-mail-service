@@ -171,8 +171,8 @@ this version; annotate the PVCs of an older server by hand
 first failing sub-condition (`CertificateReady`, `ConfigValidated`,
 `WorkloadsReady`, `DomainsAuthorized`, `Observability`) or the input
 that blocks the render (`DirectoryNotFound`, `NoUserSource`, ...).
-`ClientIPPreserved`, `DedicatedSendingAddress` and `NodeDrainable` are
-warnings that never feed into `Ready`. Every condition and reason is
+`ClientIPPreserved`, `DedicatedSendingAddress`, `NodeDrainable` and
+`DKIMKeysAvailable` are warnings that never feed into `Ready`. Every condition and reason is
 listed in the [status conditions reference](../reference/status-conditions.md).
 
 The operator only changes objects it controls. If an object it needs

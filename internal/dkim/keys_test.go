@@ -17,6 +17,7 @@ limitations under the License.
 package dkim
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -115,6 +116,23 @@ func TestParseFormats(t *testing.T) {
 				t.Fatalf("got %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// A raw key may end in a byte that is whitespace: it is key material,
+// not padding (a random PKCS#1 key did this in about 2 of 100 runs).
+func TestParseRawKeyEndingInWhitespace(t *testing.T) {
+	seed := bytes.Repeat([]byte{7}, ed25519.SeedSize)
+	for _, last := range []byte{'\n', ' ', '\t'} {
+		seed[len(seed)-1] = last
+		k, err := Parse(seed)
+		if err != nil {
+			t.Fatalf("seed ending in %q: %v", last, err)
+		}
+		want := ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)
+		if got := k.PublicKey(); got != base64.StdEncoding.EncodeToString(want) {
+			t.Errorf("seed ending in %q: wrong public key", last)
+		}
 	}
 }
 

@@ -1,0 +1,70 @@
+-- CNMS-rendered Rspamd rspamd.local.lua -- do not edit.
+-- Source: MailServer tenant1/mail (ADR 0013)
+
+-- CNMS never-unsigned guard. required maps each served domain to the
+-- DKIM_SIGNED options its active keys must have produced; an empty
+-- list is a served domain without a key.
+local required = {
+  ["a.example"] = { "a.example:s=cnms-20261103", "a.example:s=cnms-ed25519-20261103" },
+  ["b.example"] = { "b.example:s=cnms-20261104" },
+}
+
+local rspamd_logger = require 'rspamd_logger'
+
+local skip_actions = { reject = true, drop = true, discard = true, ['soft reject'] = true }
+
+local function defer(task)
+  task:set_pre_result('soft reject', 'DKIM signing unavailable, try again later', 'cnms_dkim_guard')
+end
+
+-- source reports whether CNMS signs for this client: a login, or loopback
+-- (Postfix's own non-SMTP mail) with a non-empty envelope sender.
+local function source(task)
+  if task:get_user() then return true end
+  local ip = task:get_from_ip()
+  if not (ip and ip:is_valid() and (tostring(ip) == '127.0.0.1' or tostring(ip) == '::1')) then return false end
+  local efrom = task:get_from('smtp')
+  return (efrom and efrom[1] and efrom[1].addr and #efrom[1].addr > 0) and true or false
+end
+
+local function check(task)
+  if not source(task) then return end                     -- not a signed class, or a Postfix-generated bounce
+
+  local hfrom = task:get_from('mime')
+  if hfrom and hfrom[2] then                              -- Rspamd signs no message with several From addresses
+    for _, a in ipairs(hfrom) do
+      if a.domain and required[a.domain:lower()] then
+        return task:set_pre_result('reject', 'multiple From addresses cannot be DKIM signed', 'cnms_dkim_guard')
+      end
+    end
+    return
+  end
+  if not (hfrom and hfrom[1] and hfrom[1].domain) then return end  -- no From: Rspamd does not sign either
+  local want = required[hfrom[1].domain:lower()]
+  if not want then return end                             -- not a served domain
+
+  if skip_actions[task:get_metric_action()] then return end  -- message is not leaving
+
+  local have = {}
+  local sym = task:get_symbol('DKIM_SIGNED')
+  for _, o in ipairs((sym and sym[1] and sym[1].options) or {}) do have[o] = true end
+  if #want == 0 then return defer(task) end               -- served domain without a key
+  for _, w in ipairs(want) do
+    if not have[w] then return defer(task) end
+  end
+end
+
+rspamd_config:register_symbol({
+  name = 'CNMS_DKIM_GUARD',
+  type = 'postfilter',
+  flags = 'ignore_passthrough',
+  callback = function(task)
+    local ok, err = pcall(check, task)
+    if ok then return end
+    pcall(rspamd_logger.errx, task, 'CNMS DKIM guard failed: %s', err)
+    -- a guard bug must not let mail out
+    local sok, signed = pcall(source, task)
+    if not sok then sok, signed = pcall(task.get_user, task) end  -- source itself failed: defer logins only
+    if sok and signed then defer(task) end
+  end,
+})

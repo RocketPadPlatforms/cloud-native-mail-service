@@ -103,8 +103,9 @@ func Parse(data []byte) (*Key, error) {
 	if bytes.HasPrefix(trimmed, []byte("-----BEGIN")) {
 		return parsePEM(trimmed)
 	}
-	// Rspamd tries base64 text first and falls back to raw bytes.
-	raw := trimmed
+	// Rspamd tries base64 text first and falls back to the raw bytes,
+	// which are not trimmed: the last byte of a key may be whitespace.
+	raw := data
 	if dec, err := base64.StdEncoding.DecodeString(string(trimmed)); err == nil {
 		raw = dec
 	}

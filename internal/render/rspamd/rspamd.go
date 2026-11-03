@@ -58,6 +58,10 @@ func (r *Renderer) Render(req *render.RenderRequest) (*render.RenderResult, erro
 			"redis.conf":            renderRedis(req),
 			"history_redis.conf":    renderHistoryRedis(req),
 			"options.inc":           renderOptions(req),
+			"dkim_signing.conf":     renderDKIMSigning(req),
+			// Not a local.d file: the pod mounts it at
+			// /etc/rspamd/rspamd.local.lua (internal/manifests).
+			render.RspamdLocalLua: renderLocalLua(req),
 		},
 		// `rspamadm configtest` validates the rendered configuration
 		// before rollout (D4: a bad config must never replace a
