@@ -54,7 +54,10 @@ present. Metric sources per component, verified on 2026-10-25:
    missing type). busybox httpd derives the type from the file
    extension, so the file is `/metrics/index.txt` and a scrape of
    `/metrics` follows a redirect to `/metrics/`; the scrape path
-   stays the default `/metrics`.
+   stays the default `/metrics`. The document root is a `www`
+   directory that holds only `metrics/`; the httpd config and working
+   files live next to it, so nothing else is served (the Rspamd
+   sidecar follows the same layout).
    No new image, no Go binary, license-clean.
    Delivery/deferral/bounce counters from the logs are deferred to
    Phase 9 (full metrics set); this ADR is revisited then — candidates
@@ -122,21 +125,17 @@ present. Metric sources per component, verified on 2026-10-25:
   yet (backlog).
 - Rspamd metrics have a 15s granularity and one extra container per
   Rspamd pod.
-- **License note (open policy question).** `busybox` is licensed
-  GPL-2.0-only (upstream `LICENSE`; the Debian `copyright` file of the
-  installed 1:1.37.0 package says GPL version 2). The licence policy
-  (section 9 of the project plan) allows permissive licenses and
-  weak copyleft used unmodified as separate programs, and names
-  only SSPL, RSAL, BSL, Commons Clause, AGPL and source-available
-  licenses as excluded. GPL-2.0 is strong copyleft, so it is neither
-  listed as allowed nor as excluded. BusyBox runs unmodified as a
-  separate program in the CNMS Postfix image (the image already
-  contained it for the Postfix queue-metrics sidecar, which this ADR
-  earlier described as ISC licensed; that was wrong), and the Debian
-  base image carries more GPL software. Whether this meets the
-  policy, and what source offer or notice the image publication
-  needs, is not decided here; `NOTICE` and the third-party licenses
-  page do not list it yet.
+- **Licence note (resolved).** `busybox` is licensed GPL-2.0-only
+  (upstream `LICENSE`; the Debian `copyright` file of the installed
+  1:1.37.0 package says GPL version 2). BusyBox runs unmodified as a
+  separate program in the CNMS Postfix image, and the Debian base
+  image carries more GPL software. The licence policy (section 9 of
+  the project plan, ADR 0001) allows strong copyleft for exactly this
+  case: unmodified, separate programs inside images, never linked into
+  the operator binary. BusyBox and the Debian base packages are listed
+  in `NOTICE` and on the data-plane images page
+  (`docs/reference/data-plane-licenses.md`), which also states where
+  the Debian package sources come from.
 - The `redis_exporter` license (MIT) was checked at the pinned
   version; Renovate PRs must re-check it on major updates (section 9).
 - Queue metrics are per replica; a scrape of the headless Service

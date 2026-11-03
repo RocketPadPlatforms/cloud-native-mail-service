@@ -34,6 +34,7 @@ module.exports = {
         'reference/api',
         'reference/testing',
         'reference/third-party-licenses',
+        'reference/data-plane-licenses',
       ],
     },
     {

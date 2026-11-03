@@ -52,7 +52,7 @@ type userDoc struct {
 //   - username is a non-empty local part (no "@"), at most 64 chars;
 //   - passwordHash must be a crypt(3) hash (a "{SCHEME}..."
 //     dovecot scheme or a "$..." crypt magic), never plaintext;
-//   - mailbox is a full address with exactly one "@";
+//   - mailbox is a full address with exactly one "@", lower-cased;
 //   - usernames are unique (case-sensitive, like the userdb lookup).
 func ParseStaticUsers(data []byte) ([]StaticUser, error) {
 	var doc usersDoc
@@ -69,6 +69,9 @@ func ParseStaticUsers(data []byte) ([]StaticUser, error) {
 				return nil, fmt.Errorf("users.yaml: users[%d]: duplicate username %q", i, u.Username)
 			}
 		}
+		// Postfix lower-cases the recipient lookup and Dovecot
+		// lower-cases logins, so the mailbox is stored lower-case.
+		u.Mailbox = strings.ToLower(u.Mailbox)
 		users = append(users, StaticUser(u))
 	}
 	return users, nil

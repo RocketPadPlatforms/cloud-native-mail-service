@@ -8,3 +8,9 @@ CNMS is a control plane that manages well-known mail software (Postfix,
 Rspamd, Dovecot, Valkey); those engines are distributed under their own
 licenses (see docs/reference/third-party-licenses.md and the ADRs in
 docs/decisions/ for the Go dependency report and version decisions).
+
+The data-plane images also contain BusyBox (GPL-2.0-only) and Debian
+base packages, some of them under the GPL. They run unmodified as
+separate programs and are not linked into the operator. See
+docs/reference/data-plane-licenses.md for the components, versions and
+licenses.
