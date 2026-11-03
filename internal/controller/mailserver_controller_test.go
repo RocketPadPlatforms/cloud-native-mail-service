@@ -83,9 +83,12 @@ func uniqueNamespace() string {
 	return fmt.Sprintf("cnms-%x", b)
 }
 
-// uniqueDomain returns a unique domain with at least two labels.
+// uniqueDomain returns a unique domain with at least two labels. The
+// grants named after it are cluster scoped and outlive their spec, so
+// the name needs enough entropy that two draws of one run never
+// collide (two bytes collided in about 6% of the runs).
 func uniqueDomain() string {
-	b := make([]byte, 2)
+	b := make([]byte, 6)
 	_, _ = rand.Read(b)
 	return fmt.Sprintf("example-%x.org", b)
 }

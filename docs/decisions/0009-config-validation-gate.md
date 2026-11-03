@@ -96,7 +96,13 @@ Postfix 3.11.7, Valkey 9.1.2):
    restarts that ten-minute clock.
 7. **RBAC.** The operator needs `create` and `delete` on Jobs
    (`batch`) and Secrets; ConfigMaps no longer need `update` or
-   `patch`.
+   `patch`. Secrets get `get` and `list` but no `watch`: the operator
+   reads the TLS and users Secrets by name and lists its own (by
+   label) for the cleanup, all uncached, so it never holds Secrets in
+   memory. Its cache holds only the ConfigMaps and Jobs that carry the
+   managed-by label; the existing-object check of a create (`createOwned`)
+   therefore reads uncached, because a foreign object of the same name
+   carries no label.
 
 ## Consequences
 

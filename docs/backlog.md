@@ -49,6 +49,11 @@ scoped; nothing here is committed.
   sender address (`smtpd_sender_login_maps` plus
   `reject_sender_login_mismatch` on port 587). Not rendered today, so any
   authenticated user can use any sender address.
+- `MailDomain` (Phase 5) and `MailDirectory` (Phase 3) have no controller
+  yet: the empty scaffolds were removed so the operator holds no write
+  access to them. Phases 3 and 5 re-scaffold them with
+  `kubebuilder create api --group cnms --version v1alpha1 --kind <Kind>
+  --controller --resource=false` and add the RBAC they actually use.
 - Tracing.
 - Webmail/UI, billing, multi-cluster federation.
 - IMAP horizontal scaling.

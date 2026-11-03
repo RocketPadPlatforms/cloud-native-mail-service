@@ -110,7 +110,7 @@ func (r *MailServerReconciler) applyDataPlane(ctx context.Context, server *cnmsv
 	// Immutable objects are created, never updated; the pods of the
 	// previous revision keep theirs.
 	for _, obj := range plane.Configs {
-		if err := createOwned(ctx, r.Client, r.Scheme, server, obj); err != nil {
+		if err := createOwned(ctx, r.Client, r.APIReader, r.Scheme, server, obj); err != nil {
 			return nil, fmt.Errorf("create %T %s: %w", obj, obj.GetName(), err)
 		}
 	}
@@ -210,7 +210,7 @@ func (r *MailServerReconciler) ensureJob(ctx context.Context, server *cnmsv1alph
 	if !errors.IsNotFound(err) {
 		return nil, err
 	}
-	if err := createOwned(ctx, r.Client, r.Scheme, server, job); err != nil {
+	if err := createOwned(ctx, r.Client, r.APIReader, r.Scheme, server, job); err != nil {
 		return nil, err
 	}
 	// Either just created (no status yet) or created concurrently;
@@ -244,8 +244,11 @@ func jobOutcome(job *batchv1.Job) (passed bool, failure string) {
 // used for are immutable and content-named, so the same name means the
 // same content. One that owner does not control (a tenant may create
 // objects in the namespace under the same name) is an
-// ownershipConflictError: its content is not ours.
-func createOwned(ctx context.Context, c client.Client, scheme *runtime.Scheme, owner, obj client.Object) error {
+// ownershipConflictError: its content is not ours. The existing object
+// is read with reader, which must not be the cache: the cache only
+// holds the operator's own (labelled) objects, so it cannot see a
+// foreign one.
+func createOwned(ctx context.Context, c client.Client, reader client.Reader, scheme *runtime.Scheme, owner, obj client.Object) error {
 	if err := controllerutil.SetControllerReference(owner, obj, scheme); err != nil {
 		return err
 	}
@@ -254,8 +257,8 @@ func createOwned(ctx context.Context, c client.Client, scheme *runtime.Scheme, o
 		return err
 	}
 	existing := obj.DeepCopyObject().(client.Object)
-	if err := c.Get(ctx, client.ObjectKeyFromObject(obj), existing); err != nil {
-		// Gone again, or not in the cache yet: the next pass decides.
+	if err := reader.Get(ctx, client.ObjectKeyFromObject(obj), existing); err != nil {
+		// Gone again: the next pass decides.
 		return client.IgnoreNotFound(err)
 	}
 	if !metav1.IsControlledBy(existing, owner) {
@@ -321,7 +324,7 @@ func (r *MailServerReconciler) cleanupStale(ctx context.Context, server *cnmsv1a
 		client.InNamespace(server.Namespace),
 		client.MatchingLabels{
 			manifests.InstanceLabelKey: server.Name,
-			manifests.ManagedByLabel:   "cnms",
+			manifests.ManagedByLabel:   manifests.ManagedByValue,
 		},
 	}
 	var stale []client.Object

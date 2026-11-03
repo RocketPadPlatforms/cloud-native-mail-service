@@ -134,6 +134,10 @@ const readyRequeueInterval = 10 * time.Minute
 // (principle 10).
 const crdCacheTTL = 5 * time.Minute
 
+// apiReadTimeout bounds the reads that bypass the cache (CRDs), so a
+// slow API server cannot stall a reconcile or the startup.
+const apiReadTimeout = 10 * time.Second
+
 // CRD names the operator discovers for optional integrations.
 const (
 	crdCertificate    = "certificates.cert-manager.io"
@@ -168,9 +172,12 @@ type MailServerReconciler struct {
 	// from it (ADR 0003).
 	AllowClusterIssuers bool
 
-	// APIReader reads without the cache (mgr.GetAPIReader()); the
-	// stale-object cleanup uses it so a lagging cache cannot hide
-	// what a workload still references.
+	// APIReader reads without the cache (mgr.GetAPIReader()). It reads
+	// what the cache must not hold or may lag behind: the tenant
+	// Secrets (TLS, static users), the CRDs, the objects of someone
+	// else with the name of a data-plane object (the cache only holds
+	// the operator's own, CacheOptions), and the pod templates the
+	// stale-object cleanup checks.
 	APIReader client.Reader
 
 	// Recorder emits Kubernetes Events on Ready transitions
@@ -180,15 +187,21 @@ type MailServerReconciler struct {
 	crds crdCache
 }
 
-// +kubebuilder:rbac:groups=cnms.rpp.gmbh,resources=mailservers,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=cnms.rpp.gmbh,resources=mailservers/status,verbs=get;update;patch
+// The controller never writes a MailServer itself, only its status. It uses no finalizer,
+// but the controller references it sets (blockOwnerDeletion) need update on the
+// finalizers subresource where the OwnerReferencesPermissionEnforcement plugin is on.
+// +kubebuilder:rbac:groups=cnms.rpp.gmbh,resources=mailservers,verbs=get;list;watch
+// +kubebuilder:rbac:groups=cnms.rpp.gmbh,resources=mailservers/status,verbs=patch
 // +kubebuilder:rbac:groups=cnms.rpp.gmbh,resources=mailservers/finalizers,verbs=update
 // +kubebuilder:rbac:groups=cnms.rpp.gmbh,resources=maildomains,verbs=get;list;watch
 // +kubebuilder:rbac:groups=cnms.rpp.gmbh,resources=maildirectories,verbs=get;list;watch
 // +kubebuilder:rbac:groups=cnms.rpp.gmbh,resources=maildomaingrants,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=services;persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
 // ConfigMaps and Secrets of the data plane are immutable: created and deleted, never updated.
-// +kubebuilder:rbac:groups=core,resources=configmaps;secrets,verbs=get;list;watch;create;delete
+// Secrets are never watched or cached: the TLS and users Secrets are read by name, and
+// the operator's own are listed (by label) for the cleanup of superseded ones.
+// +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;delete
+// +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;create;delete
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;delete
 // +kubebuilder:rbac:groups=apps,resources=statefulsets;deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=get;list;watch;create;update;patch;delete
@@ -210,13 +223,14 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		}
 		return ctrl.Result{}, err
 	}
+	orig := server.DeepCopy()
 	prevReady := meta.FindStatusCondition(server.Status.Conditions, conditionReady)
 	conds := &server.Status.Conditions
 	generation := server.Generation
 	// block records a fail-closed Ready condition and finishes.
 	block := func(reason, message string) (ctrl.Result, error) {
 		setCondition(conds, generation, conditionReady, metav1.ConditionFalse, reason, message)
-		return r.finish(ctx, server, prevReady)
+		return r.finish(ctx, server, orig, prevReady)
 	}
 
 	// Domain authorization (ADR 0003) is evaluated first and on every
@@ -288,7 +302,7 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		if reason == ReasonOwnershipConflict && r.Recorder != nil && prevReady != nil &&
 			prevReady.Status == metav1.ConditionFalse &&
 			(prevReady.Reason != reason || prevReady.Message != err.Error()) {
-			r.Recorder.Eventf(server, nil, corev1.EventTypeWarning, reason, "ApplyDataPlane", "%s", err.Error())
+			r.Recorder.Eventf(server, nil, corev1.EventTypeWarning, reason, "ApplyDataPlane", "%s", eventMessage(err.Error()))
 		}
 		return block(reason, err.Error())
 	}
@@ -344,7 +358,7 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 	setCondition(conds, generation, conditionReady,
 		conditionStatus(reason == "Ready"), reason, message)
-	return r.finish(ctx, server, prevReady)
+	return r.finish(ctx, server, orig, prevReady)
 }
 
 // applyGuarded applies the render for domains and users. If the
@@ -531,7 +545,7 @@ func (r *MailServerReconciler) emitAuthorizationEvent(server *cnmsv1alpha1.MailS
 	if prev != nil && prev.Status == metav1.ConditionFalse && prev.Message == message {
 		return
 	}
-	r.Recorder.Eventf(server, nil, corev1.EventTypeWarning, reason, "AuthorizeDomains", "%s", message)
+	r.Recorder.Eventf(server, nil, corev1.EventTypeWarning, reason, "AuthorizeDomains", "%s", eventMessage(message))
 }
 
 // clientIPPreserved reports whether Postfix sees the real client
@@ -593,15 +607,17 @@ func (r *MailServerReconciler) setValidationCondition(server *cnmsv1alpha1.MailS
 	if status == metav1.ConditionFalse && r.Recorder != nil &&
 		(prev == nil || prev.Status != status || prev.Message != g.message) {
 		r.Recorder.Eventf(server, nil, corev1.EventTypeWarning,
-			ReasonConfigRejected, "ValidateConfig", g.message)
+			ReasonConfigRejected, "ValidateConfig", "%s", eventMessage(g.message))
 	}
 }
 
-// finish persists the status, emits a Ready transition event and
-// schedules the re-check of the server.
-func (r *MailServerReconciler) finish(ctx context.Context, server *cnmsv1alpha1.MailServer, prevReady *metav1.Condition) (ctrl.Result, error) {
+// finish persists the status as a patch against orig (the object as
+// read), so a write of the spec or metadata since then does not make
+// it conflict. It emits a Ready transition event and schedules the
+// re-check of the server.
+func (r *MailServerReconciler) finish(ctx context.Context, server, orig *cnmsv1alpha1.MailServer, prevReady *metav1.Condition) (ctrl.Result, error) {
 	server.Status.ObservedGeneration = server.Generation
-	if err := r.Status().Update(ctx, server); err != nil {
+	if err := r.Status().Patch(ctx, server, client.MergeFrom(orig)); err != nil {
 		return ctrl.Result{}, err
 	}
 	r.emitReadyEvent(server, prevReady)
@@ -626,11 +642,25 @@ func (r *MailServerReconciler) emitReadyEvent(server *cnmsv1alpha1.MailServer, p
 	}
 	if ready.Status == metav1.ConditionTrue {
 		r.Recorder.Eventf(server, nil, corev1.EventTypeNormal,
-			ready.Reason, "BecameReady", ready.Message)
+			ready.Reason, "BecameReady", "%s", eventMessage(ready.Message))
 		return
 	}
 	r.Recorder.Eventf(server, nil, corev1.EventTypeWarning,
-		ready.Reason, "BecameNotReady", ready.Message)
+		ready.Reason, "BecameNotReady", "%s", eventMessage(ready.Message))
+}
+
+// maxEventMessage is the longest Event message the operator emits:
+// messages embed text from outside (validator output, object names),
+// and the API server limits the note of an Event to 1 kB.
+const maxEventMessage = 1024
+
+// eventMessage truncates msg to maxEventMessage bytes, ending in "..."
+// when it cuts, without splitting a UTF-8 character.
+func eventMessage(msg string) string {
+	if len(msg) <= maxEventMessage {
+		return msg
+	}
+	return strings.ToValidUTF8(msg[:maxEventMessage-3], "") + "..."
 }
 
 // listAuthorizationInput lists the grants and claims the evaluator
@@ -660,7 +690,7 @@ func (r *MailServerReconciler) staticUsers(ctx context.Context, server *cnmsv1al
 			"spec.submission.insecureStaticUsers is set but the operator was started without --enable-insecure-test-features", false
 	}
 	secret := &corev1.Secret{}
-	err := r.Get(ctx, types.NamespacedName{
+	err := r.APIReader.Get(ctx, types.NamespacedName{
 		Name: ref.InsecureStaticUsers.SecretName, Namespace: server.Namespace,
 	}, secret)
 	if errors.IsNotFound(err) {
@@ -699,11 +729,13 @@ func workloadHashes(objs []client.Object) map[string]string {
 
 // certificateReady reports whether the TLS certificate Secret carries
 // tls.crt and tls.key (the Secret is the source of truth for the
-// in-place-reloaded TLS mounts).
+// in-place-reloaded TLS mounts). The Secret is not watched: a missing
+// one is picked up by the re-check of a not-ready server, and a
+// renewal is picked up by the reload sidecars, not by a reconcile.
 func (r *MailServerReconciler) certificateReady(ctx context.Context, server *cnmsv1alpha1.MailServer) (metav1.ConditionStatus, string, string) {
 	name := manifests.TLSSecretName(server)
 	secret := &corev1.Secret{}
-	err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: server.Namespace}, secret)
+	err := r.APIReader.Get(ctx, types.NamespacedName{Name: name, Namespace: server.Namespace}, secret)
 	if errors.IsNotFound(err) {
 		return metav1.ConditionFalse, "SecretNotFound",
 			fmt.Sprintf("the TLS certificate Secret %q does not exist yet", name)
@@ -760,7 +792,7 @@ func (r *MailServerReconciler) reconcileObservability(ctx context.Context, serve
 			client.InNamespace(server.Namespace),
 			client.MatchingLabels{
 				manifests.InstanceLabelKey: server.Name,
-				manifests.ManagedByLabel:   "cnms",
+				manifests.ManagedByLabel:   manifests.ManagedByValue,
 				manifests.ServerLabel:      server.Name,
 			},
 		); err != nil {
@@ -791,17 +823,21 @@ func (r *MailServerReconciler) reconcileObservability(ctx context.Context, serve
 
 // crdsAvailable reports whether the CRD with the given plural name is
 // installed, cached for crdCacheTTL so integrations installed later
-// are picked up without a restart (principle 10).
+// are picked up without a restart (principle 10). The CRDs are read
+// directly with a timeout: the informer cache would watch every CRD
+// of the cluster for two lookups every few minutes.
 func (r *MailServerReconciler) crdsAvailable(ctx context.Context, name string) (bool, error) {
 	r.crds.mu.Lock()
 	defer r.crds.mu.Unlock()
 	if time.Since(r.crds.checkedAt) < crdCacheTTL {
 		return r.crds.available[name], nil
 	}
+	ctx, cancel := context.WithTimeout(ctx, apiReadTimeout)
+	defer cancel()
 	avail := make(map[string]bool, 2)
 	for _, n := range []string{crdCertificate, crdServiceMonitor} {
 		crd := &apiextensionsv1.CustomResourceDefinition{}
-		err := r.Get(ctx, types.NamespacedName{Name: n}, crd)
+		err := r.APIReader.Get(ctx, types.NamespacedName{Name: n}, crd)
 		if errors.IsNotFound(err) {
 			avail[n] = false
 			continue
@@ -859,7 +895,6 @@ func (r *MailServerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&cnmsv1alpha1.MailDomain{}, handler.EnqueueRequestsFromMapFunc(r.mapDomainServers)).
 		Watches(&cnmsv1alpha1.MailDirectory{}, handler.EnqueueRequestsFromMapFunc(r.mapSameNamespaceServers)).
 		Watches(&cnmsv1alpha1.MailDomainGrant{}, handler.EnqueueRequestsFromMapFunc(r.mapGrantServers)).
-		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.mapSameNamespaceServers)).
 		Complete(r)
 }
 
@@ -868,8 +903,10 @@ func (r *MailServerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 // time). On an error other than NotFound the watch is skipped so that
 // a transient API failure can never crash the operator (principle 10).
 func crdInstalled(mgr ctrl.Manager, name string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), apiReadTimeout)
+	defer cancel()
 	crd := &apiextensionsv1.CustomResourceDefinition{}
-	err := mgr.GetAPIReader().Get(context.Background(), client.ObjectKey{Name: name}, crd)
+	err := mgr.GetAPIReader().Get(ctx, client.ObjectKey{Name: name}, crd)
 	if err == nil {
 		return true
 	}
@@ -895,7 +932,7 @@ func indexMailDomainByDomain(obj client.Object) []string {
 }
 
 // mapSameNamespaceServers enqueues every MailServer of the object's
-// namespace (a directory or secret change may change the render).
+// namespace (a directory change may change the render).
 func (r *MailServerReconciler) mapSameNamespaceServers(ctx context.Context, obj client.Object) []reconcile.Request {
 	return r.serversInNamespace(ctx, obj.GetNamespace())
 }
@@ -1061,6 +1098,11 @@ func volumeClaimTemplateNamesEqual(a, b []corev1.PersistentVolumeClaim) bool {
 // by the kube deployment controller). Dropping foreign annotations
 // would change the object on every write and, for Deployments, bump
 // the generation each time. It reports whether anything changed.
+//
+// shortcut: whole specs are compared, and the fetched spec carries
+// server defaults the rendered one lacks, so every reconcile rewrites
+// every object (about a dozen PUTs); compare the config hash annotation
+// and the owned fields instead when the API load matters.
 func mergeOwnedFields(existing, desired client.Object) bool {
 	var changed bool
 	// mergeStrings overlays the owned keys onto the existing map,

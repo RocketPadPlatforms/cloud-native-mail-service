@@ -48,7 +48,7 @@ without an expiry.
 |------|---------|--------|
 | `--domain-authorization` | `allowlist` | `allowlist` requires a `MailDomainGrant` covering every domain of a `MailServer` and naming its namespace ([domain authorization](../concepts/domain-authorization.md)); `unrestricted` skips the grant requirement for single-tenant clusters (the operator logs a warning at startup). Uniqueness is enforced in both modes. |
 | `--allow-cluster-issuers` | `false` | Lets a `MailServer` reference a cert-manager `ClusterIssuer` in `spec.tls.issuerRef`. Without the flag such a server is fail-closed (`Ready=False, reason=ClusterIssuerNotAllowed`) and no `Certificate` is created; a namespaced `Issuer` is always allowed. A shared `ClusterIssuer` lets every tenant obtain certificates from it, so enable the flag only on clusters where that is intended. Add it to the manager `args` in `config/manager/manager.yaml` (Kustomize); the Helm chart will expose it as a value (Phase 10). |
-| `--enable-insecure-test-features` | `false` | Accepts `spec.submission.insecureStaticUsers` (Phase 2 test users from a Secret). Without the flag a `MailServer` that sets the field is fail-closed (`Ready=False, reason=InsecureStaticUsersDisabled`). |
+| `--enable-insecure-test-features` | `false` | Accepts `spec.submission.insecureStaticUsers` (Phase 2 test users from a Secret). For tests only: the operator logs a warning at startup when it is set. Without the flag a `MailServer` that sets the field is fail-closed (`Ready=False, reason=InsecureStaticUsersDisabled`). |
 
 ## Status conditions
 
@@ -85,6 +85,17 @@ same domain, because uniqueness is checked cluster wide. A
 `NamespaceExists=False, reason=NamespaceNotFound` (informational; it
 never feeds back into authorization) and is re-checked when the
 namespace appears or disappears.
+
+Secrets are not watched, and the operator caches no Secret at all: the
+TLS Secret and the test users Secret are read by name on every
+reconcile, so no informer holds the Secrets of the cluster in memory
+and the operator needs no `watch` on them. A TLS Secret that appears
+late is picked up by the 30-second re-check of the not-ready server. A
+certificate renewal needs no reconcile: the reload sidecars see the
+renewed files. A change of the test users Secret takes effect at the
+next re-check (at most 10 minutes), or sooner when the `MailServer`
+changes. The operator's own ConfigMaps and Jobs are cached by label
+only; ConfigMaps and Jobs of tenants never enter the cache.
 
 ## Dovecot
 

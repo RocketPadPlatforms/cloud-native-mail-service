@@ -284,6 +284,6 @@ var _ = Describe("MailServer validation gate", func() {
 		server := &cnmsv1alpha1.MailServer{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testServerName, Namespace: ns}, server)).To(Succeed())
 		dup := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: before[0].Name, Namespace: ns}}
-		Expect(createOwned(ctx, k8sClient, scheme.Scheme, server, dup)).To(Succeed())
+		Expect(createOwned(ctx, k8sClient, k8sClient, scheme.Scheme, server, dup)).To(Succeed())
 	})
 })

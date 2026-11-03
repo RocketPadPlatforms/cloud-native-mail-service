@@ -21,7 +21,6 @@ resources:
 - api:
     crdVersion: v1
     namespaced: true
-  controller: true
   domain: rpp.gmbh
   group: cnms
   kind: MailDomain
@@ -30,7 +29,6 @@ resources:
 - api:
     crdVersion: v1
     namespaced: true
-  controller: true
   domain: rpp.gmbh
   group: cnms
   kind: MailDirectory

@@ -56,7 +56,7 @@ type MailDomainGrantReconciler struct {
 }
 
 // +kubebuilder:rbac:groups=cnms.rpp.gmbh,resources=maildomaingrants,verbs=get;list;watch
-// +kubebuilder:rbac:groups=cnms.rpp.gmbh,resources=maildomaingrants/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=cnms.rpp.gmbh,resources=maildomaingrants/status,verbs=patch
 // +kubebuilder:rbac:groups=core,resources=namespaces,verbs=get;list;watch
 // +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
@@ -72,6 +72,7 @@ func (r *MailDomainGrantReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 		return ctrl.Result{}, err
 	}
+	orig := grant.DeepCopy()
 	ns := &corev1.Namespace{}
 	err := r.Get(ctx, types.NamespacedName{Name: grant.Spec.Namespace}, ns)
 	status, reason, message := metav1.ConditionTrue, "NamespaceExists",
@@ -81,7 +82,7 @@ func (r *MailDomainGrantReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			fmt.Sprintf("namespace %q does not exist", grant.Spec.Namespace)
 		if r.Recorder != nil {
 			r.Recorder.Eventf(grant, nil, corev1.EventTypeWarning, reason,
-				"NamespaceNotFound", message)
+				"NamespaceNotFound", "%s", eventMessage(message))
 		}
 	} else if err != nil {
 		return ctrl.Result{}, err
@@ -89,7 +90,7 @@ func (r *MailDomainGrantReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	setCondition(&grant.Status.Conditions, grant.Generation,
 		ConditionNamespaceExists, status, reason, message)
 	grant.Status.ObservedGeneration = grant.Generation
-	if err := r.Status().Update(ctx, grant); err != nil {
+	if err := r.Status().Patch(ctx, grant, client.MergeFrom(orig)); err != nil {
 		return ctrl.Result{}, err
 	}
 	log.V(1).Info("Reconciled MailDomainGrant",

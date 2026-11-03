@@ -134,13 +134,14 @@ func TestFinishRequeuesEveryServer(t *testing.T) {
 		{metav1.ConditionTrue, readyRequeueInterval},
 	} {
 		server := serverIn("a", "s1")
+		orig := server.DeepCopy()
 		server.Status.Conditions = []metav1.Condition{{
 			Type: conditionReady, Status: tc.status, Reason: "Test", LastTransitionTime: metav1.Now(),
 		}}
 		c := fake.NewClientBuilder().WithScheme(watchTestScheme(t)).
 			WithStatusSubresource(&cnmsv1alpha1.MailServer{}).WithObjects(server).Build()
 		r := &MailServerReconciler{Client: c}
-		res, err := r.finish(context.Background(), server, nil)
+		res, err := r.finish(context.Background(), server, orig, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -153,9 +154,11 @@ func TestFinishRequeuesEveryServer(t *testing.T) {
 // startManagerG runs a manager with the given controllers for the
 // current spec: the watches, field indexes and map functions are then
 // exercised end to end, without calling Reconcile by hand.
-func startManagerG(setups ...func(ctrl.Manager) error) {
+func startManagerG(setups ...func(ctrl.Manager) error) ctrl.Manager {
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme:  scheme.Scheme,
+		Cache:   CacheOptions(),
+		Client:  ClientOptions(),
 		Metrics: metricsserver.Options{BindAddress: "0"},
 		// Every spec starts its own manager with the same
 		// controller names.
@@ -176,6 +179,7 @@ func startManagerG(setups ...func(ctrl.Manager) error) {
 		stop()
 		Eventually(done, "30s").Should(BeClosed())
 	})
+	return mgr
 }
 
 var _ = Describe("Controller watches", func() {
