@@ -38,7 +38,7 @@ const (
 	// Rspamd is the filtering and DKIM engine (ADR 0001).
 	Rspamd = "rspamd/rspamd:4.2.3@sha256:47e00f62105f8a60009a30a590ebcf3bfd0b992d45468222d34afa5ca2103690"
 	// Valkey is the per-MailServer Rspamd state store (ADR 0001).
-	Valkey = "valkey/valkey:9.1.2@sha256:418652cfb58ef879d4978c33553735d7147016032d5aefaa14c828e611eb9dfd"
+	Valkey = "valkey/valkey:9.1.3@sha256:3add1a336a920ea54770a001ab6feb3da5fceea96a40373a3a2cd469b815f0b7"
 	// RedisExporter exports the Valkey metrics (ADR 0005).
 	RedisExporter = "oliver006/redis_exporter:v1.96.0@sha256:3d57b9eb142a62ffc600063606a41cd471cd53d81bed10be5b56b3a8918f2c26"
 	// Mailpit is the e2e SMTP sink (ADR 0004, section 7).
