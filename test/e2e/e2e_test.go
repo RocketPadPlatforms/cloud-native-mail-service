@@ -744,6 +744,8 @@ subjects:
 			}, 3*time.Minute).Should(Equal("True"))
 		})
 	})
+
+	registerDKIMSpecs() // dkim_test.go: the MailDomain specs share this fixture
 })
 
 // managerImage is the manager image to be built and loaded for testing.

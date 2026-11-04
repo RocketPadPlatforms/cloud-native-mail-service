@@ -388,6 +388,8 @@ say so (same as for claim bindings, plan section 3).
 - **How we know it worked:** unit tests for key generation, parsing and
   the state machine (a fake clock and resolver); golden files for
   `dkim_signing.conf`; an e2e that sends through submission and finds an
-  RSA and an Ed25519 `DKIM-Signature` at the sink; an e2e rotation with
-  both selectors valid during the overlap; a restore test that deletes the
-  annotation and finds the same keys in use.
+  RSA and an Ed25519 `DKIM-Signature` at the sink; a rotation with both
+  selectors valid during the overlap, tested with a fake clock in the unit
+  and envtest suites (the interval is at least 24 hours, so not in real
+  time in e2e); an e2e restore test that deletes the annotation and finds
+  the same keys in use.

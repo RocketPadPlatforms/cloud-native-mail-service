@@ -45,6 +45,9 @@ const (
 	Mailpit = "axllent/mailpit:v1.32.0@sha256:0790692be935ea4420d085694f7985b1f692ca6a8771ab0e0bd8ba75ac180498"
 	// Curl scrapes the operator metrics endpoint in the e2e suite.
 	Curl = "curlimages/curl:8.23.0@sha256:3fb7e13e5d179a845c97d78204f3f1064d1907037f26a3ebf91710571151fd93"
+	// CoreDNS is the e2e DNS server that serves the test zone the
+	// operator verifies the MailDomain records against (ADR 0012).
+	CoreDNS = "coredns/coredns:1.15.0@sha256:0a9d8c8ddf34347eb59aad9a8784f0710de88d6d112726d11d271f9bc6daca26"
 )
 
 // CNMS-built images (version tag only, see package docs).

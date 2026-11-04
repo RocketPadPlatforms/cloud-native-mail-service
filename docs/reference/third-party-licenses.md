@@ -66,6 +66,13 @@
 - Source: https://github.com/davecgh/go-spew/blob/d8f796af33cc/LICENSE
 
 
+## github.com/emersion/go-msgauth/dkim
+
+- Version: v0.7.0
+- License: MIT
+- Source: https://github.com/emersion/go-msgauth/blob/v0.7.0/LICENSE
+
+
 ## github.com/emicklei/go-restful/v3
 
 - Version: v3.13.0
@@ -505,6 +512,13 @@
 - Version: v3.0.4
 - License: MIT
 - Source: https://github.com/yaml/go-yaml/blob/v3.0.4/LICENSE
+
+
+## golang.org/x/crypto/ed25519
+
+- Version: v0.54.0
+- License: BSD-3-Clause
+- Source: https://cs.opensource.google/go/x/crypto/+/v0.54.0:LICENSE
 
 
 ## golang.org/x/exp/slices
