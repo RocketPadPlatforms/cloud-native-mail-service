@@ -24,6 +24,16 @@ committed.
 - Derived-name conflicts (`DerivedNameConflict`, ADR 0003): a `MailDomain`
   whose own name is a derived name of another active domain. Not detected
   by the `MailDomain` controller yet.
+- Decide how many `MailDomain`s a `MailServer` may serve. The API accepts up
+  to 50 domains per server and nothing limits them to one; the server name
+  (HELO, certificate) is the first sorted domain, so a domain that sorts
+  before the others changes both. The e2e suite serves three domains from
+  one server and picks names that sort after the first one.
+- Avoid the double rollout at first install: a `MailDomain` without the
+  rotation annotation has no active key, so a `MailServer` that references
+  it renders its domain without keys (fail closed) and again once the
+  `MailDomain` controller has written the state (ADR 0011, section 5). The
+  e2e suite creates the domains first and references them afterwards.
 - Check that a `DNSEndpoint` target longer than 255 octets (the RSA-2048
   DKIM value) is published as one TXT record by the common external-dns
   providers (ADR 0012 left it unverified); split it into character-strings

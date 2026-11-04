@@ -35,6 +35,11 @@ Policy:
   Clause, AGPL, or other source-available licenses.
 - **Build/dev tools** (linters, doc generators, CI tooling): any OSI-approved
   license, recorded here when added.
+- **Test-only Go modules**, including those of the e2e suite, are checked
+  against the same allow list as runtime modules (the license check runs
+  with the `e2e` build tag). Recorded: `github.com/emersion/go-msgauth`
+  v0.7.0 (MIT, verifies the DKIM signatures in the e2e suite) and
+  `golang.org/x/crypto` v0.54.0 (BSD-3-Clause, its dependency).
 - Enforced in CI by `make license-check`
   (`go-licenses check --allowed_licenses=...`): only Apache-2.0,
   BSD-2-Clause, BSD-3-Clause, ISC and MIT pass for Go modules, so every

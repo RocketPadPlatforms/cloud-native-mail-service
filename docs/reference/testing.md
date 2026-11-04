@@ -8,7 +8,7 @@ realism:
 | Unit | `go test` | Renderers (golden files), parsers, the domain-authorization evaluator |
 | Controller | envtest (`make test`) | Reconciliation: gates, fail-closed blocking, conditions, data-plane apply, optional-integration discovery; every file below `config/samples` (including `full-setup/`) is applied to the API server with strict field validation, and the docs embed those files, so examples cannot drift from the CRDs |
 | Guard matrix | Docker + `rspamc` (`make test-rspamd-guard`) | The never-unsigned guard and DKIM signing in the pinned Rspamd image, with the configuration the renderer produces |
-| E2E | kind + swaks + Mailpit (`make test-e2e`) | The full data plane in a cluster: mail actually flows through Postfix, Rspamd and Dovecot |
+| E2E | kind + swaks + Mailpit + CoreDNS (`make test-e2e`) | The full data plane in a cluster: mail actually flows through Postfix, Rspamd and Dovecot |
 
 The envtest suite installs the optional integration CRDs only on request:
 `PROMETHEUS_CRDS=1` adds a minimal `ServiceMonitor` CRD
@@ -115,6 +115,68 @@ Assertions (Phase 2):
 The suite never sends real mail and never touches real DNS or
 provider APIs (testing rule); the `example.*` domain and
 documentation address ranges are used throughout.
+
+### MailDomain, DKIM and the guard (Phase 5)
+
+The last container of the suite (`test/e2e/dkim_test.go`) reuses the
+operator, the `MailServer` and the Mailpit sink of the fixture. Its setup
+starts a **test DNS server**, a CoreDNS pod (Apache-2.0, pinned in
+`internal/images`) that is authoritative for `e2e.example.org` only, with
+no forwarding, and restarts the operator with `--dns-resolver` pointing at
+it, so the records the operator verifies never leave the cluster. It then
+creates two `MailDomain`s (each with its own `MailDomainGrant`): one with
+generated keys and `ed25519: true`, one with a bring-your-own RSA key whose
+Secret the test creates. The test copies `status.records` of both into the
+zone ConfigMap, restarts the DNS pod to load it, and only then adds the
+domains to the `MailServer`, so the data plane rolls out once. The specs
+check:
+
+- the DKIM records the controller requires are found by the lookups
+  (`RecordsVerified=True`, `Ready=True`), and the names and selectors match
+  `status.dkim`;
+- an authenticated message from the generated-key domain reaches the
+  sink with two `DKIM-Signature` headers (`rsa-sha256` and
+  `ed25519-sha256`, `d=` the domain, `s=` the active selectors), which also
+  proves the projected key files are readable by the Rspamd user on a real
+  cluster (ADR 0011, section 5). The suite verifies every signature of
+  every fetched message cryptographically, as a receiver would, against the
+  TXT records in `status.records`; the lookup answers only from those
+  records and never queries real DNS;
+- the bring-your-own key signs with its selector;
+- deleting the `cnms.rpp.gmbh/rotation` annotation, as a restore from
+  GitOps does, makes the controller derive the same annotation again: the
+  key Secrets keep their names and UIDs (nothing is created, replaced or
+  deleted), the active selectors are unchanged and the domain signs with the
+  same keys afterwards;
+- a corrupted bring-your-own key sets `DKIMKeysValid=False`, authenticated
+  submission is answered with `451 4.7.1` once the kubelet has synced the
+  Secret, nothing unsigned reaches the sink, and restoring the key lets the
+  retry through, signed;
+- with Rspamd stopped (and the operator stopped, so it cannot scale Rspamd
+  back) submission is answered with a 4xx and nothing is accepted; signed
+  mail flows while only the operator is down; after Rspamd returns the
+  retry is signed.
+
+The corrupted-key spec depends on the kubelet propagating a Secret change
+to the Rspamd pod, which takes from seconds to a minute or two, and on the
+rolling update that follows the status change; the specs poll for up to
+eight minutes. In a local kind run the whole part took about 3.5 minutes.
+Unauthenticated mail to
+an own-domain mailbox is covered by the inbound spec above and, for the
+missing signature, by the guard matrix; the e2e does not repeat it.
+
+The signature check uses `github.com/emersion/go-msgauth` v0.7.0 (MIT),
+for the e2e suite only, with `golang.org/x/crypto` (BSD-3-Clause). The
+license check and report run with the `e2e` build tag, so both are
+covered.
+
+**Not covered end to end:** the rotation timeline. The interval is at
+least 24 hours, so a real-time e2e is impossible. Rotation (a pending key
+that waits for its verified record, the 15-minute hold, the overlap with
+both selectors published, the retirement and the deletion of the Secret,
+the `AwaitingDNS` stall) is covered by the state-machine tests of
+`internal/dkim` and the `MailDomain` envtest specs, which use a fake clock
+and a fake DNS resolver.
 
 ## Running the tests
 

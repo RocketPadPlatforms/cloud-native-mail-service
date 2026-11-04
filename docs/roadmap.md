@@ -4,7 +4,7 @@ The project is built in phases (see the phase plan in `AGENTS.md`, section 5).
 At the end of every phase: tests green, docs updated, summary with assumptions
 and open risks, review before the next phase starts.
 
-Status as of 2026-11-03:
+Status as of 2026-11-04:
 
 | Phase | Scope | Status |
 |---|---|---|
@@ -13,7 +13,7 @@ Status as of 2026-11-03:
 | 2 | `MailServer` core: Postfix + Rspamd + Valkey rendering, workloads, config validation, golden-file tests, metrics, swaks e2e; plus domain-authorization gating of `spec.domains` (`MailDomainGrant`, `--domain-authorization` flag), default-deny NetworkPolicy floor, security floor (AUTH only over TLS, TLS >= 1.2, rate limits, `reject_unauth_destination`) with an open-relay e2e test | Done |
 | 3 | User sources and service accounts: `MailDirectory` (LDAP and SQL maps for Postfix and Dovecot auth), operator-managed `MailUser` accounts for environments without a directory service, `MailServiceAccount` application credentials (cross-namespace reference, operator-provided SMTP credential Secret, sender binding, including sender login maps on submission) — ADR 0008 | Planned |
 | 4 | Mailboxes (Dovecot): IMAP, LMTP delivery, mail storage, quota, backup hooks | Planned |
-| 5 | `MailDomain`: DKIM keys and rotation, SPF/DMARC/MTA-STS/TLS-RPT records, DNS verification; plus domain uniqueness and derived-name conflicts, public-suffix rejection, revocation semantics (grace period, kept DKIM keys), apex TXT conflict detection, dedicated external-dns wiring; the never-unsigned Rspamd guard ([ADR 0013](decisions/0013-never-unsigned-guard.md)) | In progress: API, packages, controller, rendering, guard and guard matrix test done; e2e remaining |
+| 5 | `MailDomain`: DKIM keys and rotation, SPF/DMARC/MTA-STS/TLS-RPT records, DNS verification; plus domain uniqueness and derived-name conflicts, public-suffix rejection, revocation semantics (grace period, kept DKIM keys), apex TXT conflict detection, dedicated external-dns wiring; the never-unsigned Rspamd guard ([ADR 0013](decisions/0013-never-unsigned-guard.md)) | Done |
 | 6 | Relay mode: `MailRelay`, per-domain routing, fallback relay | Planned |
 | 7 | IP management: `MailIPPoolClass`/`MailIPPool`/`MailIPPoolClaim`, binding, quarantine, egress policies, manual rDNS | Planned |
 | 8 | `InboundRoute`: webhook and LMTP delivery with retry/dead-letter | Planned |
@@ -54,10 +54,13 @@ the code and the [status conditions](reference/status-conditions.md).
   that has no usable key instead of sending it unsigned
   ([concepts](concepts/dkim-signing.md)). The guard's test matrix runs
   against the pinned Rspamd image in CI
-  ([testing](reference/testing.md#the-guard-matrix)). Open: the
-  end-to-end tests (signature at the sink, a corrupted key defers,
-  rotation with both selectors valid, restore); derived-name conflicts
-  are not detected.
+  ([testing](reference/testing.md#the-guard-matrix)). The e2e suite
+  checks the records against a test DNS server, the signatures at the
+  sink, the deferral of a corrupted key and of a stopped Rspamd, and the
+  restore without the rotation annotation; the rotation timeline is
+  covered with a fake clock
+  ([testing](reference/testing.md#maildomain-dkim-and-the-guard-phase-5)).
+  Open: derived-name conflicts are not detected.
 - **Relay and IP management (Phases 6 and 7):** the API fields exist;
   a server that sets `outbound.relay` or `ipPoolClaimRef` is not ready
   (`RelayNotAvailable`, `IpPoolClaimNotAvailable`). Direct outbound

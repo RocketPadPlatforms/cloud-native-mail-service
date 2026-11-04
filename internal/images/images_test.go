@@ -35,6 +35,7 @@ func TestUpstreamPinsAreTagAndDigest(t *testing.T) {
 		"Valkey":        Valkey,
 		"RedisExporter": RedisExporter,
 		"Mailpit":       Mailpit,
+		"CoreDNS":       CoreDNS,
 	} {
 		if !upstreamRe.MatchString(ref) {
 			t.Errorf("%s: %q is not name:tag@sha256:<digest>", name, ref)
@@ -57,7 +58,7 @@ func TestPinsAreUnique(t *testing.T) {
 	seen := map[string]string{}
 	for name, ref := range map[string]string{
 		"Dovecot": Dovecot, "Rspamd": Rspamd, "Valkey": Valkey,
-		"RedisExporter": RedisExporter, "Mailpit": Mailpit,
+		"RedisExporter": RedisExporter, "Mailpit": Mailpit, "CoreDNS": CoreDNS,
 		"Postfix": Postfix, "E2EClient": E2EClient,
 	} {
 		if prev, dup := seen[ref]; dup {

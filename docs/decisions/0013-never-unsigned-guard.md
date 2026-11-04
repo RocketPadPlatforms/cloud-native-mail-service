@@ -270,11 +270,14 @@ tests it.
   render test that the guard table and the `domain` table list the same
   domains and selectors.
 - **e2e (kind, Mailpit)**: an authenticated `swaks` send arrives with an
-  RSA and an Ed25519 `DKIM-Signature`; corrupting the BYO key Secret makes
+  RSA and an Ed25519 `DKIM-Signature` that verify against the records the
+  `MailDomain` publishes in `status.records`; corrupting the BYO key Secret makes
   `swaks` receive `451 4.7.1` within the kubelet sync time, nothing
-  arrives, and restoring the key lets the retry through; scaling Rspamd
-  to zero defers; an unauthenticated pod sending to a local recipient is
-  delivered without a signature.
+  arrives, and restoring the key lets the retry through; stopping Rspamd
+  (and the operator, which would scale it back) defers. An unauthenticated
+  pod sending to a local recipient is delivered (the inbound e2e spec) and
+  stays unsigned (the guard matrix); the mailbox is not readable from the
+  sink, so the e2e does not look at its headers.
 
 ## Consequences
 
