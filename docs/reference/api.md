@@ -179,6 +179,7 @@ verification state.
 
 _Appears in:_
 - [MailDomainStatus](#maildomainstatus)
+- [MailServerStatus](#mailserverstatus)
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
@@ -509,12 +510,12 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `domain` _string_ | Domain name, e.g. "example.org". Lowercase DNS name with at<br />least two labels of up to 63 characters (A-labels only, no<br />trailing dot). The last label starts with a letter, so an IP<br />address is not a domain. The same rule applies to the name of a<br />MailDomainGrant; keep the two patterns in sync. Immutable:<br />DKIM keys, DNS records and the domain authorization belong to<br />one domain; create a new MailDomain for another one. |  | MaxLength: 253 <br />Pattern: `^([a-z0-9]([a-z0-9-]\{0,61\}[a-z0-9])?[.])+[a-z]([a-z0-9-]\{0,61\}[a-z0-9])?$` <br />Required: \{\} <br /> |
+| `domain` _string_ | Domain name, e.g. "example.org". Lowercase DNS name with at<br />least two labels of up to 63 characters (A-labels only, no<br />trailing dot). The last label starts with a letter, so an IP<br />address is not a domain. The same rule applies to the name of a<br />MailDomainGrant and to MailServer.spec.hostname; keep the three<br />patterns in sync. Immutable:<br />DKIM keys, DNS records and the domain authorization belong to<br />one domain; create a new MailDomain for another one. |  | MaxLength: 253 <br />Pattern: `^([a-z0-9]([a-z0-9-]\{0,61\}[a-z0-9])?[.])+[a-z]([a-z0-9-]\{0,61\}[a-z0-9])?$` <br />Required: \{\} <br /> |
 | `serverRef` _[NameReference](#namereference)_ | ServerRef references the MailServer in the same namespace that<br />serves the domain: it signs, accepts and delivers the mail of<br />the domain (ADR 0014). The server need not exist yet; the<br />ServerFound condition says whether it does. Mutable, which moves<br />the domain to another server: the DKIM keys and DNS records<br />stay with the MailDomain, but the mail data on the old server<br />(mailboxes, queued mail) does not move (see the how-to guide<br />for the risks). |  | Required: \{\} <br /> |
 | `dnsMode` _string_ | DNS mode: "manual" (default) reports the required records in<br />the status for the operator to create; "externalDNS" creates<br />DNSEndpoint resources. | manual | Enum: [manual externalDNS] <br />Optional: \{\} <br /> |
 | `dkim` _[DKIM](#dkim)_ | DKIM signing configuration. |  | Optional: \{\} <br /> |
 | `dmarc` _[DMARC](#dmarc)_ | DMARC policy. Records published by CNMS use DMARC1 semantics<br />(RFC 9989-9991). |  | Optional: \{\} <br /> |
-| `spf` _[SPF](#spf)_ | SPF record generation: the sending sources of the domain. |  | Optional: \{\} <br /> |
+| `spf` _[SPF](#spf)_ | SPF record generation: the sending sources of the domain, in<br />addition to the sending sources of its MailServer<br />(MailServer.spec.spf): the record lists both (ADR 0014). |  | Optional: \{\} <br /> |
 | `mtaSts` _[MTAStS](#mtasts)_ | MTA-STS policy reporting. CNMS does not serve the policy. |  | Optional: \{\} <br /> |
 | `tlsRpt` _[TLSRPT](#tlsrpt)_ | TLS-RPT reporting. |  | Optional: \{\} <br /> |
 
@@ -580,6 +581,8 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
+| `hostname` _string_ | Hostname is the name the server presents: Postfix myhostname and<br />HELO, the name of the certificate, the target of the MX records<br />of its domains and the mx host of their MTA-STS policies (ADR<br />0014). Lowercase DNS name with at least two labels of up to 63<br />characters (A-labels only, no trailing dot); the last label<br />starts with a letter. The same rule applies to<br />MailDomain.spec.domain and the name of a MailDomainGrant; keep<br />the three patterns in sync. The hostname is authorized like a<br />domain: a MailDomainGrant has to cover it for the namespace, it<br />must not be a public suffix, and no other MailServer may use it.<br />Without that the server presents the in-cluster name of its<br />Postfix Service instead and keeps serving its domains<br />(HostnameAuthorized is False). Mutable, but a rename is treated<br />like a revocation of the old name. Point an A and an AAAA record<br />at the inbound address; status.records lists them. |  | MaxLength: 253 <br />Pattern: `^([a-z0-9]([a-z0-9-]\{0,61\}[a-z0-9])?[.])+[a-z]([a-z0-9-]\{0,61\}[a-z0-9])?$` <br />Required: \{\} <br /> |
+| `spf` _[ServerSPF](#serverspf)_ | SPF lists the sending sources of the server. The sources are<br />added to the SPF record of every domain the server serves and<br />form the SPF record of the hostname (the HELO identity, ADR<br />0014). The SPF record of a domain lists these sources and the<br />ones of its own spec.spf. |  | Optional: \{\} <br /> |
 | `directoryRef` _[NameReference](#namereference)_ | Directory used for recipient validation and user authentication.<br />References a MailDirectory in the same namespace. Optional: a<br />server without a directory needs another user source, which is<br />MailUser accounts (ADR 0008, not implemented yet) or, for tests,<br />submission.insecureStaticUsers. Without any user source the<br />server is not Ready (reason NoUserSource). |  | Optional: \{\} <br /> |
 | `outbound` _[Outbound](#outbound)_ | Outbound selects the outbound delivery mode. |  | Required: \{\} <br /> |
 | `tls` _[TLS](#tls)_ | TLS for inbound, submission and outbound mail. The certificate<br />is managed by cert-manager from the referenced issuer. |  | Required: \{\} <br /> |
@@ -610,6 +613,7 @@ _Appears in:_
 | `observedGeneration` _integer_ | ObservedGeneration is the generation of the spec last applied. |  | Optional: \{\} <br /> |
 | `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#condition-v1-meta) array_ | Conditions represent the current state of the MailServer. The<br />"Ready" condition is true when all managed workloads are<br />running with validated configuration. |  | Optional: \{\} <br /> |
 | `domains` _[ServerDomainStatus](#serverdomainstatus) array_ | Domains lists the MailDomains of the namespace that reference<br />this MailServer in spec.serverRef: those that are not served<br />first, then by name, at most 128 entries (the DomainsListed<br />condition says when the list is cut). It is derived from the<br />MailDomains and holds no state of its own. |  | MaxItems: 128 <br />Optional: \{\} <br /> |
+| `records` _[DNSRecord](#dnsrecord) array_ | Records lists the DNS records of the hostname and whether a<br />lookup verified them: an A or AAAA record for every address of<br />the inbound LoadBalancer Service, and the SPF record of the<br />hostname from spec.spf (omitted while a MailDomain of the<br />hostname itself carries it). The records are reported and<br />verified, not published, and the verification never feeds into<br />Ready. Empty while the hostname is not authorized. The list is<br />atomic: one name holds several records of the same type. |  | MaxItems: 64 <br />Optional: \{\} <br /> |
 
 
 #### Mailboxes
@@ -850,6 +854,23 @@ _Appears in:_
 | `domain` _string_ | Domain is the domain name of the MailDomain (spec.domain). |  | MaxLength: 253 <br />Required: \{\} <br /> |
 | `served` _boolean_ | Served is true when the domain is authorized and part of the<br />configuration the operator renders for the server. Whether the<br />pods already run it is reported by the WorkloadsReady condition. |  |  |
 | `reason` _string_ | Reason why the domain is served or not (a reason of the<br />DomainsAuthorized condition, or the reason that blocks the<br />whole server). |  | MaxLength: 128 <br />Required: \{\} <br /> |
+
+
+#### ServerSPF
+
+
+
+ServerSPF lists the sending sources of a MailServer.
+
+
+
+_Appears in:_
+- [MailServerSpec](#mailserverspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `ip4` _string array_ | IPv4 addresses or CIDR ranges allowed to send for the server<br />(ip4: mechanisms). |  | MaxItems: 16 <br />items:MaxLength: 64 <br />Optional: \{\} <br /> |
+| `ip6` _string array_ | IPv6 addresses or CIDR ranges allowed to send for the server<br />(ip6: mechanisms). |  | MaxItems: 16 <br />items:MaxLength: 64 <br />Optional: \{\} <br /> |
 
 
 #### Submission
