@@ -105,8 +105,9 @@ func hasForbiddenChar(s string) bool {
 // plaintextScheme reports whether a dovecot password scheme name keeps
 // the password readable or unsalted: PLAIN, CLEAR and CLEARTEXT, and
 // the PLAIN-* family (PLAIN-TRUNC, PLAIN-MD4, PLAIN-MD5); verified
-// against `doveadm pw -l` of Dovecot 2.4.5, where names are
-// case-insensitive.
+// against `doveadm pw -l` of the pinned Dovecot image
+// (internal/images/images.go; 2.4.5 when last verified), where names
+// are case-insensitive.
 func plaintextScheme(name string) bool {
 	name = strings.ToUpper(name)
 	return name == "PLAIN" || name == "CLEAR" || name == "CLEARTEXT" || strings.HasPrefix(name, "PLAIN-")

@@ -52,7 +52,7 @@ the mail is not accepted unsigned and not rejected. Mail that
 Postfix receives locally (`sendmail`, `postdrop`) is filtered through
 `non_smtpd_milters`, so it is held the same way. Mail that Postfix
 generates itself (bounces, notifications) skips the filter, because
-`internal_mail_filter_classes` is not set (Postfix 3.11.7 cannot tell
+`internal_mail_filter_classes` is not set (Postfix 3.11 cannot tell
 that mail from `sendmail` mail, [ADR 0013](../decisions/0013-never-unsigned-guard.md)),
 so bounces are unsigned.
 
