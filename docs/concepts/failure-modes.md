@@ -23,6 +23,7 @@ from the hardening phase on.
 | Postfix replica lost | Queued mail survives on the per-replica queue PVC; remaining replicas keep serving; the lost replica is replaced |
 | Scale-down of Postfix | Not supported yet: the queue move is not implemented, so decreasing `postfix.replicas` is rejected |
 | Dovecot down | IMAP/LMTP unavailable until the pod reschedules onto a node that can attach the mail volume; mail is queued in Postfix meanwhile |
+| Hostname of the server not authorized (no grant, public suffix, used by another server) | The server keeps serving its domains but presents the in-cluster name of its Postfix Service as HELO and certificate name; no MX record or MTA-STS policy names it; `HostnameAuthorized=False` and `Ready=False` with the reason of the failure |
 | Certificate renewed | Reload, not rollout — the cert Secret is excluded from the pod-template content hash |
 | Bad configuration | The validation Job fails: `Ready=False, reason=ConfigRejected`; the running pod templates and their (immutable) configuration stay untouched |
 | Rollout does not converge | `WorkloadsReady=False, reason=RolloutStalled` (Deployment past its progress deadline, or not ready for ten minutes); `Ready` stays false |
@@ -73,6 +74,32 @@ defers the mail of authenticated senders and Postfix's own `sendmail(1)`
 mail (loopback with a sender) too. The key Secrets are read through
 a mounted volume, so a deleted Secret defers the domain's mail instead of
 sending it unsigned or crashing the pod.
+
+### Hostname not authorized
+
+The hostname of a server is judged on its own, apart from its domains
+([ADR 0014](../decisions/0014-domain-server-binding-and-hostname.md)).
+When it is not granted to the namespace, is a public suffix or a
+cluster-internal name (`cluster.local`), or is used
+by another `MailServer` among the competing ones, the server does not
+fail closed: it presents the name of its in-cluster Postfix Service (the
+HELO name and the only name on the certificate, which is not something a
+public CA would sign) and keeps serving the authorized domains. Mail to
+and from those domains keeps flowing; what suffers is the identity: remote
+servers see an HELO name without records, and TLS clients that verify the
+hostname fail. No MX record or MTA-STS policy points at the fallback name,
+and `Ready` stays `False` until the grant or the duplicate is fixed. A
+hostname that is **revoked or renamed** does not fail closed for the
+domains either, also while the server is blocked for another reason
+(directory or users Secret missing): the certificate loses the old name
+at once, and the running pods keep serving their domains, still
+presenting the old name, until the new configuration is validated and
+rolled out. Only a revoked domain gets the fail-closed configuration.
+The accepted exposure is that window: the old name stays in HELO (it is
+self-asserted) and, until the issuer replaces the certificate Secret,
+in the certificate the pods mount. With a public ACME issuer the
+fallback name cannot be issued, so the old Secret stays mounted until
+it expires.
 
 ### Valkey down
 

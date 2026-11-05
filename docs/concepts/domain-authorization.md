@@ -58,7 +58,7 @@ re-evaluates grants on every reconcile. A `MailServer` only serves a
   reason=AuthorizationDisabled`).
 
 Otherwise the domain is inactive: it is left out of the Postfix
-configuration and of the certificate's names. The condition
+configuration. The condition
 explains why (`NotGranted`, `DuplicateDomain`, `PublicSuffix`; see
 the [status conditions](../reference/status-conditions.md)), and
 `kubectl get maildomaingrants` shows who owns a domain. The `MailDomain`
@@ -76,6 +76,32 @@ claimed `MailDomain`s:
   domain more than once, every such claimant is blocked until the
   misconfiguration is fixed. A claim from a namespace without the grant
   is unauthorized on its own and never blocks the owner.
+
+### The hostname of a server
+
+The name a server presents (`MailServer.spec.hostname`: HELO, the
+certificate, the target of the MX records and the `mx` host of the
+MTA-STS policies) is authorized the same way, through the same grants
+([ADR 0014](../decisions/0014-domain-server-binding-and-hostname.md)):
+
+- a grant covers the hostname and names the namespace of the server
+  (`mail.example.org` is covered by a grant of its own, or by
+  `example.org` with `includeSubdomains`), or the operator runs with
+  `--domain-authorization=unrestricted`;
+- it is not a public suffix and not a cluster-internal name (`cluster.local`
+  or below it);
+- no other `MailServer` among the competing ones uses it: the servers of
+  the namespace that owns the hostname in allowlist mode, all servers in
+  unrestricted mode. Both servers are blocked until one of them gives it
+  up (`DuplicateHostname`).
+
+The hostname may equal the apex of a `MailDomain`. A hostname that is not
+authorized is **not** a reason to stop serving: the verdict is the
+`HostnameAuthorized` condition and is independent of the domains. The
+server then presents the in-cluster name of its Postfix Service (HELO and
+certificate), keeps serving the domains that are authorized, never lists
+the hostname in an MX record or a policy, and is `Ready=False` with the
+reason of the failure until the grant is fixed.
 
 ### Derived names (not detected yet)
 
@@ -103,8 +129,8 @@ re-granting the domain does not rotate the key.
 For a `MailServer` this means:
 
 - Every domain is evaluated on its own. The authorized subset is
-  rendered; the others are left out of the Postfix configuration and the
-  certificate's names. `DomainsAuthorized` is `False` with reason
+  rendered; the others are left out of the Postfix configuration (the
+  certificate lists no domains). `DomainsAuthorized` is `False` with reason
   `PartiallyAuthorized` and a message naming each blocked domain, and a
   Warning Event is emitted. A blocked domain is still served until the new
   configuration is validated and rolled out, so `Ready` shows the
@@ -113,9 +139,22 @@ For a `MailServer` this means:
   authorized domains keep working.
 - If no domain is authorized any longer, or no `MailDomain` references
   the server any more (`Ready` reason `NoDomains`), a running server is
-  re-rendered fail closed: Postfix rejects all recipients, submission is
-  off, and the certificate keeps only the in-cluster Service name. A
-  server that never had a data plane gets none.
+  re-rendered fail closed: Postfix rejects all recipients (a permanent
+  `554 5.7.1 Relay access denied`, so senders get a bounce, not a retry)
+  and submission is off. The certificate keeps the authorized hostname (or the
+  in-cluster Service name without one). A server that never had a data
+  plane gets none.
+- A hostname that is revoked or renamed never takes the domains down,
+  whether or not the server is blocked for another reason. The
+  certificate is re-applied for the new name at once, because the old
+  one must not keep being renewed (also while the directory, the users
+  Secret or the issuer is missing). For a refused `ClusterIssuer` the
+  operator deletes the `Certificate` instead, since the shared issuer
+  would keep renewing a name the namespace no longer owns; the pods keep
+  the Secret they mounted. The running pods keep serving their domains, and
+  keep presenting the old name in HELO and TLS, until the new
+  configuration is validated and rolled out. Only a revoked domain
+  triggers the fail-closed configuration.
 - The new configuration goes through the usual [validation
   gate](../decisions/0009-config-validation-gate.md): until its Job
   passes, the previous configuration keeps running. A revoked domain is

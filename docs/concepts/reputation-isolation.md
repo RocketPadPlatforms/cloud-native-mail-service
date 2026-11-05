@@ -15,7 +15,9 @@ CNMS therefore isolates every `MailServer` completely:
   IP management phase), never another server's;
 - **own DKIM keys and selectors** — each server signs with its own
   keys, so a key rotation or a lost key affects one server only;
-- **own HELO names** — derived from the server's own addresses;
+- **own HELO names** — the hostname of each server, which is unique among
+  the servers that compete for it (and, with IP pools, derived from its own addresses in a later
+  phase);
 - **own Rspamd Deployment and own Valkey instance** — rate-limit,
   reputation and Bayes state are never shared between servers
   (one dedicated set per `MailServer`, never pooled).
