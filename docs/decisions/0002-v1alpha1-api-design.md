@@ -21,7 +21,9 @@ or removed before `v1beta1`.
    reference, and it only takes effect when the server's namespace allows
    it. Amended by ADR 0014: `MailServer.spec.domains` is gone; the
    domain-to-server relation is `MailDomain.spec.serverRef`, also
-   same-namespace.)
+   same-namespace. ADR 0014 part B adds the required
+   `MailServer.spec.hostname` and the `MailServer.spec.spf` sending
+   sources.)
 2. **Outbound is exactly one of `direct` or `relay`** (CEL `has()` XOR).
    `direct.ipPoolClaimRef` is optional: without a claim, mail leaves via the
    pods' source addresses. Claims arrive with the IP management phase (7); the

@@ -168,14 +168,19 @@ When a grant is deleted or no longer covers a domain:
 Amended by ADR 0014: a `MailServer` evaluates the `MailDomain`s that
 reference it in `spec.serverRef` (a filter of the claim list), so a domain
 that moves to another server, or whose `MailDomain` is deleted, is
-revoked by the path below like one whose grant is gone; part B of that
-ADR adds the server hostname to the authorization and the derived names.
+revoked by the path below like one whose grant is gone. Part B of that
+ADR adds the server hostname to the authorization: it is granted to the
+namespace like a domain, unique among the competing servers, and judged on
+its own (`HostnameAuthorized`), so a failing hostname leaves the domains
+alone and the server falls back to the name of its Postfix Service. The
+certificate carries the hostname, not the domains.
 
 For a `MailServer` (Phase 2) the evaluation returns the authorized subset
 plus one failure per other domain, and the controller renders only the
-subset, so a revoked domain leaves the rendered Postfix configuration and
-the certificate names on the next reconcile, and the running pods lose it
-when that configuration is validated and rolled out. The
+subset, so a revoked domain leaves the rendered Postfix configuration on
+the next reconcile (the Certificate lists no domains, see above), and the
+running pods lose it when that configuration is validated and rolled out.
+The
 `DomainsAuthorized` condition is `False` with reason `PartiallyAuthorized`
 while some domains are authorized (the message names each blocked one);
 `Ready` stays `False` in that state, because `Ready` means the whole spec
@@ -183,7 +188,8 @@ is realised and the safe reading of a partly blocked spec is "not done".
 Until the rollout finished, `Ready` shows the validation or rollout state
 instead, since the revoked domain is still served then. With no authorized
 domain left, a running server is re-rendered fail closed (no recipients,
-no submission, certificate name = the in-cluster Service) instead of
+no submission, certificate name = the authorized hostname, or the
+in-cluster Service name without one, ADR 0014) instead of
 keeping the old configuration; a server that never had a data plane is
 not given one. The new configuration still passes the validation gate
 (ADR 0009), so a rejected render leaves the previous one running, with one
@@ -197,10 +203,14 @@ server itself) replaces it, behind the same validation gate. What a
 workload serves is read from the `cnms.rpp.gmbh/served-domains`
 annotation on the workload objects (not the pod templates), which the
 operator sets together with the template, so it names the revision being
-rolled out, and from the names of the `Certificate`, which exists before
-the first workload and keeps being renewed. With a refused
+rolled out; the `Certificate`, which exists before the first workload,
+counts as a data plane but names no domain. With a refused
 `ClusterIssuer` the fail-closed render skips the `Certificate` and the
-operator deletes the existing one instead of renewing revoked names. The
+operator deletes the existing one instead of renewing revoked names. A
+hostname that is renamed or revoked is not a domain and never triggers
+the fail-closed render (ADR 0014); while the normal render is blocked,
+only the `Certificate` is re-applied so it carries the authorized name,
+or, for a refused `ClusterIssuer`, deleted (the Secret stays mounted). The
 cost: while such a render is blocked, revoking one domain
 takes the remaining authorized domains of the server down too, until the
 blocking input is fixed.

@@ -1,6 +1,6 @@
 # ADR 0014: Domain-to-server binding and server hostname
 
-- **Status:** Accepted
+- **Status:** Accepted; part A (binding) and part B (hostname) are implemented
 - **Date:** 2026-11-05
 
 ## Context
@@ -12,8 +12,8 @@ authorization (ADR 0003, 0011, 0012) belong to the `MailDomain`, and a
 tenant who adds a domain has to edit the server as well. It also tied
 several things to a list order nobody chose:
 
-- The name the server presents (HELO, certificate SAN, `postmaster`, the
-  MTA-STS `mx`) is the first sorted domain it serves
+- The name the server presented (HELO, certificate SAN, `postmaster`, the
+  MTA-STS `mx`) was the first sorted domain it served
   (`RenderRequest.ServerHostname`). Adding a domain that sorts earlier
   changes the name of a running server, its certificate and the policy of
   every other domain.
@@ -22,10 +22,11 @@ several things to a list order nobody chose:
 - The name is not authorized on its own: it is a domain of the server,
   not a hostname the namespace was granted.
 
-This ADR records both steps of the fix. The binding (part A) is
-implemented with this decision. The server hostname (part B) is decided
-here and implemented in a follow-up change; every statement in part B
-describes that change, not the code of part A.
+This ADR records both steps of the fix. The binding (part A) and the
+server hostname (part B) are both implemented. Part B arrived in a
+second change; where its implementation had to settle what the first
+text left open, the text below says so (marked "settled in the
+implementation").
 
 ## Decision
 
@@ -63,10 +64,9 @@ describes that change, not the code of part A.
 5. **Detaching is revocation.** A domain leaves a server when its
    `serverRef` changes, when the `MailDomain` is deleted, or when its
    grant goes away. All three go through the same path: the server is
-   re-rendered without the domain, the certificate loses the name, the
-   served-domains annotation drives the fail-closed render when the
-   normal one cannot be applied, and signing and submission for the
-   domain stop with the new revision. Deleting a `MailDomain` therefore
+   re-rendered without the domain, the served-domains annotation drives
+   the fail-closed render when the normal one cannot be applied, and
+   signing and submission for the domain stop with the new revision. Deleting a `MailDomain` therefore
    stops serving it; the key Secrets stay (ADR 0011).
 
 6. **Visibility.** `MailServer.status.domains` lists the attached
@@ -86,9 +86,11 @@ describes that change, not the code of part A.
    reconciles both servers); the existing fan-out to the servers of the
    other claimants of the same domain stays. A `MailServer` event
    reaches its `MailDomain`s (indexed), so `ServerFound` and the MTA-STS
-   host follow. A domain that joins or leaves also reaches the
-   MTA-STS-enabled domains of the server, because the server hostname is
-   its first sorted domain until part B.
+   host follow. (Part A also mapped a domain that joined or left to the
+   MTA-STS-enabled domains of the server, because the server name was its
+   first sorted domain. Part B removed that: the name is the hostname.
+   Part B adds the watches between the `MailServer`s of one hostname,
+   and from a `MailDomain` to the servers whose hostname is its domain.)
 
 **Why `serverRef` is mutable.** The rotation state of the DKIM keys is an
 annotation on the `MailDomain` (ADR 0011), and the key Secrets and the
@@ -114,27 +116,50 @@ how-to guide):
   and takes its other domains down until the blocking input is fixed
   (ADR 0003, the cost named there).
 
-### Part B: the server hostname (implemented in a follow-up change)
+### Part B: the server hostname
 
 1. **The field.** `MailServer.spec.hostname` is required and mutable (the
    same shape as `MailDomain.spec.domain`, without its immutability: a
    rename must not mean a new server). It replaces the first sorted
    domain as the name of the server: HELO, certificate name, MTA-STS
-   `mx`, `postmaster`.
+   `mx`. The pattern of the field, of `MailDomain.spec.domain` and of the
+   name of a `MailDomainGrant` is one rule, kept in sync by comment.
+   (Settled in the implementation: the renderer has no `postmaster`
+   address, so there was nothing to rename there. Bounces and local mail
+   carry `myorigin = $myhostname`, so the hostname is also the identity
+   of bounces, see ADR 0013.)
 
 2. **Authorization.** The hostname is authorized through the grants
    exactly like a domain: the owner of the hostname per the grants must
    be the server's namespace; allowlist and unrestricted modes behave as
    for domains. It is unique cluster-wide among `MailServer`s: two
    servers with the same hostname are both blocked (`DuplicateHostname`).
-   A public suffix is not a hostname. The hostname may equal the apex of
+   A public suffix is not a hostname, and neither is a cluster-internal
+   name (`cluster.local` or below it): that is the name a server falls
+   back to without a hostname. The hostname may equal the apex of
    a `MailDomain` (then no second SPF record is reported for it).
+   Settled in the implementation: "cluster-wide" means among the servers
+   that compete for the name, as for domains (ADR 0003): in allowlist
+   mode the servers of the namespace that owns the hostname per the
+   grants, in unrestricted mode all of them. A server of a namespace
+   without the grant is not authorized anyway and does not block the
+   owner.
 
 3. **Failure is scoped to the hostname.** A hostname that is not
-   authorized sets `HostnameNotAuthorized`. The server does **not** fail
-   closed for its domains: it falls back to the in-cluster Postfix
-   Service FQDN as HELO and certificate name and keeps serving the
-   domains that are authorized.
+   authorized sets the condition `HostnameAuthorized` to `False`, with
+   the reason `HostnameNotAuthorized` (no grant for the namespace, a
+   public suffix, a cluster-internal name, or no hostname set on a stored
+   object; the message says which) or `DuplicateHostname`. The
+   server does **not** fail closed for its domains: it falls back to the
+   in-cluster Postfix Service FQDN as HELO and certificate name and keeps
+   serving the domains that are authorized. Settled in the
+   implementation: `HostnameAuthorized` feeds into `Ready` (after
+   `DomainsAuthorized`), because a server with a hostname it may not
+   present is not ready for what its spec asks, although its data plane
+   runs; the verification of records never does (item 6). The failure
+   shows in `MailDomain` as `MTASTSReady=False` with the same reason
+   `HostnameNotAuthorized` (item 5), also for a duplicate, with the
+   message of the failure.
 
 4. **Certificate.** Only the authorized hostname: CN and the single SAN
    are the hostname. The Service FQDN is the name only while no hostname
@@ -143,10 +168,40 @@ how-to guide):
    challenge or a private CA (documented). In-cluster applications connect
    to the Service and verify the hostname with a `tlsServerName` key in
    their credential (ADR 0008, designed with Phase 3).
-   The served names of the revision (the `servedDomains` read from the
-   `Certificate`) exclude only the currently authorized hostname and the
-   Service FQDN, so a revoked hostname that is still on the certificate is
-   detected as served and triggers the fail-closed render.
+   Settled in the implementation: a rename or a revocation of the
+   hostname **never** takes the domains down. The workloads record only
+   the domains they serve (`served-domains`); the hostname is not
+   recorded, and the fail-closed decision looks at domains alone. The
+   normal render re-applies the `Certificate` before the validation
+   gate, so the certificate lists only the authorized name from then on
+   (and cert-manager stops renewing the old one); the running pods keep
+   serving their domains, and keep presenting the old name in HELO,
+   until the new revision is validated and rolled out. The fail-closed
+   render would turn a rename into a window in which Postfix answers
+   `554 5.7.1 Relay access denied` for every recipient, so it is not
+   applied for a hostname. This holds while the server is blocked for
+   another reason (directory or users Secret missing) as well: the old
+   data plane still delivers, so the controller re-applies only the
+   `Certificate` (for a refused `ClusterIssuer` it deletes the
+   `Certificate` the server owns instead, so the shared issuer does not
+   keep renewing the name, and the Secret stays mounted; only for a
+   server that has a data plane), and the pods change with the next
+   validated rollout. The same holds for a stored server upgraded from
+   an earlier snapshot, whose `Certificate` lists the domains: its first
+   reconcile replaces them and does not fail closed. The fail-closed
+   render keeps an authorized hostname: revoking the last domain does
+   not revoke the name, and the certificate is not reissued (an ACME
+   issuer has rate limits).
+   **Accepted exposure:** until the next validated rollout the pods
+   present the old hostname in HELO (self-asserted, no secret) and keep
+   the certificate Secret they mounted. cert-manager replaces that
+   Secret only if the issuer can issue the new name; a public ACME issuer
+   cannot issue the Service name that a revoked hostname falls back to,
+   so the old Secret stays mounted until it expires. A server that is
+   blocked for a long time keeps this window open for as long.
+   Not rejected by the cluster-internal rule: `foo.default.svc` does not
+   end in `.cluster.local`; in allowlist mode only a granted name passes,
+   in unrestricted mode such a name is accepted.
 
 5. **MTA-STS.** `mx` is the authorized hostname of the referenced server
    only. Without an authorized hostname no policy is published
@@ -159,7 +214,30 @@ how-to guide):
    `ClusterIP` service; reason `LoadBalancerHostname` when the ingress is
    a DNS name) and the SPF `TXT` at the hostname.
    `MailDomain.status.records` gains the `MX` record pointing at the
-   hostname. Verification never feeds into `Ready`.
+   hostname. Verification never feeds into `Ready`. Settled in the
+   implementation:
+   - The condition `AddressRecords` says why no address record is listed
+     (`NoExternalAddress` for a `ClusterIP` Service, `LoadBalancerHostname`,
+     `AddressPending` while the Service or its address does not exist);
+     `RecordsVerified` is the verification state of the list, with the
+     reasons of the `MailDomain` condition of the same name. Both are
+     warnings and are dropped while the hostname is not authorized.
+   - The SPF record of the hostname ends in `-all`: only the server
+     sources send as the hostname (the HELO identity). It is left out when
+     the server serves a `MailDomain` that has the hostname as its domain
+     (attached to the server and authorized), which carries the one
+     record of that name with the sources of its server. A `MailDomain`
+     of that name that references another server, or is not authorized,
+     does not: this server still reports the record.
+   - The `MX` record is `10 <hostname>` and is required while the server
+     serves the domain and its hostname is authorized. It is verified when
+     one `MX` record at the domain points at the hostname; other records
+     (a backup exchanger) are not compared. The `MX` and the address
+     records are verified through the resolver (`LookupMX`, `LookupHost`)
+     with the schedule of the other records, and the `MailServer`
+     controller uses `--dns-resolver` as well.
+   - Only `TXT` records are published by the `DNSEndpoint`. Publishing
+     `A`/`AAAA`/`MX` is in the backlog.
 
 7. **SPF sources.** `MailServer.spec.spf` (`ip4`, `ip6`, validated like
    `MailDomain.spec.spf`) lists the sending sources of the server and is
@@ -196,7 +274,13 @@ stays.
   (cheap at this scale, and the same list already feeds the uniqueness
   check); a server shows nothing until a domain attaches; a move has the
   risks above and no tooling yet.
-- **Until part B:** the server name is still the first sorted domain of
-  the server, with the coupling described in the context.
+- **Part B:** the server name is the hostname, so the coupling to the
+  order of the domains is gone. The cost: the hostname is one more name
+  to grant, to create records for, and to rename with care (until the new
+  revision is validated and rolled out the pods present the old name,
+  which the Certificate no longer requests; the domains keep being
+  served, also while the server is blocked for another reason).
+  Existing servers need a hostname and the
+  steps in the upgrade notes.
 - **Limits:** `status.domains` holds 128 entries; the cap is revisited in
   the backlog.
