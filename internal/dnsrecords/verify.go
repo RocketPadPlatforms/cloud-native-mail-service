@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/netip"
 	"strings"
 	"unicode"
 )
@@ -43,9 +44,30 @@ type Result struct {
 }
 
 // Verify looks the record up and judges the answer (ADR 0012,
-// section 4): the TXT records at the name are compared, other records
-// there (site verification tokens) are ignored.
+// section 4): the records of its type at the name are compared, other
+// records there (site verification tokens, the MX records of a backup
+// server, further addresses) are ignored.
 func Verify(ctx context.Context, r Resolver, rec Record) Result {
+	switch rec.Type {
+	case TypeA, TypeAAAA:
+		addrs, err := r.LookupHost(ctx, rec.Name)
+		switch {
+		case errors.Is(err, ErrNotFound):
+			return Result{Reason: "no " + rec.Type + " record at " + rec.Name}
+		case err != nil:
+			return Result{Unknown: true, Reason: "lookup failed: " + err.Error()}
+		}
+		return EvaluateAddress(rec, addrs)
+	case TypeMX:
+		mxs, err := r.LookupMX(ctx, rec.Name)
+		switch {
+		case errors.Is(err, ErrNotFound):
+			return Result{Reason: "no MX record at " + rec.Name}
+		case err != nil:
+			return Result{Unknown: true, Reason: "lookup failed: " + err.Error()}
+		}
+		return EvaluateMX(rec, mxs)
+	}
 	txts, err := r.LookupTXT(ctx, rec.Name)
 	switch {
 	case errors.Is(err, ErrNotFound):
@@ -77,6 +99,58 @@ func Evaluate(rec Record, observed []string) Result {
 	}
 	res.Verified = reason == ""
 	res.Reason = reason
+	return res
+}
+
+// EvaluateAddress judges the addresses observed at the name of an A or
+// AAAA record: it is verified when the address is among them. It is the
+// pure part of Verify.
+func EvaluateAddress(rec Record, observed []string) Result {
+	res := Result{Observed: observed}
+	want, err := netip.ParseAddr(rec.Value())
+	if err != nil {
+		res.Reason = fmt.Sprintf("%q is not an IP address", rec.Value())
+		return res
+	}
+	var sameFamily []string
+	for _, o := range observed {
+		got, err := netip.ParseAddr(o)
+		if err != nil || got.Unmap().Is4() != want.Unmap().Is4() {
+			continue
+		}
+		if got.Unmap() == want.Unmap() {
+			res.Verified = true
+			return res
+		}
+		sameFamily = append(sameFamily, got.String())
+	}
+	if len(sameFamily) == 0 {
+		res.Reason = "no " + rec.Type + " record found"
+	} else {
+		res.Reason = fmt.Sprintf("the name resolves to %s, not to %s", strings.Join(sameFamily, ", "), want)
+	}
+	return res
+}
+
+// EvaluateMX judges the MX records observed at the name of an MX record:
+// it is verified when one of them points at the expected host (the
+// preference is not compared, and further records are the business of
+// whoever runs a backup exchanger). It is the pure part of Verify.
+func EvaluateMX(rec Record, observed []MX) Result {
+	res := Result{}
+	want := strings.ToLower(strings.TrimSuffix(rec.mxHost(), "."))
+	hosts := make([]string, 0, len(observed))
+	for _, o := range observed {
+		host := strings.ToLower(strings.TrimSuffix(o.Host, "."))
+		res.Observed = append(res.Observed, fmt.Sprintf("%d %s", o.Pref, host))
+		if host == want {
+			res.Verified = true
+		}
+		hosts = append(hosts, host)
+	}
+	if !res.Verified {
+		res.Reason = fmt.Sprintf("the MX records point at %s, not at %s", strings.Join(hosts, ", "), want)
+	}
 	return res
 }
 

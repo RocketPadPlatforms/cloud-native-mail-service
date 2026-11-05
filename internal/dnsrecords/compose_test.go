@@ -34,6 +34,11 @@ const (
 
 	testDomain   = "example.org"
 	ip4Host      = "203.0.113.9"
+	ip4Other     = "203.0.113.10"
+	ip6Host      = "2001:db8::1"
+	spfNet       = "_spf.example.net"
+	nameServfail = "servfail.example.org"
+	nameSilent   = "silent.example.org"
 	mx1          = "mx1.example.org"
 	dmarcName    = "_dmarc.example.org"
 	policyReject = "reject"
@@ -81,8 +86,8 @@ func TestComposeFull(t *testing.T) {
 		},
 		SPF: &SPF{
 			IP4:       []string{ip4Host, "198.51.100.0/24", ip4Host},
-			IP6:       []string{"2001:db8::1"},
-			Include:   []string{"_spf.example.net", "_spf.example.com"},
+			IP6:       []string{ip6Host},
+			Include:   []string{spfNet, "_spf.example.com"},
 			Qualifier: "fail",
 		},
 		DMARC:  &DMARC{Policy: policyReject, SubdomainPolicy: "quarantine", NonExistentSubdomainPolicy: policyReject, Testing: true, Rua: "agg@example.org", Ruf: "for@example.org"},
@@ -113,7 +118,7 @@ func TestComposeFull(t *testing.T) {
 	}
 
 	// The RSA-2048 value does not fit one string.
-	if r := res.Records[0]; len(r.Values) != 2 || len(r.Values[0]) != 255 || r.Type != "TXT" {
+	if r := res.Records[0]; len(r.Values) != 2 || len(r.Values[0]) != 255 || r.Type != TypeTXT {
 		t.Fatalf("DKIM record not split: %d strings", len(r.Values))
 	}
 
@@ -157,7 +162,7 @@ func TestComposeSections(t *testing.T) {
 		},
 		{
 			name: "spf neutral",
-			in:   Input{Domain: testDomain, SPF: &SPF{Include: []string{"_spf.example.net"}, Qualifier: "neutral"}},
+			in:   Input{Domain: testDomain, SPF: &SPF{Include: []string{spfNet}, Qualifier: "neutral"}},
 			want: [][3]string{{testDomain, "v=spf1 include:_spf.example.net ?all", string(PurposeSPF)}},
 		},
 		{
@@ -235,7 +240,7 @@ func TestReportAuthorizationWarnings(t *testing.T) {
 	}{
 		{"same domain", testDomain, "r@example.org", nil},
 		{"subdomain of the organizational domain", testDomain, "r@reports.example.org", nil},
-		{"policy domain is a subdomain", "mail.example.org", "r@example.org", nil},
+		{"policy domain is a subdomain", testHostname, "r@example.org", nil},
 		{"another organization", testDomain, "r@dmarc.example.net",
 			[]Warning{{"rua", "r@dmarc.example.net", "example.org._report._dmarc.dmarc.example.net"}}},
 		{"multi-label public suffix, same organization", "example.co.uk", "r@mail.example.co.uk", nil},
