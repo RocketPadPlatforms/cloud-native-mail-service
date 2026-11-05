@@ -69,27 +69,27 @@ func TestMapPeerDomains(t *testing.T) {
 	// A deleted claim is not in the list any more but still reaches the
 	// remaining claimants.
 	got := requestKeys(r.mapPeerDomains(context.Background(), domainClaimIn("d", "gone", "example.org", "s")))
-	if want := []string{"a/x", "b/y"}; !slices.Equal(got, want) {
+	if want := []string{reqAX, reqBY}; !slices.Equal(got, want) {
 		t.Errorf("mapPeerDomains = %v, want %v", got, want)
 	}
 }
 
-func TestMapPeerDomainsReachesTheMTASTSDomainsOfTheServer(t *testing.T) {
+// The mx host of a policy is the hostname of the server, not one of its
+// domains (ADR 0014), so a domain that attaches or leaves reaches no other
+// domain of the server.
+func TestMapPeerDomainsLeavesTheOtherDomainsOfTheServerAlone(t *testing.T) {
 	withMTASTS := func(d *cnmsv1alpha1.MailDomain) *cnmsv1alpha1.MailDomain {
 		d.Spec.MTAStS = &cnmsv1alpha1.MTAStS{Enabled: new(true)}
 		return d
 	}
 	c := fake.NewClientBuilder().WithScheme(watchTestScheme(t)).WithObjects(
 		withMTASTS(domainClaimIn("a", "on", "on.example.org", "s")),
-		domainClaimIn("a", "off", "off.example.org", "s"),                     // no policy to update
-		withMTASTS(domainClaimIn("a", "elsewhere", "else.example.org", "t")),  // another server
-		withMTASTS(domainClaimIn("b", "foreign", "foreign.example.org", "s")), // another namespace
+		domainClaimIn("a", "off", "off.example.org", "s"),
 	).Build()
 	r := &MailDomainReconciler{Client: c}
 
-	got := requestKeys(r.mapPeerDomains(context.Background(), domainClaimIn("a", "new", "new.example.org", "s")))
-	if want := []string{"a/on"}; !slices.Equal(got, want) {
-		t.Errorf("mapPeerDomains = %v, want %v", got, want)
+	if got := r.mapPeerDomains(context.Background(), domainClaimIn("a", "new", "new.example.org", "s")); len(got) != 0 {
+		t.Errorf("mapPeerDomains = %v, want none", requestKeys(got))
 	}
 }
 

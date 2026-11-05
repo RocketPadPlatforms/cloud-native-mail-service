@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -196,13 +197,19 @@ func (st *dnsState) dkimStates(domain string, keys []generatedKey) map[string]dk
 	return out
 }
 
-// composeInput builds the input of the record composition from the spec
-// and the published keys (ADR 0012). The MTA-STS hosts come from the
-// MailServer in spec.serverRef (mtaSTSHosts), unless the MTASTSHosts
-// override is set.
-func (r *MailDomainReconciler) composeInput(ctx context.Context, md *cnmsv1alpha1.MailDomain, keys []keyEntry) (dnsrecords.Input, error) {
+// composeInput builds the input of the record composition from the spec,
+// the published keys and the MailServer in spec.serverRef (ADR 0012,
+// 0014): the sending sources of the server join the SPF record, and the
+// hostname of the server is the target of the MX record and the mx host
+// of the MTA-STS policy (the MTASTSHosts override replaces the latter).
+// It returns the view of the server it used.
+func (r *MailDomainReconciler) composeInput(ctx context.Context, md *cnmsv1alpha1.MailDomain, keys []keyEntry) (dnsrecords.Input, serverView, error) {
 	spec := &md.Spec
 	in := dnsrecords.Input{Domain: spec.Domain, SPF: &dnsrecords.SPF{}}
+	view, err := r.serverView(ctx, md)
+	if err != nil {
+		return in, view, err
+	}
 	for _, k := range keys {
 		in.DKIM = append(in.DKIM, dnsrecords.DKIMKey{Selector: k.selector, Key: k.key})
 	}
@@ -212,6 +219,13 @@ func (r *MailDomainReconciler) composeInput(ctx context.Context, md *cnmsv1alpha
 			in.SPF.Qualifier = *s.Qualifier
 		}
 	}
+	// The sources of a server that does not serve the domain are not
+	// senders for it.
+	if view.serves && view.spf != nil {
+		in.SPF.IP4 = append(slices.Clone(in.SPF.IP4), view.spf.IP4...)
+		in.SPF.IP6 = append(slices.Clone(in.SPF.IP6), view.spf.IP6...)
+	}
+	in.MXHost = view.presented()
 	if d := spec.DMARC; d != nil {
 		in.DMARC = &dnsrecords.DMARC{Testing: d.Testing != nil && *d.Testing}
 		in.DMARC.Policy = deref(d.Policy)
@@ -221,19 +235,18 @@ func (r *MailDomainReconciler) composeInput(ctx context.Context, md *cnmsv1alpha
 	}
 	if m := spec.MTAStS; m != nil && m.Enabled != nil && *m.Enabled {
 		in.MTASTS = &dnsrecords.MTASTS{Mode: deref(m.Mode)}
-		hosts := r.mtaSTSHosts
 		if r.MTASTSHosts != nil {
-			hosts = r.MTASTSHosts
-		}
-		var err error
-		if in.MTASTS.MX, err = hosts(ctx, md); err != nil {
-			return in, err
+			if in.MTASTS.MX, err = r.MTASTSHosts(ctx, md); err != nil {
+				return in, view, err
+			}
+		} else if host := view.presented(); host != "" {
+			in.MTASTS.MX = []string{host}
 		}
 	}
 	if t := spec.TLSRPT; t != nil && t.Enabled != nil && *t.Enabled {
 		in.TLSRPT = &dnsrecords.TLSRPT{Rua: deref(t.Rua)}
 	}
-	return in, nil
+	return in, view, nil
 }
 
 func deref(s *string) string {
@@ -246,7 +259,7 @@ func deref(s *string) string {
 // reportRecords writes status.records and the conditions that describe
 // the records: RecordsVerified, SPFReady, MTASTSReady and
 // ReportAuthorization.
-func (r *MailDomainReconciler) reportRecords(md *cnmsv1alpha1.MailDomain, composed dnsrecords.Composed, st *dnsState) {
+func (r *MailDomainReconciler) reportRecords(md *cnmsv1alpha1.MailDomain, composed dnsrecords.Composed, st *dnsState, view serverView) {
 	prev := md.Status.Records
 	records := make([]cnmsv1alpha1.DNSRecord, 0, len(composed.Records))
 	var unverified []string
@@ -273,7 +286,7 @@ func (r *MailDomainReconciler) reportRecords(md *cnmsv1alpha1.MailDomain, compos
 
 	if composed.NoSPFSources {
 		r.setCondition(md, ConditionSPFReady, metav1.ConditionFalse, ReasonNoSendingSources,
-			"no sending source is known, so no SPF record is generated; add one in spec.spf")
+			"no sending source is known, so no SPF record is generated; add one in spec.spf or in spec.spf of the MailServer")
 	} else {
 		r.setCondition(md, ConditionSPFReady, metav1.ConditionTrue, ReasonSPFGenerated, "the SPF record is generated from the sending sources")
 	}
@@ -284,8 +297,8 @@ func (r *MailDomainReconciler) reportRecords(md *cnmsv1alpha1.MailDomain, compos
 		meta.RemoveStatusCondition(&md.Status.Conditions, ConditionMTASTSReady)
 	case composed.MTASTS == nil:
 		md.Status.MTAStS = nil
-		r.setCondition(md, ConditionMTASTSReady, metav1.ConditionFalse, ReasonNoMailServer,
-			"the MailServer in spec.serverRef does not exist or does not serve the domain, so there is no mx host to put in the policy")
+		reason, message := view.noHost()
+		r.setCondition(md, ConditionMTASTSReady, metav1.ConditionFalse, reason, message)
 	default:
 		md.Status.MTAStS = &cnmsv1alpha1.MTAStSStatus{PolicyID: composed.MTASTS.ID, Policy: composed.MTASTS.Policy}
 		r.setCondition(md, ConditionMTASTSReady, metav1.ConditionTrue, ReasonPolicyAvailable,
