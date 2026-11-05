@@ -38,6 +38,34 @@ import (
 // isolated from all others: own workloads, queues, IPs, DKIM keys and
 // Rspamd/Valkey instances.
 type MailServerSpec struct {
+	// Hostname is the name the server presents: Postfix myhostname and
+	// HELO, the name of the certificate, the target of the MX records
+	// of its domains and the mx host of their MTA-STS policies (ADR
+	// 0014). Lowercase DNS name with at least two labels of up to 63
+	// characters (A-labels only, no trailing dot); the last label
+	// starts with a letter. The same rule applies to
+	// MailDomain.spec.domain and the name of a MailDomainGrant; keep
+	// the three patterns in sync. The hostname is authorized like a
+	// domain: a MailDomainGrant has to cover it for the namespace, it
+	// must not be a public suffix, and no other MailServer may use it.
+	// Without that the server presents the in-cluster name of its
+	// Postfix Service instead and keeps serving its domains
+	// (HostnameAuthorized is False). Mutable, but a rename is treated
+	// like a revocation of the old name. Point an A and an AAAA record
+	// at the inbound address; status.records lists them.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?[.])+[a-z]([a-z0-9-]{0,61}[a-z0-9])?$`
+	Hostname string `json:"hostname"`
+
+	// SPF lists the sending sources of the server. The sources are
+	// added to the SPF record of every domain the server serves and
+	// form the SPF record of the hostname (the HELO identity, ADR
+	// 0014). The SPF record of a domain lists these sources and the
+	// ones of its own spec.spf.
+	// +optional
+	SPF *ServerSPF `json:"spf,omitempty"`
+
 	// Directory used for recipient validation and user authentication.
 	// References a MailDirectory in the same namespace. Optional: a
 	// server without a directory needs another user source, which is
@@ -93,6 +121,27 @@ type MailServerSpec struct {
 	// Backup settings (k8up annotations on the managed volumes).
 	// +optional
 	Backup *Backup `json:"backup,omitempty"`
+}
+
+// ServerSPF lists the sending sources of a MailServer.
+type ServerSPF struct {
+	// IPv4 addresses or CIDR ranges allowed to send for the server
+	// (ip4: mechanisms).
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=16
+	// +kubebuilder:validation:items:MaxLength=64
+	// +kubebuilder:validation:XValidation:rule="self.all(a, (isIP(a) && ip(a).family() == 4) || (isCIDR(a) && cidr(a).ip().family() == 4))",message="every entry must be an IPv4 address or CIDR"
+	IP4 []string `json:"ip4,omitempty"`
+
+	// IPv6 addresses or CIDR ranges allowed to send for the server
+	// (ip6: mechanisms).
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=16
+	// +kubebuilder:validation:items:MaxLength=64
+	// +kubebuilder:validation:XValidation:rule="self.all(a, (isIP(a) && ip(a).family() == 6) || (isCIDR(a) && cidr(a).ip().family() == 6))",message="every entry must be an IPv6 address or CIDR"
+	IP6 []string `json:"ip6,omitempty"`
 }
 
 // Outbound selects the outbound delivery mode.
@@ -354,6 +403,19 @@ type MailServerStatus struct {
 	// +kubebuilder:validation:MaxItems=128
 	// +optional
 	Domains []ServerDomainStatus `json:"domains,omitempty"`
+
+	// Records lists the DNS records of the hostname and whether a
+	// lookup verified them: an A or AAAA record for every address of
+	// the inbound LoadBalancer Service, and the SPF record of the
+	// hostname from spec.spf (omitted while a MailDomain of the
+	// hostname itself carries it). The records are reported and
+	// verified, not published, and the verification never feeds into
+	// Ready. Empty while the hostname is not authorized. The list is
+	// atomic: one name holds several records of the same type.
+	// +listType=atomic
+	// +kubebuilder:validation:MaxItems=64
+	// +optional
+	Records []DNSRecord `json:"records,omitempty"`
 }
 
 // ServerDomainStatus reports one MailDomain that references the
@@ -384,6 +446,7 @@ type ServerDomainStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Hostname",type="string",JSONPath=".spec.hostname"
 // +kubebuilder:printcolumn:name="Relay",type="string",JSONPath=".spec.outbound.relay.relayRef.name",description="Relay of the relay outbound mode; empty for direct delivery"
 // +kubebuilder:printcolumn:name="Ready",type="string",JSONPath=".status.conditions[?(@.type=='Ready')].status"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"

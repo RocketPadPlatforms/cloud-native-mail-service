@@ -33,7 +33,8 @@ type MailDomainSpec struct {
 	// least two labels of up to 63 characters (A-labels only, no
 	// trailing dot). The last label starts with a letter, so an IP
 	// address is not a domain. The same rule applies to the name of a
-	// MailDomainGrant; keep the two patterns in sync. Immutable:
+	// MailDomainGrant and to MailServer.spec.hostname; keep the three
+	// patterns in sync. Immutable:
 	// DKIM keys, DNS records and the domain authorization belong to
 	// one domain; create a new MailDomain for another one.
 	// +kubebuilder:validation:Required
@@ -70,7 +71,9 @@ type MailDomainSpec struct {
 	// +optional
 	DMARC *DMARC `json:"dmarc,omitempty"`
 
-	// SPF record generation: the sending sources of the domain.
+	// SPF record generation: the sending sources of the domain, in
+	// addition to the sending sources of its MailServer
+	// (MailServer.spec.spf): the record lists both (ADR 0014).
 	// +optional
 	SPF *SPF `json:"spf,omitempty"`
 

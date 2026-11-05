@@ -21,11 +21,11 @@ spec:
       # lifetime of 5 days. An interval of 5 days or less needs an
       # explicit, shorter overlap.
       overlap: 120h
+  # The sending sources of the MailServer (spec.spf) are listed in the SPF
+  # record as well; add the ones that are only yours here.
   spf:
     ip4:
-      - 203.0.113.0/24
-    ip6:
-      - 2001:db8::/32
+      - 198.51.100.0/24
     qualifier: softfail
   dmarc:
     policy: quarantine

@@ -1,0 +1,12 @@
+apiVersion: cnms.rpp.gmbh/v1alpha1
+kind: MailDomainGrant
+metadata:
+  labels:
+    app.kubernetes.io/name: cloud-native-mail-service
+    app.kubernetes.io/managed-by: kustomize
+  # The hostname of the MailServer is authorized like a domain. A grant of
+  # its own keeps the grant of example.org from covering every subdomain.
+  name: mail.example.org
+spec:
+  namespace: mail-sample
+  includeSubdomains: false

@@ -146,6 +146,13 @@ func createGrantG(domain, ns string, includeSubdomains bool) {
 	Expect(k8sClient.Create(ctx, g)).To(Succeed())
 }
 
+// serverHostnameG is the default hostname of a test server: unique per
+// namespace and server, so the cluster-scoped grants it needs never
+// collide between specs.
+func serverHostnameG(ns, name string) string {
+	return fmt.Sprintf("%s.%s.example.net", name, ns)
+}
+
 // createServerG creates a MailServer; mutate applies spec overrides
 // before creation. The domains it serves are the MailDomains that
 // reference it.
@@ -158,6 +165,7 @@ func newServerG(ns, name string, mutate func(*cnmsv1alpha1.MailServer)) *cnmsv1a
 	s := &cnmsv1alpha1.MailServer{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 		Spec: cnmsv1alpha1.MailServerSpec{
+			Hostname:     serverHostnameG(ns, name),
 			DirectoryRef: &cnmsv1alpha1.NameReference{Name: directoryName},
 			Outbound:     cnmsv1alpha1.Outbound{Direct: &cnmsv1alpha1.DirectOutbound{}},
 			TLS: cnmsv1alpha1.TLS{

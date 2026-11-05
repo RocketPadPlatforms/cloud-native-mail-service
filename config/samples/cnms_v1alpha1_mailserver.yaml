@@ -6,6 +6,17 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: mailserver-sample
 spec:
+  # The name the server presents (HELO, certificate, MX target). It needs
+  # its own grant, see cnms_v1alpha1_maildomaingrant-hostname.yaml, and
+  # an A record to the address of the inbound Service.
+  hostname: mail.example.org
+  # Sending sources of the server, added to the SPF record of its domains
+  # and of the hostname.
+  spf:
+    ip4:
+      - 203.0.113.0/24
+    ip6:
+      - 2001:db8::/32
   directoryRef:
     name: maildirectory-sample
   outbound:

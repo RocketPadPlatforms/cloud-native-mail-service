@@ -5,7 +5,8 @@
 # so it brings its own MailDomain and MailDomainGrant (static.example.org)
 # next to the ones of cnms_v1alpha1_mailserver.yaml. It is not part of
 # kustomization.yaml; apply it and the Secret with
-# `kubectl apply -n mail-sample -f <file>`.
+# `kubectl apply -n mail-sample -f <file>`. The hostname needs a grant of its
+# own as well (mail.static.example.org below).
 apiVersion: cnms.rpp.gmbh/v1alpha1
 kind: MailServer
 metadata:
@@ -14,6 +15,7 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: mailserver-static-users-sample
 spec:
+  hostname: mail.static.example.org
   outbound:
     direct: {}
   tls:
@@ -49,5 +51,15 @@ metadata:
   # The object name is the domain itself; the namespace is the one you
   # apply the samples into.
   name: static.example.org
+spec:
+  namespace: mail-sample
+---
+apiVersion: cnms.rpp.gmbh/v1alpha1
+kind: MailDomainGrant
+metadata:
+  labels:
+    app.kubernetes.io/name: cloud-native-mail-service
+    app.kubernetes.io/managed-by: kustomize
+  name: mail.static.example.org
 spec:
   namespace: mail-sample

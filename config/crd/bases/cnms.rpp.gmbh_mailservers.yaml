@@ -15,6 +15,9 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
+    - jsonPath: .spec.hostname
+      name: Hostname
+      type: string
     - description: Relay of the relay outbound mode; empty for direct delivery
       jsonPath: .spec.outbound.relay.relayRef.name
       name: Relay
@@ -119,6 +122,26 @@ spec:
                 required:
                 - name
                 type: object
+              hostname:
+                description: |-
+                  Hostname is the name the server presents: Postfix myhostname and
+                  HELO, the name of the certificate, the target of the MX records
+                  of its domains and the mx host of their MTA-STS policies (ADR
+                  0014). Lowercase DNS name with at least two labels of up to 63
+                  characters (A-labels only, no trailing dot); the last label
+                  starts with a letter. The same rule applies to
+                  MailDomain.spec.domain and the name of a MailDomainGrant; keep
+                  the three patterns in sync. The hostname is authorized like a
+                  domain: a MailDomainGrant has to cover it for the namespace, it
+                  must not be a public suffix, and no other MailServer may use it.
+                  Without that the server presents the in-cluster name of its
+                  Postfix Service instead and keeps serving its domains
+                  (HostnameAuthorized is False). Mutable, but a rename is treated
+                  like a revocation of the old name. Point an A and an AAAA record
+                  at the inbound address; status.records lists them.
+                maxLength: 253
+                pattern: ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?[.])+[a-z]([a-z0-9-]{0,61}[a-z0-9])?$
+                type: string
               inbound:
                 description: Inbound mail (port 25) service settings.
                 properties:
@@ -285,6 +308,43 @@ spec:
                     minimum: 1
                     type: integer
                 type: object
+              spf:
+                description: |-
+                  SPF lists the sending sources of the server. The sources are
+                  added to the SPF record of every domain the server serves and
+                  form the SPF record of the hostname (the HELO identity, ADR
+                  0014). The SPF record of a domain lists these sources and the
+                  ones of its own spec.spf.
+                properties:
+                  ip4:
+                    description: |-
+                      IPv4 addresses or CIDR ranges allowed to send for the server
+                      (ip4: mechanisms).
+                    items:
+                      maxLength: 64
+                      type: string
+                    maxItems: 16
+                    type: array
+                    x-kubernetes-list-type: set
+                    x-kubernetes-validations:
+                    - message: every entry must be an IPv4 address or CIDR
+                      rule: self.all(a, (isIP(a) && ip(a).family() == 4) || (isCIDR(a)
+                        && cidr(a).ip().family() == 4))
+                  ip6:
+                    description: |-
+                      IPv6 addresses or CIDR ranges allowed to send for the server
+                      (ip6: mechanisms).
+                    items:
+                      maxLength: 64
+                      type: string
+                    maxItems: 16
+                    type: array
+                    x-kubernetes-list-type: set
+                    x-kubernetes-validations:
+                    - message: every entry must be an IPv6 address or CIDR
+                      rule: self.all(a, (isIP(a) && ip(a).family() == 6) || (isCIDR(a)
+                        && cidr(a).ip().family() == 6))
+                type: object
               submission:
                 description: Submission (port 587) settings.
                 properties:
@@ -371,6 +431,7 @@ spec:
                 - message: storage is only used when persistence is enabled
                   rule: '!has(self.storage) || (has(self.persistence) && self.persistence)'
             required:
+            - hostname
             - outbound
             - tls
             type: object
@@ -495,6 +556,49 @@ spec:
                   applied.
                 format: int64
                 type: integer
+              records:
+                description: |-
+                  Records lists the DNS records of the hostname and whether a
+                  lookup verified them: an A or AAAA record for every address of
+                  the inbound LoadBalancer Service, and the SPF record of the
+                  hostname from spec.spf (omitted while a MailDomain of the
+                  hostname itself carries it). The records are reported and
+                  verified, not published, and the verification never feeds into
+                  Ready. Empty while the hostname is not authorized. The list is
+                  atomic: one name holds several records of the same type.
+                items:
+                  description: |-
+                    DNSRecord is the desired state of one DNS record and its
+                    verification state.
+                  properties:
+                    lastChecked:
+                      description: LastChecked is the time of the last lookup.
+                      format: date-time
+                      type: string
+                    name:
+                      description: Fully qualified record name, e.g. "_dmarc.example.org".
+                      maxLength: 253
+                      type: string
+                    type:
+                      description: Record type (TXT, A, ...).
+                      maxLength: 10
+                      type: string
+                    value:
+                      description: Expected record value (full string for TXT records).
+                      type: string
+                    verified:
+                      description: |-
+                        Verified is true when the last lookup matched the expected
+                        value.
+                      type: boolean
+                  required:
+                  - name
+                  - type
+                  - value
+                  type: object
+                maxItems: 64
+                type: array
+                x-kubernetes-list-type: atomic
             type: object
         required:
         - spec
