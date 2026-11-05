@@ -55,7 +55,9 @@ is required today, so a directory-less server cannot be Ready at all.
      (controller-owned, so same-namespace garbage collection applies) with
      the documented keys `username`, `password` (operator-generated),
      `server` (in-cluster submission FQDN), `tls`
-     (`mandatory`/`opportunistic`), `helo` (the server's HELO name) and
+     (`mandatory`/`opportunistic`), `helo` (the server's HELO name;
+     amended by ADR 0014: the server hostname, with a `tlsServerName` key
+     for the name to verify the certificate against) and
      `ca.crt` (the CA chain of the server's TLS certificate). Everything an
      application needs is in one mounted Secret; the application needs no
      extra RBAC.

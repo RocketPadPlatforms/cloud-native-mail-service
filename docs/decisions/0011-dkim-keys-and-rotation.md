@@ -1,6 +1,6 @@
 # ADR 0011: DKIM keys, signing configuration and rotation
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-03
 
 ## Context
