@@ -40,7 +40,7 @@ const (
 	// Valkey is the per-MailServer Rspamd state store (ADR 0001).
 	Valkey = "valkey/valkey:9.1.3@sha256:3add1a336a920ea54770a001ab6feb3da5fceea96a40373a3a2cd469b815f0b7"
 	// RedisExporter exports the Valkey metrics (ADR 0005).
-	RedisExporter = "oliver006/redis_exporter:v1.96.0@sha256:3d57b9eb142a62ffc600063606a41cd471cd53d81bed10be5b56b3a8918f2c26"
+	RedisExporter = "oliver006/redis_exporter:v1.97.0@sha256:f5f903fbe77571d455ede0453b084d6840bc62fc105efac001034421cab83b99"
 	// Mailpit is the e2e SMTP sink (ADR 0004, section 7).
 	Mailpit = "axllent/mailpit:v1.33.0@sha256:9b3a463be15354c0f0eba91697d80e3e0d8a5623ef0e627cacc836bc17fd5231"
 	// Curl scrapes the operator metrics endpoint in the e2e suite.
