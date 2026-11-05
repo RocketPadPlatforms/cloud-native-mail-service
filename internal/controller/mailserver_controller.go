@@ -41,10 +41,12 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/recorder"
 
@@ -59,6 +61,12 @@ const (
 	// references the server passes the domain authorization check (ADR
 	// 0003); it is also true, with reason NoDomains, when none does.
 	ConditionDomainsAuthorized = "DomainsAuthorized"
+	// ConditionHostnameAuthorized is true when the hostname of the
+	// server is granted to its namespace and no other MailServer uses
+	// it (ADR 0014). While it is false the server presents the
+	// in-cluster name of its Postfix Service and keeps serving its
+	// domains; Ready is false with the reason of this condition.
+	ConditionHostnameAuthorized = "HostnameAuthorized"
 	// ConditionDomainsListed is false when status.domains lists only
 	// part of the MailDomains that reference the server. It is a
 	// warning only: it never feeds into Ready.
@@ -233,21 +241,11 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	// Domain authorization (ADR 0003) is evaluated first and on every
 	// reconcile: no tenant-controlled check below may keep a revoked
 	// domain from reaching the data plane.
-	grants, domains, err := listAuthorizationInput(ctx, r)
+	auth, domains, err := r.authorize(ctx, server)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	auth := (&authorizationEvaluator{
-		server: server,
-		grants: grantRefs(grants),
-		claims: domainClaims(domains),
-		mode:   r.DomainAuthorization,
-	}).Evaluate()
 	authReason, authMessage := auth.condition()
-	prevAuth := meta.FindStatusCondition(*conds, ConditionDomainsAuthorized).DeepCopy()
-	setCondition(conds, generation, ConditionDomainsAuthorized,
-		conditionStatus(auth.all()), authReason, authMessage)
-	r.emitAuthorizationEvent(server, auth, prevAuth, authReason, authMessage)
 
 	// Anything that keeps the normal render from being applied: an
 	// input the tenant controls is missing or invalid, or no domain is
@@ -355,7 +353,7 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	// and rolled out, so "partially authorized" must not hide that.
 	reason, message := readyReason(*conds, []string{
 		ConditionCertificateReady, ConditionConfigValidated,
-		ConditionWorkloadsReady, ConditionDomainsAuthorized, ConditionObservability,
+		ConditionWorkloadsReady, ConditionDomainsAuthorized, ConditionHostnameAuthorized, ConditionObservability,
 	})
 	if blocked != nil {
 		// The fail-closed render is applied, but the server is not
@@ -366,6 +364,41 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		conditionStatus(reason == ReasonReady), reason, message)
 	res, err := r.finish(ctx, server, orig, prevReady)
 	return keys.requeue(res), err
+}
+
+// authorize evaluates the hostname and the domains of the server (ADR
+// 0003, 0014), records the verdicts in the DomainsAuthorized and
+// HostnameAuthorized conditions and returns them with the MailDomains it
+// read. The hostname is judged on its own: a failure leaves the domains
+// alone.
+func (r *MailServerReconciler) authorize(ctx context.Context, server *cnmsv1alpha1.MailServer) (authorization, *cnmsv1alpha1.MailDomainList, error) {
+	grants, domains, err := listAuthorizationInput(ctx, r)
+	if err != nil {
+		return authorization{}, nil, err
+	}
+	servers := &cnmsv1alpha1.MailServerList{}
+	if err := r.List(ctx, servers); err != nil {
+		return authorization{}, nil, err
+	}
+	auth := (&authorizationEvaluator{
+		server:  server,
+		grants:  grantRefs(grants),
+		claims:  domainClaims(domains),
+		servers: serverClaims(servers),
+		mode:    r.DomainAuthorization,
+	}).Evaluate()
+	conds, generation := &server.Status.Conditions, server.Generation
+
+	reason, message := auth.condition()
+	prev := meta.FindStatusCondition(*conds, ConditionDomainsAuthorized).DeepCopy()
+	setCondition(conds, generation, ConditionDomainsAuthorized, conditionStatus(auth.all()), reason, message)
+	r.emitAuthorizationEvent(server, auth, prev, reason, message)
+
+	hostStatus, hostReason, hostMessage := auth.hostnameCondition()
+	prev = meta.FindStatusCondition(*conds, ConditionHostnameAuthorized).DeepCopy()
+	setCondition(conds, generation, ConditionHostnameAuthorized, hostStatus, hostReason, hostMessage)
+	r.emitHostnameEvent(server, prev, hostStatus, hostReason, hostMessage)
+	return auth, domains, nil
 }
 
 // applyGuarded applies the render for domains and users. If the
@@ -553,6 +586,18 @@ func (r *MailServerReconciler) emitAuthorizationEvent(server *cnmsv1alpha1.MailS
 		return
 	}
 	r.Recorder.Eventf(server, nil, corev1.EventTypeWarning, reason, "AuthorizeDomains", "%s", eventMessage(message))
+}
+
+// emitHostnameEvent records a Warning Event when the hostname became
+// (or is still, with a new message) unauthorized.
+func (r *MailServerReconciler) emitHostnameEvent(server *cnmsv1alpha1.MailServer, prev *metav1.Condition, status metav1.ConditionStatus, reason, message string) {
+	if r.Recorder == nil || status == metav1.ConditionTrue {
+		return
+	}
+	if prev != nil && prev.Status == metav1.ConditionFalse && prev.Message == message {
+		return
+	}
+	r.Recorder.Eventf(server, nil, corev1.EventTypeWarning, reason, "AuthorizeHostname", "%s", eventMessage(message))
 }
 
 // clientIPPreserved reports whether Postfix sees the real client
@@ -866,7 +911,32 @@ func (r *MailServerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&cnmsv1alpha1.MailDomain{}, handler.EnqueueRequestsFromMapFunc(r.mapDomainServers)).
 		Watches(&cnmsv1alpha1.MailDirectory{}, handler.EnqueueRequestsFromMapFunc(r.mapSameNamespaceServers)).
 		Watches(&cnmsv1alpha1.MailDomainGrant{}, handler.EnqueueRequestsFromMapFunc(r.mapGrantServers)).
+		// The hostname is unique across namespaces: a server that takes
+		// it, renames or goes away blocks or frees the other claimants.
+		// Status writes do not change it.
+		Watches(&cnmsv1alpha1.MailServer{}, handler.EnqueueRequestsFromMapFunc(r.mapPeerServers),
+			builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Complete(r)
+}
+
+// mapPeerServers enqueues the MailServers that use the same hostname as
+// obj, in every namespace. For a renamed server the handler also maps
+// the old object, so the claimants of the old name are freed.
+func (r *MailServerReconciler) mapPeerServers(ctx context.Context, obj client.Object) []reconcile.Request {
+	s, ok := obj.(*cnmsv1alpha1.MailServer)
+	if !ok || s.Spec.Hostname == "" {
+		return nil
+	}
+	peers := &cnmsv1alpha1.MailServerList{}
+	if err := r.List(ctx, peers, client.MatchingFields{mailServerHostnameIndex: s.Spec.Hostname}); err != nil {
+		log.FromContext(ctx).Error(err, "Could not list MailServers", "hostname", s.Spec.Hostname)
+		return nil
+	}
+	reqs := make([]reconcile.Request, 0, len(peers.Items))
+	for i := range peers.Items {
+		reqs = append(reqs, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&peers.Items[i])})
+	}
+	return reqs
 }
 
 // mapSameNamespaceServers enqueues every MailServer of the object's

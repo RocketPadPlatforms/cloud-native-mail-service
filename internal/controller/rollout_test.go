@@ -64,9 +64,9 @@ func convergeWorkloadsG(ns string) {
 	convergeDeploymentG(ns, testServerName+"-valkey")
 }
 
-func createTLSSecretG(ns, name string) {
+func createTLSSecretG(ns string) {
 	Expect(k8sClient.Create(ctx, &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+		ObjectMeta: metav1.ObjectMeta{Name: testServerName + "-tls", Namespace: ns},
 		Data:       map[string][]byte{tlsCertKey: []byte("crt"), "tls.key": []byte("key")},
 	})).To(Succeed())
 }
@@ -76,7 +76,7 @@ var _ = Describe("MailServer rollout readiness", func() {
 	BeforeEach(func() {
 		ns, _ = grantFixture()
 		createServerG(ns, "mail", nil)
-		createTLSSecretG(ns, "mail-tls")
+		createTLSSecretG(ns)
 		deployG(newReconcilerG(AuthorizationAllowlist, true), ns, "mail")
 	})
 

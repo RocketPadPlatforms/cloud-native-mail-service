@@ -257,7 +257,7 @@ func validMailServer(name string) *cnmsv1alpha1.MailServer {
 	return &cnmsv1alpha1.MailServer{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: sampleNamespace},
 		Spec: cnmsv1alpha1.MailServerSpec{
-			Hostname:     "mail.example.org",
+			Hostname:     hostMail,
 			DirectoryRef: &cnmsv1alpha1.NameReference{Name: "dir"},
 			Outbound:     cnmsv1alpha1.Outbound{Direct: &cnmsv1alpha1.DirectOutbound{}},
 			TLS: cnmsv1alpha1.TLS{

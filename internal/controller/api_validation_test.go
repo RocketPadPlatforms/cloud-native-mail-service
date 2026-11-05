@@ -55,6 +55,8 @@ const (
 	dkimSelectorField = "spec.dkim.keys[0].selector"
 	spfIncludeField   = "spec.spf.include"
 	algRSA            = "rsa"
+	spfIP4Sample      = "203.0.113.1"
+	spfIP6Sample      = "2001:db8::1"
 )
 
 // apiCase is one create attempt: an empty wantErr means the object
@@ -268,11 +270,11 @@ var _ = Describe("API validation of domain names", func() {
 	runAPICases([]apiCase{
 		{name: "accepts a MailDomain with a 63 character label", mutate: domain(okLabel + ".example.org")},
 		{name: "accepts a MailDomain with an A-label top level domain", mutate: domain("example.xn--p1ai")},
-		{name: "rejects a MailDomain that is an IPv4 address", mutate: domain("203.0.113.1"), wantErr: domainField},
+		{name: "rejects a MailDomain that is an IPv4 address", mutate: domain(spfIP4Sample), wantErr: domainField},
 		{name: "rejects a MailDomain with a 64 character label", mutate: domain(longLabel + ".example.org"), wantErr: domainField},
 		{name: "rejects a MailDomain with an underscore", mutate: domain("a_b.example.org"), wantErr: domainField},
 		{name: "accepts a MailDomainGrant with a 63 character label", mutate: grant(okLabel + ".example.org")},
-		{name: "rejects a MailDomainGrant named like an IPv4 address", mutate: grant("203.0.113.1"), wantErr: "at least two labels"},
+		{name: "rejects a MailDomainGrant named like an IPv4 address", mutate: grant(spfIP4Sample), wantErr: "at least two labels"},
 		{name: "rejects a MailDomainGrant with a 64 character label", mutate: grant(longLabel + ".example.org"), wantErr: "at least two labels"},
 	})
 })
@@ -421,14 +423,14 @@ var _ = Describe("API validation of SPF, DMARC, MTA-STS and TLS-RPT", func() {
 	v6 := "must be an IPv6 address or CIDR"
 	runAPICases([]apiCase{
 		{name: "accepts SPF sources and a qualifier", mutate: spf(cnmsv1alpha1.SPF{
-			IP4: []string{"203.0.113.10", "198.51.100.0/24"}, IP6: []string{"2001:db8::1", "2001:db8::/32"},
+			IP4: []string{"203.0.113.10", "198.51.100.0/24"}, IP6: []string{spfIP6Sample, "2001:db8::/32"},
 			Include: []string{"_spf.example.net", "spf.example.com"}, Qualifier: new("fail"),
 		})},
-		{name: "rejects an IPv6 address in ip4", mutate: spf(cnmsv1alpha1.SPF{IP4: []string{"2001:db8::1"}}), wantErr: v4},
+		{name: "rejects an IPv6 address in ip4", mutate: spf(cnmsv1alpha1.SPF{IP4: []string{spfIP6Sample}}), wantErr: v4},
 		{name: "rejects a host name in ip4", mutate: spf(cnmsv1alpha1.SPF{IP4: []string{"host.example.net"}}), wantErr: v4},
 		{name: "rejects an IPv4 prefix length above 32", mutate: spf(cnmsv1alpha1.SPF{IP4: []string{"203.0.113.0/33"}}), wantErr: v4},
 		{name: "rejects an ip4 value that injects a mechanism", mutate: spf(cnmsv1alpha1.SPF{IP4: []string{"203.0.113.1 include:evil.example"}}), wantErr: v4},
-		{name: "rejects an IPv4 address in ip6", mutate: spf(cnmsv1alpha1.SPF{IP6: []string{"203.0.113.1"}}), wantErr: v6},
+		{name: "rejects an IPv4 address in ip6", mutate: spf(cnmsv1alpha1.SPF{IP6: []string{spfIP4Sample}}), wantErr: v6},
 		{name: "rejects an IPv6 prefix length above 128", mutate: spf(cnmsv1alpha1.SPF{IP6: []string{"2001:db8::/129"}}), wantErr: v6},
 		{name: "accepts 16 ip4 entries", mutate: spf(cnmsv1alpha1.SPF{IP4: many(16, func(i int) string { return fmt.Sprintf("203.0.113.%d", i) })})},
 		{name: "rejects 17 ip4 entries", mutate: spf(cnmsv1alpha1.SPF{IP4: many(17, func(i int) string { return fmt.Sprintf("203.0.113.%d", i) })}), wantErr: "spec.spf.ip4"},
@@ -460,7 +462,7 @@ var _ = Describe("API validation of SPF, DMARC, MTA-STS and TLS-RPT", func() {
 		ns := fmt.Sprintf("cnms-api-%d", apiNSCounter)
 		Expect(k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}})).To(Succeed())
 		Expect(spec(func(ms *cnmsv1alpha1.MailDomainSpec) {
-			ms.SPF = &cnmsv1alpha1.SPF{IP4: []string{"203.0.113.1"}}
+			ms.SPF = &cnmsv1alpha1.SPF{IP4: []string{spfIP4Sample}}
 			ms.MTAStS = &cnmsv1alpha1.MTAStS{}
 		})(ns)).To(Succeed())
 		d := &cnmsv1alpha1.MailDomain{}
@@ -626,7 +628,7 @@ var _ = Describe("API validation of the MailServer hostname and SPF sources", fu
 		{name: "accepts a hostname with a 63 character label", mutate: hostname(strings.Repeat("a", 63) + ".example.org")},
 		{name: "rejects a MailServer without a hostname", mutate: hostname(""), wantErr: hostnameField},
 		{name: "rejects a single label hostname", mutate: hostname("mail"), wantErr: hostnameField},
-		{name: "rejects an IPv4 address as hostname", mutate: hostname("203.0.113.1"), wantErr: hostnameField},
+		{name: "rejects an IPv4 address as hostname", mutate: hostname(spfIP4Sample), wantErr: hostnameField},
 		{name: "rejects an upper case hostname", mutate: hostname("Mail.example.org"), wantErr: hostnameField},
 		{name: "rejects a hostname with a trailing dot", mutate: hostname("mail.example.org."), wantErr: hostnameField},
 		{name: "rejects a hostname with a 64 character label", mutate: hostname(longLabel + ".example.org"), wantErr: hostnameField},
@@ -636,8 +638,8 @@ var _ = Describe("API validation of the MailServer hostname and SPF sources", fu
 		{name: "accepts SPF sources", mutate: spf(cnmsv1alpha1.ServerSPF{
 			IP4: []string{"203.0.113.9", "198.51.100.0/24"}, IP6: []string{"2001:db8::/32"},
 		})},
-		{name: "rejects an IPv6 address in ip4", mutate: spf(cnmsv1alpha1.ServerSPF{IP4: []string{"2001:db8::1"}}), wantErr: "IPv4 address or CIDR"},
-		{name: "rejects an IPv4 address in ip6", mutate: spf(cnmsv1alpha1.ServerSPF{IP6: []string{"203.0.113.1"}}), wantErr: "IPv6 address or CIDR"},
+		{name: "rejects an IPv6 address in ip4", mutate: spf(cnmsv1alpha1.ServerSPF{IP4: []string{spfIP6Sample}}), wantErr: "IPv4 address or CIDR"},
+		{name: "rejects an IPv4 address in ip6", mutate: spf(cnmsv1alpha1.ServerSPF{IP6: []string{spfIP4Sample}}), wantErr: "IPv6 address or CIDR"},
 		{name: "rejects an ip4 value that injects a mechanism", mutate: spf(cnmsv1alpha1.ServerSPF{IP4: []string{"203.0.113.1 include:evil.example"}}), wantErr: "IPv4 address or CIDR"},
 		{name: "rejects 17 ip4 entries", mutate: spf(cnmsv1alpha1.ServerSPF{IP4: func() []string {
 			out := make([]string, 17)

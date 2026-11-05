@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"golang.org/x/net/publicsuffix"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	cnmsv1alpha1 "github.com/RocketPadPlatforms/cloud-native-mail-service/api/v1alpha1"
 )
@@ -47,6 +48,15 @@ const (
 	// ReasonNoDomains is set when no MailDomain references the server:
 	// there is nothing to serve.
 	ReasonNoDomains = "NoDomains"
+	// ReasonHostnameNotAuthorized is set when the hostname of a server
+	// is not granted to its namespace or is a public suffix. The server
+	// presents the in-cluster name of its Postfix Service instead and
+	// keeps serving its domains (ADR 0014).
+	ReasonHostnameNotAuthorized = "HostnameNotAuthorized"
+	// ReasonDuplicateHostname is set when more than one MailServer
+	// among the competing ones (the owning namespace in allowlist mode)
+	// uses the hostname; every one is blocked from it (ADR 0014).
+	ReasonDuplicateHostname = "DuplicateHostname"
 )
 
 // domainAuthorizationMode selects how MailServer domains are
@@ -81,6 +91,13 @@ type domainClaim struct {
 	serverRef string // spec.serverRef.name
 }
 
+// serverClaim is one MailServer and the hostname it claims.
+type serverClaim struct {
+	name      string
+	namespace string
+	hostname  string // spec.hostname
+}
+
 // grantRef is one MailDomainGrant.
 type grantRef struct {
 	domain            string // the grant name (the domain)
@@ -97,23 +114,31 @@ type authorizationEvaluator struct {
 	server *cnmsv1alpha1.MailServer
 	grants []grantRef
 	claims []domainClaim
-	mode   domainAuthorizationMode
+	// servers are all MailServers of the cluster: the hostname is
+	// unique among them (ADR 0014).
+	servers []serverClaim
+	mode    domainAuthorizationMode
 }
 
 // authorization is the outcome of evaluating one MailServer: the
-// authorized subset of its domains and one failure per other domain.
-// A failing domain never takes the others down; the controller
-// renders only the authorized subset (fail closed per domain).
+// authorized subset of its domains and one failure per other domain,
+// and the verdict on its hostname. A failing domain never takes the
+// others down; the controller renders only the authorized subset (fail
+// closed per domain). A failing hostname takes no domain down either:
+// the server presents the name of its Postfix Service instead.
 type authorization struct {
-	// domains are the authorized domains, sorted; the first entry is
-	// the primary domain (HELO, certificate SAN, postmaster). Empty
-	// when none is authorized.
+	// domains are the authorized domains, sorted. Empty when none is
+	// authorized.
 	domains  []string
 	failures []domainFailure
 	// attached has one entry per MailDomain that references the
 	// server, sorted by MailDomain name.
 	attached []attachedDomain
-	mode     domainAuthorizationMode
+	// hostname is the authorized hostname of the server; empty while
+	// hostnameFailure is set.
+	hostname        string
+	hostnameFailure *domainFailure
+	mode            domainAuthorizationMode
 }
 
 // attachedDomain is one MailDomain that references the server and its
@@ -160,13 +185,29 @@ func (a authorization) condition() (string, string) {
 	return reason, msg
 }
 
-// Evaluate checks every MailDomain that references the server (ADR
-// 0003, 0014): those of the server's namespace whose spec.serverRef
-// names it. A domain that stops referencing the server, or is deleted,
-// is no longer in the result, so it is revoked like one whose grant is
-// gone.
+// hostnameCondition returns the HostnameAuthorized status, reason and
+// message.
+func (a authorization) hostnameCondition() (metav1.ConditionStatus, string, string) {
+	switch {
+	case a.hostnameFailure != nil:
+		return metav1.ConditionFalse, a.hostnameFailure.reason, a.hostnameFailure.message
+	case a.mode == AuthorizationUnrestricted:
+		return metav1.ConditionTrue, ReasonAuthorizationDisabled,
+			"hostname authorization is disabled (--domain-authorization=unrestricted)"
+	}
+	return metav1.ConditionTrue, ReasonAuthorized, "the hostname is granted for this namespace and no other MailServer uses it"
+}
+
+// Evaluate checks the hostname of the server and every MailDomain that
+// references it (ADR 0003, 0014): those of the server's namespace whose
+// spec.serverRef names it. A domain that stops referencing the server,
+// or is deleted, is no longer in the result, so it is revoked like one
+// whose grant is gone.
 func (e *authorizationEvaluator) Evaluate() authorization {
 	res := authorization{mode: e.mode}
+	if res.hostnameFailure = e.authorizeHostname(); res.hostnameFailure == nil {
+		res.hostname = e.server.Spec.Hostname
+	}
 	for _, claim := range e.attached() {
 		a := attachedDomain{name: claim.name, domain: claim.domain, failure: e.authorize(e.server.Namespace, claim.domain)}
 		res.attached = append(res.attached, a)
@@ -214,23 +255,78 @@ func (e *authorizationEvaluator) authorize(namespace, domain string) *domainFail
 	return nil
 }
 
+// authorizeHostname decides whether the MailServer may present its
+// hostname (ADR 0014): nil when it may, else the failure. The hostname
+// is authorized like a domain (a public suffix is never one, the grants
+// decide the owner namespace) and unique among the MailServers that
+// compete for it.
+func (e *authorizationEvaluator) authorizeHostname() *domainFailure {
+	host, ns := e.server.Spec.Hostname, e.server.Namespace
+	// A stored object may predate the required field.
+	if host == "" {
+		return &domainFailure{ReasonHostnameNotAuthorized, "spec.hostname is not set"}
+	}
+	// The name is presented to the internet and put on the certificate;
+	// a cluster-internal name is the fallback of a server without a
+	// hostname, never a hostname.
+	if host == "cluster.local" || strings.HasSuffix(host, ".cluster.local") {
+		return &domainFailure{ReasonHostnameNotAuthorized, fmt.Sprintf(
+			"%s is a cluster-internal name; cluster-internal names are not allowed as hostname", host)}
+	}
+	if suffix, _ := publicsuffix.PublicSuffix(host); suffix == host {
+		return &domainFailure{ReasonHostnameNotAuthorized, host + " is a public suffix; the hostname needs a name below it"}
+	}
+	if e.mode == AuthorizationAllowlist && !e.granted(ns, host) {
+		return &domainFailure{ReasonHostnameNotAuthorized,
+			fmt.Sprintf("no MailDomainGrant covering the hostname %q for namespace %q", host, ns)}
+	}
+	if n := e.serversFor(host); n > 1 {
+		return &domainFailure{ReasonDuplicateHostname, fmt.Sprintf(
+			"hostname %q is used by %d MailServer objects; every one is blocked from it until the duplicate is resolved",
+			host, n)}
+	}
+	return nil
+}
+
+// competingNamespace returns the namespace whose objects compete for
+// name: the owner per the grants in allowlist mode, where an object of
+// a namespace without the grant is unauthorized anyway and must not
+// block the owner (ADR 0003). The owner is "" in unrestricted mode,
+// where every namespace counts. ok is false when no grant covers name.
+func (e *authorizationEvaluator) competingNamespace(name string) (ns string, ok bool) {
+	if e.mode != AuthorizationAllowlist {
+		return "", true
+	}
+	g, found := e.owner(name)
+	return g.namespace, found
+}
+
 // claimsFor counts the MailDomains claiming domain that compete for
-// it. In allowlist mode only the claims in the namespace that owns
-// the domain count: a claim from a namespace without the grant is
-// unauthorized anyway and must not block the owner (ADR 0003). In
-// unrestricted mode there is no owner, so every namespace counts.
+// it (competingNamespace).
 func (e *authorizationEvaluator) claimsFor(domain string) int {
-	ownerNS := ""
-	if e.mode == AuthorizationAllowlist {
-		g, found := e.owner(domain)
-		if !found {
-			return 0
-		}
-		ownerNS = g.namespace
+	ownerNS, ok := e.competingNamespace(domain)
+	if !ok {
+		return 0
 	}
 	n := 0
 	for i := range e.claims {
 		if e.claims[i].domain == domain && (ownerNS == "" || e.claims[i].namespace == ownerNS) {
+			n++
+		}
+	}
+	return n
+}
+
+// serversFor counts the MailServers using hostname that compete for it
+// (competingNamespace).
+func (e *authorizationEvaluator) serversFor(hostname string) int {
+	ownerNS, ok := e.competingNamespace(hostname)
+	if !ok {
+		return 0
+	}
+	n := 0
+	for i := range e.servers {
+		if e.servers[i].hostname == hostname && (ownerNS == "" || e.servers[i].namespace == ownerNS) {
 			n++
 		}
 	}
@@ -273,6 +369,15 @@ func grantRefs(list *cnmsv1alpha1.MailDomainGrantList) []grantRef {
 		})
 	}
 	return refs
+}
+
+// serverClaims converts MailServers to the evaluation input.
+func serverClaims(list *cnmsv1alpha1.MailServerList) []serverClaim {
+	claims := make([]serverClaim, 0, len(list.Items))
+	for _, s := range list.Items {
+		claims = append(claims, serverClaim{name: s.Name, namespace: s.Namespace, hostname: s.Spec.Hostname})
+	}
+	return claims
 }
 
 // domainClaims converts MailDomains to the evaluation input.

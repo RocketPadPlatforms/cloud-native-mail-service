@@ -125,7 +125,7 @@ var _ = Describe("MailServer domain revocation", func() {
 		createServerG(ns, testServerName, func(s *cnmsv1alpha1.MailServer) {
 			s.Spec.Mailboxes = &cnmsv1alpha1.Mailboxes{Enabled: new(true)}
 		})
-		createTLSSecretG(ns, testServerName+"-tls")
+		createTLSSecretG(ns)
 		r = newReconcilerG(AuthorizationAllowlist, true)
 		settle()
 	})
