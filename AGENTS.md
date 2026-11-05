@@ -112,9 +112,11 @@ Namespaced (tenant):
   (`direct` with `ipPoolClaimRef`, or `relay` with `relayRef`), `directoryRef`,
   submission settings, mailbox settings (Dovecot), TLS (cert-manager
   issuerRef), availability (PDB, spread), observability toggles. It serves the
-  `MailDomain`s that reference it (ADR 0014); the server hostname
-  (`hostname`) and the server SPF sources (`spf`) are decided in ADR 0014 and
-  arrive in a follow-up change.
+  `MailDomain`s that reference it (ADR 0014). Its `hostname` (required, granted
+  like a domain, unique among the competing servers) is the name it presents: HELO,
+  certificate, MX target, MTA-STS `mx`. Its `spf` lists the sending sources,
+  which are added to the SPF record of every domain it serves. Its status
+  reports and verifies the DNS records of the hostname (`A`/`AAAA`, SPF).
 - `MailDomain`: domain, `serverRef` (the `MailServer` that serves it, same
   namespace, mutable), DKIM selectors + rotation (overlapping selectors), SPF
   (generated), DMARC (RFC 9989-9991 semantics, not RFC 7489), MTA-STS, TLS-RPT,
