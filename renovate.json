@@ -46,9 +46,15 @@
       "addLabels": ["needs-adr"]
     },
     {
-      "description": "kustomize v5.8.3 requires Go 1.27 and go.mod declares 1.26; lift this cap together with the Go toolchain bump.",
-      "matchPackageNames": ["sigs.k8s.io/kustomize/kustomize/v5"],
-      "allowedVersions": "<5.8.3"
+      "description": "Go version: the go.mod go directive follows the latest Go release.",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["golang"],
+      "rangeStrategy": "bump"
+    },
+    {
+      "description": "Go version: go.mod, the builder image and the devcontainer image are updated together.",
+      "matchPackageNames": ["go", "golang"],
+      "groupName": "go"
     },
     {
       "description": "The Postfix tarball is verified by checksum and signature, which Renovate cannot update.",
