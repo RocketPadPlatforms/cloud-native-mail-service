@@ -7,6 +7,9 @@ metadata:
   name: maildomain-sample
 spec:
   domain: example.org
+  # The MailServer that serves the domain (same namespace).
+  serverRef:
+    name: mailserver-sample
   dnsMode: manual
   # The operator generates an RSA-2048 key and rotates it. For your own
   # keys see cnms_v1alpha1_maildomain-byo-keys.yaml.

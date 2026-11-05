@@ -226,6 +226,10 @@ func main() {
 		os.Exit(1)
 	}
 
+	if err := controller.IndexMailDomains(mgr); err != nil {
+		setupLog.Error(err, "Failed to index MailDomains")
+		os.Exit(1)
+	}
 	if err := (&controller.MailServerReconciler{
 		Client:                     mgr.GetClient(),
 		Scheme:                     mgr.GetScheme(),

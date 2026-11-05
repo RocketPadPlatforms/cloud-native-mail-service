@@ -17,6 +17,8 @@ metadata:
   name: maildomain-byo-sample
 spec:
   domain: example.org
+  serverRef:
+    name: mailserver-sample
   dkim:
     keys:
       - selector: s2026a

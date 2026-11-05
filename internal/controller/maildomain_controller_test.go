@@ -82,11 +82,15 @@ func (e *domainTestEnv) reconcile(ns, name string) ctrl.Result {
 	return res
 }
 
-// createMailDomainG creates a MailDomain named after its domain.
+// createMailDomainG creates a MailDomain named after its domain, on
+// the server testServerName (which need not exist).
 func createMailDomainG(ns, domain string, mutate func(*cnmsv1alpha1.MailDomain)) *cnmsv1alpha1.MailDomain {
 	d := &cnmsv1alpha1.MailDomain{
 		ObjectMeta: metav1.ObjectMeta{Name: domainLabel(domain), Namespace: ns},
-		Spec:       cnmsv1alpha1.MailDomainSpec{Domain: domain},
+		Spec: cnmsv1alpha1.MailDomainSpec{
+			Domain:    domain,
+			ServerRef: cnmsv1alpha1.NameReference{Name: testServerName},
+		},
 	}
 	if mutate != nil {
 		mutate(d)
@@ -215,6 +219,30 @@ var _ = Describe("MailDomain controller", func() {
 			env.clock.Advance(time.Minute)
 			env.reconcile(ns, name)
 			Expect(getMailDomainG(ns, name).ResourceVersion).To(Equal(first))
+		})
+
+		It("keeps keys and records for a server that does not exist and follows its creation", func() {
+			createMailDomainG(ns, domain, nil)
+			env := newDomainEnvG(AuthorizationUnrestricted)
+			env.settle(ns, name)
+
+			status, reason, _ := domainCondG(ns, name, ConditionServerFound)
+			Expect(status).To(Equal(metav1.ConditionFalse))
+			Expect(reason).To(Equal(ReasonServerNotFound))
+			status, _, _ = domainCondG(ns, name, ConditionAuthorized)
+			Expect(status).To(Equal(metav1.ConditionTrue))
+			Expect(keySecretsG(ns, name)).To(HaveLen(1))
+			Expect(getMailDomainG(ns, name).Status.Records).ToNot(BeEmpty())
+			// Not part of Ready: the records are what Ready waits for.
+			_, readyReason, _ := domainCondG(ns, name, conditionReady)
+			Expect(readyReason).ToNot(Equal(ReasonServerNotFound))
+
+			createDirectoryG(ns)
+			createServerG(ns, testServerName, nil)
+			env.reconcile(ns, name)
+			status, reason, _ = domainCondG(ns, name, ConditionServerFound)
+			Expect(status).To(Equal(metav1.ConditionTrue))
+			Expect(reason).To(Equal(ReasonServerFound))
 		})
 
 		It("ignores a MailDomain that is gone", func() {

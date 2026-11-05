@@ -54,10 +54,13 @@ func serverIn(ns, name string) *cnmsv1alpha1.MailServer {
 	return &cnmsv1alpha1.MailServer{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}}
 }
 
-func domainClaimIn(ns, name, domain string) *cnmsv1alpha1.MailDomain {
+func domainClaimIn(ns, name, domain, server string) *cnmsv1alpha1.MailDomain {
 	return &cnmsv1alpha1.MailDomain{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
-		Spec:       cnmsv1alpha1.MailDomainSpec{Domain: domain},
+		Spec: cnmsv1alpha1.MailDomainSpec{
+			Domain:    domain,
+			ServerRef: cnmsv1alpha1.NameReference{Name: server},
+		},
 	}
 }
 
@@ -69,27 +72,28 @@ func requestKeys(reqs []reconcile.Request) []string {
 	return keys
 }
 
-func TestMapDomainServersCoversEveryClaimantNamespace(t *testing.T) {
+func TestMapDomainServersCoversEveryClaimantsServer(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(watchTestScheme(t)).
 		WithIndex(&cnmsv1alpha1.MailDomain{}, mailDomainDomainIndex, indexMailDomainByDomain).
 		WithObjects(
-			serverIn("a", "s1"), serverIn("b", "s2"), serverIn("c", "s3"),
-			domainClaimIn("a", "x", "example.org"),
-			domainClaimIn("b", "y", "example.org"),
-			domainClaimIn("c", "z", "other.example"),
+			domainClaimIn("a", "x", "example.org", "s1"),
+			domainClaimIn("b", "y", "example.org", "s2"),
+			domainClaimIn("c", "z", "other.example", "s3"),
 		).Build()
 	r := &MailServerReconciler{Client: c}
 
-	got := requestKeys(r.mapDomainServers(context.Background(), domainClaimIn("a", "x", "example.org")))
+	got := requestKeys(r.mapDomainServers(context.Background(), domainClaimIn("a", "x", "example.org", "s1")))
 	if len(got) != 2 || got[0] != "a/s1" || got[1] != "b/s2" {
 		t.Errorf("mapDomainServers = %v, want [a/s1 b/s2]", got)
 	}
 
-	// A deleted claim (not in the cache any more) still reaches its
-	// own namespace and the remaining claimants.
-	got = requestKeys(r.mapDomainServers(context.Background(), domainClaimIn("d", "gone", "example.org")))
-	if len(got) != 2 || got[0] != "a/s1" || got[1] != "b/s2" {
-		t.Errorf("mapDomainServers(deleted) = %v, want [a/s1 b/s2]", got)
+	// A deleted claim (not in the cache any more) still reaches the
+	// server it was attached to and the servers of the remaining
+	// claimants; the old object of a moved claim does the same for the
+	// server it left.
+	got = requestKeys(r.mapDomainServers(context.Background(), domainClaimIn("d", "gone", "example.org", "s0")))
+	if len(got) != 3 || got[0] != "a/s1" || got[1] != "b/s2" || got[2] != "d/s0" {
+		t.Errorf("mapDomainServers(deleted) = %v, want [a/s1 b/s2 d/s0]", got)
 	}
 }
 
@@ -165,6 +169,7 @@ func startManagerG(setups ...func(ctrl.Manager) error) ctrl.Manager {
 		Controller: config.Controller{SkipNameValidation: new(true)},
 	})
 	Expect(err).ToNot(HaveOccurred())
+	Expect(IndexMailDomains(mgr)).To(Succeed())
 	for _, setup := range setups {
 		Expect(setup(mgr)).To(Succeed())
 	}
@@ -197,8 +202,8 @@ var _ = Describe("Controller watches", func() {
 		createNamespaceG(ns)
 		createNamespaceG(ns2)
 		createDirectoryG(ns)
-		createDomainG(ns, domain)
-		createServerG(ns, testServerName, domain, nil)
+		createDomainG(ns, domain, testServerName)
+		createServerG(ns, testServerName, nil)
 		startManagerG(mailServerSetup(AuthorizationUnrestricted))
 		Eventually(authorized(ns), wait, poll).
 			Should(Equal("True/" + ReasonAuthorizationDisabled))
@@ -206,14 +211,55 @@ var _ = Describe("Controller watches", func() {
 		// The competing claim sits in a namespace without any server.
 		// The not-ready server's 30s re-check is far outside the wait,
 		// so only the cross-namespace watch can flip the condition.
-		createDomainG(ns2, domain)
+		createDomainG(ns2, domain, testServerName)
 		Eventually(authorized(ns), wait, poll).
 			Should(Equal("False/" + ReasonDuplicateDomain))
 	})
 
+	It("re-evaluates both servers when a domain moves", func() {
+		ns := uniqueNamespace()
+		createNamespaceG(ns)
+		createDirectoryG(ns)
+		domainA, domainB := uniqueDomain(), uniqueDomain()
+		createDomainG(ns, domainA, testServerName)
+		createDomainG(ns, domainB, testServerName)
+		createDomainG(ns, uniqueDomain(), otherServer) // so that "other" has a domain
+		createServerG(ns, testServerName, nil)
+		createServerG(ns, otherServer, nil)
+		startManagerG(mailServerSetup(AuthorizationUnrestricted))
+		served := func(server string) func() ([]string, error) {
+			return func() ([]string, error) {
+				s := &cnmsv1alpha1.MailServer{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: server, Namespace: ns}, s); err != nil {
+					return nil, err
+				}
+				var names []string
+				for _, d := range s.Status.Domains {
+					if d.Served {
+						names = append(names, d.Domain)
+					}
+				}
+				return names, nil
+			}
+		}
+		Eventually(served(testServerName), wait, poll).Should(ConsistOf(domainA, domainB))
+
+		// Both servers are not ready and re-check every 30s, so only the
+		// watch on the old and the new object can update them in time.
+		md := &cnmsv1alpha1.MailDomain{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: domainLabel(domainB), Namespace: ns}, md)).To(Succeed())
+		md.Spec.ServerRef.Name = otherServer
+		Expect(k8sClient.Update(ctx, md)).To(Succeed())
+		Eventually(served(testServerName), wait, poll).Should(ConsistOf(domainA))
+		Eventually(served(otherServer), wait, poll).Should(ContainElement(domainB))
+
+		Expect(k8sClient.Delete(ctx, md)).To(Succeed())
+		Eventually(served(otherServer), wait, poll).ShouldNot(ContainElement(domainB))
+	})
+
 	It("re-evaluates a server when its grant is deleted", func() {
 		ns, domain := grantFixture()
-		createServerG(ns, testServerName, domain, nil)
+		createServerG(ns, testServerName, nil)
 		startManagerG(mailServerSetup(AuthorizationAllowlist))
 		Eventually(authorized(ns), wait, poll).
 			Should(Equal("True/" + ReasonAuthorized))

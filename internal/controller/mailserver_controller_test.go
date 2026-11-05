@@ -68,6 +68,9 @@ const directoryName = "directory"
 // testServerName is the MailServer name of the gate and rollout specs.
 const testServerName = "mail"
 
+// otherServer is the name of a second MailServer in the specs that need two.
+const otherServer = "other"
+
 // issuerKind and prometheusEnabled are spec values used by several specs.
 const (
 	issuerKind        = "Issuer"
@@ -94,7 +97,7 @@ func uniqueDomain() string {
 }
 
 // domainLabel returns the DNS-1123 label form of a domain, for use
-// as the MailDomain object name (spec.domains entries are labels).
+// as the MailDomain object name.
 func domainLabel(domain string) string {
 	return strings.ReplaceAll(domain, ".", "")
 }
@@ -119,10 +122,15 @@ func createDirectoryG(ns string) {
 	Expect(k8sClient.Create(ctx, dir)).To(Succeed())
 }
 
-func createDomainG(ns, domain string) {
+// createDomainG creates a MailDomain that references the MailServer
+// of the given name.
+func createDomainG(ns, domain, server string) {
 	d := &cnmsv1alpha1.MailDomain{
 		ObjectMeta: metav1.ObjectMeta{Name: domainLabel(domain), Namespace: ns},
-		Spec:       cnmsv1alpha1.MailDomainSpec{Domain: domain},
+		Spec: cnmsv1alpha1.MailDomainSpec{
+			Domain:    domain,
+			ServerRef: cnmsv1alpha1.NameReference{Name: server},
+		},
 	}
 	Expect(k8sClient.Create(ctx, d)).To(Succeed())
 }
@@ -138,20 +146,20 @@ func createGrantG(domain, ns string, includeSubdomains bool) {
 	Expect(k8sClient.Create(ctx, g)).To(Succeed())
 }
 
-// createServerG creates a MailServer for the given domain; mutate
-// applies spec overrides before creation.
-func createServerG(ns, name, domain string, mutate func(*cnmsv1alpha1.MailServer)) {
-	Expect(k8sClient.Create(ctx, newServerG(ns, name, domain, mutate))).To(Succeed())
+// createServerG creates a MailServer; mutate applies spec overrides
+// before creation. The domains it serves are the MailDomains that
+// reference it.
+func createServerG(ns, name string, mutate func(*cnmsv1alpha1.MailServer)) {
+	Expect(k8sClient.Create(ctx, newServerG(ns, name, mutate))).To(Succeed())
 }
 
 // newServerG builds the MailServer createServerG creates.
-func newServerG(ns, name, domain string, mutate func(*cnmsv1alpha1.MailServer)) *cnmsv1alpha1.MailServer {
+func newServerG(ns, name string, mutate func(*cnmsv1alpha1.MailServer)) *cnmsv1alpha1.MailServer {
 	s := &cnmsv1alpha1.MailServer{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 		Spec: cnmsv1alpha1.MailServerSpec{
 			DirectoryRef: &cnmsv1alpha1.NameReference{Name: directoryName},
 			Outbound:     cnmsv1alpha1.Outbound{Direct: &cnmsv1alpha1.DirectOutbound{}},
-			Domains:      []cnmsv1alpha1.NameReference{{Name: domainLabel(domain)}},
 			TLS: cnmsv1alpha1.TLS{
 				IssuerRef: cnmsv1alpha1.IssuerReference{Kind: issuerKind, Name: "test-issuer"},
 			},
@@ -318,15 +326,28 @@ func listServiceMonitorsG(ns string) []unstructured.Unstructured {
 	return list.Items
 }
 
-// grantFixture sets up namespace, directory and the granted domain.
+// grantFixture sets up namespace, directory and the granted domain,
+// which references the server testServerName.
 func grantFixture() (ns, domain string) {
+	return grantFixtureFor(testServerName)
+}
+
+// grantFixtureFor is grantFixture for a domain that references the
+// named server.
+func grantFixtureFor(server string) (ns, domain string) {
 	ns = uniqueNamespace()
-	domain = uniqueDomain()
 	createNamespaceG(ns)
 	createDirectoryG(ns)
-	createDomainG(ns, domain)
+	return ns, addGrantedDomainG(ns, server)
+}
+
+// addGrantedDomainG adds a granted domain of a unique name that
+// references the named server.
+func addGrantedDomainG(ns, server string) string {
+	domain := uniqueDomain()
+	createDomainG(ns, domain, server)
 	createGrantG(domain, ns, false)
-	return ns, domain
+	return domain
 }
 
 var _ = Describe("MailServer controller", func() {
@@ -337,11 +358,11 @@ var _ = Describe("MailServer controller", func() {
 			domain = uniqueDomain()
 			createNamespaceG(ns)
 			createDirectoryG(ns)
-			createDomainG(ns, domain)
 		})
 
 		It("does not deploy the data plane for an unauthorized domain", func() {
-			createServerG(ns, "mail-a", domain, nil)
+			createDomainG(ns, domain, "mail-a")
+			createServerG(ns, "mail-a", nil)
 			reconcileServerG(newReconcilerG(AuthorizationAllowlist, true), ns, "mail-a")
 
 			status, reason, _ := serverConditionG(ns, "mail-a", ConditionDomainsAuthorized)
@@ -356,8 +377,9 @@ var _ = Describe("MailServer controller", func() {
 		})
 
 		It("deploys the data plane for a granted domain", func() {
+			createDomainG(ns, domain, "mail-b")
 			createGrantG(domain, ns, false)
-			createServerG(ns, "mail-b", domain, nil)
+			createServerG(ns, "mail-b", nil)
 			deployG(newReconcilerG(AuthorizationAllowlist, true), ns, "mail-b")
 
 			status, reason, _ := serverConditionG(ns, "mail-b", ConditionDomainsAuthorized)
@@ -371,12 +393,10 @@ var _ = Describe("MailServer controller", func() {
 
 		It("authorizes a subdomain via includeSubdomains", func() {
 			sub := "mail." + domain
-			createDomainG(ns, sub)
+			createDomainG(ns, sub, "mail-c")
 			// The includeSubdomains grant covers the subdomain.
 			createGrantG(domain, ns, true)
-			createServerG(ns, "mail-c", domain, func(s *cnmsv1alpha1.MailServer) {
-				s.Spec.Domains = []cnmsv1alpha1.NameReference{{Name: domainLabel(sub)}}
-			})
+			createServerG(ns, "mail-c", nil)
 			reconcileServerG(newReconcilerG(AuthorizationAllowlist, true), ns, "mail-c")
 
 			status, reason, _ := serverConditionG(ns, "mail-c", ConditionDomainsAuthorized)
@@ -386,11 +406,14 @@ var _ = Describe("MailServer controller", func() {
 
 		It("blocks a duplicated domain claim in the owning namespace", func() {
 			createGrantG(domain, ns, false)
+			createDomainG(ns, domain, "mail-d")
 			Expect(k8sClient.Create(ctx, &cnmsv1alpha1.MailDomain{
 				ObjectMeta: metav1.ObjectMeta{Name: "copy", Namespace: ns},
-				Spec:       cnmsv1alpha1.MailDomainSpec{Domain: domain},
+				Spec: cnmsv1alpha1.MailDomainSpec{
+					Domain: domain, ServerRef: cnmsv1alpha1.NameReference{Name: "mail-d"},
+				},
 			})).To(Succeed())
-			createServerG(ns, "mail-d", domain, nil)
+			createServerG(ns, "mail-d", nil)
 			reconcileServerG(newReconcilerG(AuthorizationAllowlist, true), ns, "mail-d")
 
 			status, reason, _ := serverConditionG(ns, "mail-d", ConditionDomainsAuthorized)
@@ -402,8 +425,9 @@ var _ = Describe("MailServer controller", func() {
 			createGrantG(domain, ns, false)
 			ns2 := uniqueNamespace()
 			createNamespaceG(ns2)
-			createDomainG(ns2, domain)
-			createServerG(ns, "mail-d", domain, nil)
+			createDomainG(ns2, domain, "mail-d")
+			createDomainG(ns, domain, "mail-d")
+			createServerG(ns, "mail-d", nil)
 			reconcileServerG(newReconcilerG(AuthorizationAllowlist, true), ns, "mail-d")
 
 			status, reason, _ := serverConditionG(ns, "mail-d", ConditionDomainsAuthorized)
@@ -411,20 +435,47 @@ var _ = Describe("MailServer controller", func() {
 			Expect(reason).To(Equal(ReasonAuthorized))
 		})
 
-		It("fails closed for a missing referenced MailDomain", func() {
-			missing := "nope-" + domainLabel(domain)
-			createServerG(ns, "mail-e", domain, func(s *cnmsv1alpha1.MailServer) {
-				s.Spec.Domains = []cnmsv1alpha1.NameReference{{Name: missing}}
-			})
-			reconcileServerG(newReconcilerG(AuthorizationAllowlist, true), ns, "mail-e")
+		It("deploys nothing for a server that no MailDomain references", func() {
+			createDomainG(ns, domain, "elsewhere")
+			createServerG(ns, "mail-g", nil)
+			reconcileServerG(newReconcilerG(AuthorizationUnrestricted, true), ns, "mail-g")
 
-			status, reason, _ := serverConditionG(ns, "mail-e", ConditionDomainsAuthorized)
+			status, reason, _ := serverConditionG(ns, "mail-g", conditionReady)
 			Expect(status).To(Equal(metav1.ConditionFalse))
-			Expect(reason).To(Equal(ReasonDomainNotFound))
+			Expect(reason).To(Equal(ReasonNoDomains))
+			status, reason, _ = serverConditionG(ns, "mail-g", ConditionDomainsAuthorized)
+			Expect(status).To(Equal(metav1.ConditionTrue))
+			Expect(reason).To(Equal(ReasonNoDomains))
+			err := k8sClient.Get(ctx, types.NamespacedName{Name: "mail-g-postfix", Namespace: ns}, &appsv1.StatefulSet{})
+			Expect(err).To(HaveOccurred())
+			Expect(jobsG(ns, "mail-g", "")).To(BeEmpty())
+			server := &cnmsv1alpha1.MailServer{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "mail-g", Namespace: ns}, server)).To(Succeed())
+			Expect(server.Status.Domains).To(BeEmpty())
+		})
+
+		It("lists the attached domains in the status, the ones not served first", func() {
+			granted := uniqueDomain()
+			createGrantG(granted, ns, false)
+			createDomainG(ns, granted, "mail-h")
+			createDomainG(ns, domain, "mail-h") // not granted
+			createServerG(ns, "mail-h", nil)
+			reconcileServerG(newReconcilerG(AuthorizationAllowlist, true), ns, "mail-h")
+
+			server := &cnmsv1alpha1.MailServer{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "mail-h", Namespace: ns}, server)).To(Succeed())
+			Expect(server.Status.Domains).To(Equal([]cnmsv1alpha1.ServerDomainStatus{
+				{Name: domainLabel(domain), Domain: domain, Served: false, Reason: ReasonNotGranted},
+				{Name: domainLabel(granted), Domain: granted, Served: true, Reason: ReasonAuthorized},
+			}))
+			status, reason, _ := serverConditionG(ns, "mail-h", ConditionDomainsListed)
+			Expect(status).To(Equal(metav1.ConditionTrue))
+			Expect(reason).To(Equal(reasonAllListed))
 		})
 
 		It("authorizes without grants in unrestricted mode", func() {
-			createServerG(ns, "mail-f", domain, nil)
+			createDomainG(ns, domain, "mail-f")
+			createServerG(ns, "mail-f", nil)
 			deployG(newReconcilerG(AuthorizationUnrestricted, true), ns, "mail-f")
 
 			status, reason, _ := serverConditionG(ns, "mail-f", ConditionDomainsAuthorized)
@@ -435,12 +486,17 @@ var _ = Describe("MailServer controller", func() {
 	})
 
 	Describe("data plane", func() {
-		var ns, domain string
+		var ns string
 		BeforeEach(func() {
-			ns, domain = grantFixture()
+			ns, _ = grantFixture() // its domain is on the server "mail"
 		})
+		// reconcile deploys a server of the given name. Every server needs
+		// a domain of its own; the fixture's belongs to "mail".
 		reconcile := func(name string, mutate func(*cnmsv1alpha1.MailServer)) {
-			createServerG(ns, name, domain, mutate)
+			if name != testServerName {
+				addGrantedDomainG(ns, name)
+			}
+			createServerG(ns, name, mutate)
 			deployG(newReconcilerG(AuthorizationAllowlist, true), ns, name)
 		}
 
@@ -616,13 +672,13 @@ var _ = Describe("MailServer controller", func() {
 	})
 
 	Describe("TLS certificate", func() {
-		var ns, domain string
+		var ns string
 		BeforeEach(func() {
-			ns, domain = grantFixture()
+			ns, _ = grantFixture()
 		})
 
 		It("is not ready without the certificate Secret and becomes ready with it", func() {
-			createServerG(ns, "mail", domain, nil)
+			createServerG(ns, "mail", nil)
 			reconcileServerG(newReconcilerG(AuthorizationAllowlist, true), ns, "mail")
 			status, reason, _ := serverConditionG(ns, "mail", ConditionCertificateReady)
 			Expect(status).To(Equal(metav1.ConditionFalse))
@@ -643,7 +699,7 @@ var _ = Describe("MailServer controller", func() {
 		})
 
 		It("is not ready for an incomplete Secret", func() {
-			createServerG(ns, "mail", domain, nil)
+			createServerG(ns, "mail", nil)
 			secret := &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{Name: "mail-tls", Namespace: ns},
 				Data:       map[string][]byte{tlsCertKey: []byte("crt")},
@@ -657,18 +713,18 @@ var _ = Describe("MailServer controller", func() {
 	})
 
 	Describe("static test users", func() {
-		var ns, domain string
+		var ns string
 		validUsers := "users:\n" +
 			"  - username: testuser\n" +
 			"    passwordHash: '$6$salt$hash'\n" +
 			"    mailbox: testuser@example.org\n"
 		BeforeEach(func() {
-			ns, domain = grantFixture()
+			ns, _ = grantFixture()
 		})
 
 		It("renders with a valid users Secret", func() {
 			createUsersSecretG(ns, validUsers)
-			createServerG(ns, "mail", domain, func(s *cnmsv1alpha1.MailServer) {
+			createServerG(ns, "mail", func(s *cnmsv1alpha1.MailServer) {
 				s.Spec.Submission = &cnmsv1alpha1.Submission{
 					InsecureStaticUsers: &cnmsv1alpha1.InsecureStaticUsers{SecretName: usersSecretName},
 				}
@@ -693,7 +749,7 @@ var _ = Describe("MailServer controller", func() {
 
 		It("renders static users without a directoryRef", func() {
 			createUsersSecretG(ns, validUsers)
-			createServerG(ns, "mail", domain, func(s *cnmsv1alpha1.MailServer) {
+			createServerG(ns, "mail", func(s *cnmsv1alpha1.MailServer) {
 				s.Spec.DirectoryRef = nil
 				s.Spec.Submission = &cnmsv1alpha1.Submission{
 					InsecureStaticUsers: &cnmsv1alpha1.InsecureStaticUsers{SecretName: usersSecretName},
@@ -707,7 +763,7 @@ var _ = Describe("MailServer controller", func() {
 		})
 
 		It("is not ready without any user source", func() {
-			createServerG(ns, "mail", domain, func(s *cnmsv1alpha1.MailServer) {
+			createServerG(ns, "mail", func(s *cnmsv1alpha1.MailServer) {
 				s.Spec.DirectoryRef = nil
 			})
 			reconcileServerG(newReconcilerG(AuthorizationAllowlist, true), ns, "mail")
@@ -720,7 +776,7 @@ var _ = Describe("MailServer controller", func() {
 		It("fails closed for an invalid password hash", func() {
 			createUsersSecretG(ns,
 				"users:\n  - username: testuser\n    passwordHash: plaintext\n    mailbox: testuser@example.org\n")
-			createServerG(ns, "mail", domain, func(s *cnmsv1alpha1.MailServer) {
+			createServerG(ns, "mail", func(s *cnmsv1alpha1.MailServer) {
 				s.Spec.Submission = &cnmsv1alpha1.Submission{
 					InsecureStaticUsers: &cnmsv1alpha1.InsecureStaticUsers{SecretName: usersSecretName},
 				}
@@ -737,7 +793,7 @@ var _ = Describe("MailServer controller", func() {
 
 		It("fails closed without the feature flag", func() {
 			createUsersSecretG(ns, validUsers)
-			createServerG(ns, "mail", domain, func(s *cnmsv1alpha1.MailServer) {
+			createServerG(ns, "mail", func(s *cnmsv1alpha1.MailServer) {
 				s.Spec.Submission = &cnmsv1alpha1.Submission{
 					InsecureStaticUsers: &cnmsv1alpha1.InsecureStaticUsers{SecretName: usersSecretName},
 				}
@@ -749,7 +805,7 @@ var _ = Describe("MailServer controller", func() {
 		})
 
 		It("fails closed for a missing Secret", func() {
-			createServerG(ns, "mail", domain, func(s *cnmsv1alpha1.MailServer) {
+			createServerG(ns, "mail", func(s *cnmsv1alpha1.MailServer) {
 				s.Spec.Submission = &cnmsv1alpha1.Submission{
 					InsecureStaticUsers: &cnmsv1alpha1.InsecureStaticUsers{SecretName: usersSecretName},
 				}
@@ -762,13 +818,13 @@ var _ = Describe("MailServer controller", func() {
 	})
 
 	Describe("observability", func() {
-		var ns, domain string
+		var ns string
 		BeforeEach(func() {
-			ns, domain = grantFixture()
+			ns, _ = grantFixture()
 		})
 
 		It("creates ServiceMonitors in auto mode when the CRDs are installed", func() {
-			createServerG(ns, "mail", domain, nil)
+			createServerG(ns, "mail", nil)
 			reconcileServerG(newReconcilerG(AuthorizationAllowlist, true), ns, "mail")
 			status, reason, _ := serverConditionG(ns, "mail", ConditionObservability)
 			Expect(status).To(Equal(metav1.ConditionTrue))
@@ -782,7 +838,7 @@ var _ = Describe("MailServer controller", func() {
 
 		It("requires the CRDs in enabled mode", func() {
 			enabled := prometheusEnabled
-			createServerG(ns, "mail", domain, func(s *cnmsv1alpha1.MailServer) {
+			createServerG(ns, "mail", func(s *cnmsv1alpha1.MailServer) {
 				s.Spec.Observability = &cnmsv1alpha1.Observability{PrometheusOperator: &enabled}
 			})
 			reconcileServerG(newReconcilerG(AuthorizationAllowlist, true), ns, "mail")
@@ -801,7 +857,7 @@ var _ = Describe("MailServer controller", func() {
 				return // nothing can exist without the CRDs
 			}
 			enabled := prometheusEnabled
-			createServerG(ns, "mail", domain, func(s *cnmsv1alpha1.MailServer) {
+			createServerG(ns, "mail", func(s *cnmsv1alpha1.MailServer) {
 				s.Spec.Observability = &cnmsv1alpha1.Observability{PrometheusOperator: &enabled}
 			})
 			reconcileServerG(newReconcilerG(AuthorizationAllowlist, true), ns, "mail")

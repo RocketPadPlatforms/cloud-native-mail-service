@@ -85,10 +85,14 @@ func certificateDNSNamesG(ns string) []string {
 
 // postfixMainCFG returns the main.cf the Postfix StatefulSet of the
 // test server currently references.
-func postfixMainCFG(ns string) string {
-	sts := getStatefulSetG(ns, postfixObjectName)
+func postfixMainCFG(ns string) string { return postfixMainCFGOf(ns, testServerName) }
+
+// postfixMainCFGOf is postfixMainCFG for the server of the given name.
+func postfixMainCFGOf(ns, server string) string {
+	name := server + "-postfix"
+	sts := getStatefulSetG(ns, name)
 	for _, v := range sts.Spec.Template.Spec.Volumes {
-		if v.ConfigMap != nil && strings.HasPrefix(v.ConfigMap.Name, postfixObjectName+"-") {
+		if v.ConfigMap != nil && strings.HasPrefix(v.ConfigMap.Name, name+"-") {
 			cm := &corev1.ConfigMap{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: v.ConfigMap.Name, Namespace: ns}, cm)).To(Succeed())
 			return cm.Data["main.cf"]
@@ -117,11 +121,8 @@ var _ = Describe("MailServer domain revocation", func() {
 	BeforeEach(func() {
 		installCertificateCRD()
 		ns, domainA = grantFixture()
-		domainB = uniqueDomain()
-		createDomainG(ns, domainB)
-		createGrantG(domainB, ns, false)
-		createServerG(ns, testServerName, domainA, func(s *cnmsv1alpha1.MailServer) {
-			s.Spec.Domains = append(s.Spec.Domains, cnmsv1alpha1.NameReference{Name: domainLabel(domainB)})
+		domainB = addGrantedDomainG(ns, testServerName)
+		createServerG(ns, testServerName, func(s *cnmsv1alpha1.MailServer) {
 			s.Spec.Mailboxes = &cnmsv1alpha1.Mailboxes{Enabled: new(true)}
 		})
 		createTLSSecretG(ns, testServerName+"-tls")
@@ -213,6 +214,62 @@ var _ = Describe("MailServer domain revocation", func() {
 		Expect(cf).ToNot(ContainSubstring(domainA))
 		Expect(cf).ToNot(ContainSubstring(domainB))
 	}
+
+	// detach points the MailDomain of a domain at another server, which
+	// is how a domain leaves this one (ADR 0014).
+	detach := func(domain, server string) {
+		md := getMailDomainG(ns, domainLabel(domain))
+		md.Spec.ServerRef.Name = server
+		Expect(k8sClient.Update(ctx, md)).To(Succeed())
+	}
+
+	It("revokes a domain that moves to another server and serves it there", func() {
+		// A server without a domain deploys nothing, so it starts with one.
+		domainC := addGrantedDomainG(ns, otherServer)
+		createServerG(ns, otherServer, nil)
+		deployG(r, ns, otherServer)
+		Expect(postfixMainCFGOf(ns, otherServer)).To(ContainSubstring(domainC))
+		Expect(postfixMainCFGOf(ns, otherServer)).ToNot(ContainSubstring(domainB))
+
+		detach(domainB, otherServer)
+		settle()
+		deployG(r, ns, otherServer)
+
+		cf := postfixMainCFG(ns)
+		Expect(cf).To(ContainSubstring("virtual_mailbox_domains = " + domainA + "\n"))
+		Expect(cf).ToNot(ContainSubstring(domainB))
+		Expect(certificateDNSNamesG(ns)).To(ConsistOf(domainA))
+		Expect(postfixMainCFGOf(ns, otherServer)).To(ContainSubstring(domainB))
+		Expect(postfixMainCFGOf(ns, otherServer)).To(ContainSubstring(domainC))
+		// Nothing is unauthorized: the domain left, it was not revoked.
+		status, reason, _ := serverConditionG(ns, testServerName, ConditionDomainsAuthorized)
+		Expect(status).To(Equal(metav1.ConditionTrue))
+		Expect(reason).To(Equal(ReasonAuthorized))
+	})
+
+	It("revokes a domain when its MailDomain is deleted", func() {
+		Expect(k8sClient.Delete(ctx, &cnmsv1alpha1.MailDomain{
+			ObjectMeta: metav1.ObjectMeta{Name: domainLabel(domainB), Namespace: ns},
+		})).To(Succeed())
+		settle()
+
+		cf := postfixMainCFG(ns)
+		Expect(cf).To(ContainSubstring("virtual_mailbox_domains = " + domainA + "\n"))
+		Expect(cf).ToNot(ContainSubstring(domainB))
+		Expect(certificateDNSNamesG(ns)).To(ConsistOf(domainA))
+	})
+
+	It("renders fail closed when the last domain leaves", func() {
+		detach(domainA, otherServer)
+		detach(domainB, otherServer)
+		settle()
+
+		expectFailClosed()
+		Expect(certificateDNSNamesG(ns)).To(ConsistOf("mail-postfix." + ns + ".svc.cluster.local"))
+		status, reason, _ := serverConditionG(ns, testServerName, conditionReady)
+		Expect(status).To(Equal(metav1.ConditionFalse))
+		Expect(reason).To(Equal(ReasonNoDomains))
+	})
 
 	It("keeps serving while the MailDirectory is missing and nothing is revoked", func() {
 		Expect(k8sClient.Delete(ctx, &cnmsv1alpha1.MailDirectory{
@@ -335,12 +392,8 @@ var _ = Describe("MailServer revocation before the first rollout", func() {
 	BeforeEach(func() {
 		installCertificateCRD()
 		ns, domainA = grantFixture()
-		domainB = uniqueDomain()
-		createDomainG(ns, domainB)
-		createGrantG(domainB, ns, false)
-		createServerG(ns, testServerName, domainA, func(s *cnmsv1alpha1.MailServer) {
-			s.Spec.Domains = append(s.Spec.Domains, cnmsv1alpha1.NameReference{Name: domainLabel(domainB)})
-		})
+		domainB = addGrantedDomainG(ns, testServerName)
+		createServerG(ns, testServerName, nil)
 		r = newReconcilerG(AuthorizationAllowlist, true)
 		// The validation Jobs never finish: no workload is created.
 		reconcileServerG(r, ns, testServerName)

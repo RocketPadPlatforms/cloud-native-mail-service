@@ -95,11 +95,9 @@ func activeKeyRefs(md *cnmsv1alpha1.MailDomain) []keyRef {
 // stays in the result with Available false. No key bytes are kept.
 func (r *MailServerReconciler) collectDKIMKeys(ctx context.Context, server *cnmsv1alpha1.MailServer, claims []cnmsv1alpha1.MailDomain, authorized []string) (*dkimKeys, error) {
 	byDomain := map[string]*cnmsv1alpha1.MailDomain{}
-	for _, ref := range server.Spec.Domains {
-		for i := range claims {
-			if claims[i].Name == ref.Name && claims[i].Namespace == server.Namespace {
-				byDomain[claims[i].Spec.Domain] = &claims[i]
-			}
+	for i := range claims {
+		if claims[i].Namespace == server.Namespace && claims[i].Spec.ServerRef.Name == server.Name {
+			byDomain[claims[i].Spec.Domain] = &claims[i]
 		}
 	}
 	res := &dkimKeys{}

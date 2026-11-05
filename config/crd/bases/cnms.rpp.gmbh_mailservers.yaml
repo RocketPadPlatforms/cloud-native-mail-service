@@ -119,34 +119,6 @@ spec:
                 required:
                 - name
                 type: object
-              domains:
-                description: |-
-                  Domains handled by this mail server. They are signed with DKIM
-                  (when enabled on the domain) and accepted for submission.
-                  Each entry references a MailDomain in the same namespace.
-                items:
-                  description: |-
-                    NameReference references a CNMS resource in the same namespace.
-
-                    All references between CNMS resources are namespace-scoped: a resource
-                    may only reference resources in its own namespace. This keeps tenant
-                    isolation simple and requires no cross-namespace RBAC.
-                  properties:
-                    name:
-                      description: Name of the referenced resource.
-                      maxLength: 253
-                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
-                      type: string
-                  required:
-                  - name
-                  type: object
-                maxItems: 50
-                minItems: 1
-                type: array
-                x-kubernetes-list-type: atomic
-                x-kubernetes-validations:
-                - message: domain references must be unique
-                  rule: self.all(x, self.filter(y, y == x).size() == 1)
               inbound:
                 description: Inbound mail (port 25) service settings.
                 properties:
@@ -399,7 +371,6 @@ spec:
                 - message: storage is only used when persistence is enabled
                   rule: '!has(self.storage) || (has(self.persistence) && self.persistence)'
             required:
-            - domains
             - outbound
             - tls
             type: object
@@ -474,6 +445,50 @@ spec:
                 type: array
                 x-kubernetes-list-map-keys:
                 - type
+                x-kubernetes-list-type: map
+              domains:
+                description: |-
+                  Domains lists the MailDomains of the namespace that reference
+                  this MailServer in spec.serverRef: those that are not served
+                  first, then by name, at most 128 entries (the DomainsListed
+                  condition says when the list is cut). It is derived from the
+                  MailDomains and holds no state of its own.
+                items:
+                  description: |-
+                    ServerDomainStatus reports one MailDomain that references the
+                    MailServer.
+                  properties:
+                    domain:
+                      description: Domain is the domain name of the MailDomain (spec.domain).
+                      maxLength: 253
+                      type: string
+                    name:
+                      description: Name of the MailDomain object.
+                      maxLength: 253
+                      type: string
+                    reason:
+                      description: |-
+                        Reason why the domain is served or not (a reason of the
+                        DomainsAuthorized condition, or the reason that blocks the
+                        whole server).
+                      maxLength: 128
+                      type: string
+                    served:
+                      description: |-
+                        Served is true when the domain is authorized and part of the
+                        configuration the operator renders for the server. Whether the
+                        pods already run it is reported by the WorkloadsReady condition.
+                      type: boolean
+                  required:
+                  - domain
+                  - name
+                  - reason
+                  - served
+                  type: object
+                maxItems: 128
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
                 x-kubernetes-list-type: map
               observedGeneration:
                 description: ObservedGeneration is the generation of the spec last

@@ -72,10 +72,10 @@ func createTLSSecretG(ns, name string) {
 }
 
 var _ = Describe("MailServer rollout readiness", func() {
-	var ns, domain string
+	var ns string
 	BeforeEach(func() {
-		ns, domain = grantFixture()
-		createServerG(ns, "mail", domain, nil)
+		ns, _ = grantFixture()
+		createServerG(ns, "mail", nil)
 		createTLSSecretG(ns, "mail-tls")
 		deployG(newReconcilerG(AuthorizationAllowlist, true), ns, "mail")
 	})

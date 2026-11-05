@@ -20,7 +20,10 @@ import (
 	"context"
 	"slices"
 
+	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	cnmsv1alpha1 "github.com/RocketPadPlatforms/cloud-native-mail-service/api/v1alpha1"
@@ -28,63 +31,53 @@ import (
 )
 
 // mtaSTSHosts returns the mx hosts of the MTA-STS policy of md (ADR
-// 0012): the server hostname of every MailServer in the namespace of md
-// that lists it and serves it. The hostname is the name the server
-// presents (HELO, certificate), so it is the name the MX record has to
-// point at. Several servers give several hosts, which the policy lists
-// sorted without duplicates, so the result does not depend on the order
-// of the objects. A server that does not serve the domain (it is not
+// 0012, 0014): the server hostname of the MailServer in spec.serverRef,
+// when it exists and serves the domain. The hostname is the name the
+// server presents (HELO, certificate), so it is the name the MX record
+// has to point at. A server that does not serve the domain (it is not
 // authorized for it) contributes nothing.
 func (r *MailDomainReconciler) mtaSTSHosts(ctx context.Context, md *cnmsv1alpha1.MailDomain) ([]string, error) {
-	servers := &cnmsv1alpha1.MailServerList{}
-	if err := r.List(ctx, servers, client.InNamespace(md.Namespace)); err != nil {
-		return nil, err
-	}
-	var candidates []*cnmsv1alpha1.MailServer
-	for i := range servers.Items {
-		if serverLists(&servers.Items[i], md.Name) {
-			candidates = append(candidates, &servers.Items[i])
-		}
-	}
-	if len(candidates) == 0 {
+	s := &cnmsv1alpha1.MailServer{}
+	err := r.Get(ctx, types.NamespacedName{Namespace: md.Namespace, Name: md.Spec.ServerRef.Name}, s)
+	if errors.IsNotFound(err) {
 		return nil, nil
+	}
+	if err != nil {
+		return nil, err
 	}
 	grants, claims, err := listAuthorizationInput(ctx, r)
 	if err != nil {
 		return nil, err
 	}
-	var hosts []string
-	for _, s := range candidates {
-		auth := (&authorizationEvaluator{
-			server: s, grants: grantRefs(grants), claims: domainClaims(claims), mode: r.DomainAuthorization,
-		}).Evaluate()
-		if slices.Contains(auth.domains, md.Spec.Domain) {
-			req := render.RenderRequest{Server: s, AuthorizedDomains: auth.domains}
-			hosts = append(hosts, req.ServerHostname())
-		}
+	auth := (&authorizationEvaluator{
+		server: s, grants: grantRefs(grants), claims: domainClaims(claims), mode: r.DomainAuthorization,
+	}).Evaluate()
+	if !slices.Contains(auth.domains, md.Spec.Domain) {
+		return nil, nil
 	}
-	slices.Sort(hosts)
-	return slices.Compact(hosts), nil
+	req := render.RenderRequest{Server: s, AuthorizedDomains: auth.domains}
+	return []string{req.ServerHostname()}, nil
 }
 
-// serverLists reports whether the MailServer references the MailDomain.
-func serverLists(s *cnmsv1alpha1.MailServer, mailDomain string) bool {
-	return slices.ContainsFunc(s.Spec.Domains, func(ref cnmsv1alpha1.NameReference) bool {
-		return ref.Name == mailDomain
-	})
-}
-
-// mapServerDomains enqueues the MailDomains a MailServer references: a
-// server that starts or stops serving a domain changes the mx hosts of
-// its policy. A deleted server is mapped by its last spec.
-func (r *MailDomainReconciler) mapServerDomains(_ context.Context, obj client.Object) []reconcile.Request {
+// mapServerDomains enqueues the MailDomains that reference a
+// MailServer: a server that appears, disappears or changes which
+// domains it serves changes the mx host of their policy and their
+// ServerFound condition. A deleted server is mapped by its last
+// content.
+func (r *MailDomainReconciler) mapServerDomains(ctx context.Context, obj client.Object) []reconcile.Request {
 	s, ok := obj.(*cnmsv1alpha1.MailServer)
 	if !ok {
 		return nil
 	}
-	reqs := make([]reconcile.Request, 0, len(s.Spec.Domains))
-	for _, ref := range s.Spec.Domains {
-		reqs = append(reqs, reconcile.Request{NamespacedName: client.ObjectKey{Namespace: s.Namespace, Name: ref.Name}})
+	list := &cnmsv1alpha1.MailDomainList{}
+	if err := r.List(ctx, list, client.InNamespace(s.Namespace),
+		client.MatchingFields{mailDomainServerIndex: s.Name}); err != nil {
+		log.FromContext(ctx).Error(err, "Could not list MailDomains", "server", s.Name)
+		return nil
+	}
+	reqs := make([]reconcile.Request, 0, len(list.Items))
+	for i := range list.Items {
+		reqs = append(reqs, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&list.Items[i])})
 	}
 	return reqs
 }

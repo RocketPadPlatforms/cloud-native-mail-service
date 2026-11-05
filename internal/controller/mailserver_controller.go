@@ -55,9 +55,14 @@ import (
 
 // MailServer status conditions (see the Phase 2 plan and ADR 0005).
 const (
-	// ConditionDomainsAuthorized is true when every domain in
-	// spec.domains passes the domain authorization check (ADR 0003).
+	// ConditionDomainsAuthorized is true when every MailDomain that
+	// references the server passes the domain authorization check (ADR
+	// 0003); it is also true, with reason NoDomains, when none does.
 	ConditionDomainsAuthorized = "DomainsAuthorized"
+	// ConditionDomainsListed is false when status.domains lists only
+	// part of the MailDomains that reference the server. It is a
+	// warning only: it never feeds into Ready.
+	ConditionDomainsListed = "DomainsListed"
 	// ConditionCertificateReady is true when the TLS certificate
 	// Secret carries tls.crt and tls.key.
 	ConditionCertificateReady = "CertificateReady"
@@ -257,6 +262,7 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	if blocked == nil && len(auth.domains) == 0 {
 		blocked = &blockedBy{authReason, authMessage}
 	}
+	setDomainsStatus(server, auth, blocked)
 	renderDomains, renderUsers := auth.domains, users
 	failClosed := false
 	if blocked != nil {
@@ -830,10 +836,6 @@ func (r *MailServerReconciler) crdsAvailable(ctx context.Context, name string) (
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *MailServerReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	if err := mgr.GetFieldIndexer().IndexField(context.Background(),
-		&cnmsv1alpha1.MailDomain{}, mailDomainDomainIndex, indexMailDomainByDomain); err != nil {
-		return err
-	}
 	certificate := &unstructured.Unstructured{}
 	certificate.SetGroupVersionKind(certificateGVK)
 	monitor := &unstructured.Unstructured{}
@@ -867,47 +869,43 @@ func (r *MailServerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-// mailDomainDomainIndex is the field index of MailDomains by
-// spec.domain: uniqueness is evaluated across namespaces, so a claim
-// must find the other claimants of its domain.
-const mailDomainDomainIndex = "spec.domain"
-
-// indexMailDomainByDomain is the extractor of mailDomainDomainIndex.
-func indexMailDomainByDomain(obj client.Object) []string {
-	d, ok := obj.(*cnmsv1alpha1.MailDomain)
-	if !ok || d.Spec.Domain == "" {
-		return nil
-	}
-	return []string{d.Spec.Domain}
-}
-
 // mapSameNamespaceServers enqueues every MailServer of the object's
 // namespace (a directory change may change the render).
 func (r *MailServerReconciler) mapSameNamespaceServers(ctx context.Context, obj client.Object) []reconcile.Request {
 	return r.serversInNamespace(ctx, obj.GetNamespace())
 }
 
-// mapDomainServers enqueues the MailServers of the MailDomain's
-// namespace and of every namespace with a MailDomain claiming the same
+// mapDomainServers enqueues the MailServer the MailDomain references
+// and the servers referenced by every MailDomain claiming the same
 // domain: the uniqueness check is cluster wide, so a new, changed or
-// deleted claim can block or free the servers of the other claimants.
-// For a changed domain name the handler also maps the old object.
+// deleted claim can block or free the other claimants. For a changed
+// spec.serverRef or spec.domain the handler also maps the old object,
+// so a domain that moves reaches both of its servers (the old one
+// revokes it); a deleted domain reaches the server it was attached to.
 func (r *MailServerReconciler) mapDomainServers(ctx context.Context, obj client.Object) []reconcile.Request {
 	d, ok := obj.(*cnmsv1alpha1.MailDomain)
 	if !ok {
 		return nil
 	}
-	namespaces := map[string]bool{d.Namespace: true}
+	servers := map[types.NamespacedName]bool{}
+	add := func(md *cnmsv1alpha1.MailDomain) {
+		if md.Spec.ServerRef.Name != "" {
+			servers[types.NamespacedName{Namespace: md.Namespace, Name: md.Spec.ServerRef.Name}] = true
+		}
+	}
+	add(d)
 	peers := &cnmsv1alpha1.MailDomainList{}
 	if err := r.List(ctx, peers, client.MatchingFields{mailDomainDomainIndex: d.Spec.Domain}); err != nil {
 		log.FromContext(ctx).Error(err, "Could not list MailDomains", "domain", d.Spec.Domain)
 	}
 	for i := range peers.Items {
-		namespaces[peers.Items[i].Namespace] = true
+		add(&peers.Items[i])
 	}
-	var reqs []reconcile.Request
-	for _, ns := range slices.Sorted(maps.Keys(namespaces)) {
-		reqs = append(reqs, r.serversInNamespace(ctx, ns)...)
+	reqs := make([]reconcile.Request, 0, len(servers))
+	for _, key := range slices.SortedFunc(maps.Keys(servers), func(a, b types.NamespacedName) int {
+		return strings.Compare(a.String(), b.String())
+	}) {
+		reqs = append(reqs, reconcile.Request{NamespacedName: key})
 	}
 	return reqs
 }

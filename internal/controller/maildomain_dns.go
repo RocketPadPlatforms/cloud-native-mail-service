@@ -198,7 +198,7 @@ func (st *dnsState) dkimStates(domain string, keys []generatedKey) map[string]dk
 
 // composeInput builds the input of the record composition from the spec
 // and the published keys (ADR 0012). The MTA-STS hosts come from the
-// MailServers of the namespace (mtaSTSHosts), unless the MTASTSHosts
+// MailServer in spec.serverRef (mtaSTSHosts), unless the MTASTSHosts
 // override is set.
 func (r *MailDomainReconciler) composeInput(ctx context.Context, md *cnmsv1alpha1.MailDomain, keys []keyEntry) (dnsrecords.Input, error) {
 	spec := &md.Spec
@@ -285,7 +285,7 @@ func (r *MailDomainReconciler) reportRecords(md *cnmsv1alpha1.MailDomain, compos
 	case composed.MTASTS == nil:
 		md.Status.MTAStS = nil
 		r.setCondition(md, ConditionMTASTSReady, metav1.ConditionFalse, ReasonNoMailServer,
-			"no MailServer of this namespace serves the domain, so there is no mx host to put in the policy")
+			"the MailServer in spec.serverRef does not exist or does not serve the domain, so there is no mx host to put in the policy")
 	default:
 		md.Status.MTAStS = &cnmsv1alpha1.MTAStSStatus{PolicyID: composed.MTASTS.ID, Policy: composed.MTASTS.Policy}
 		r.setCondition(md, ConditionMTASTSReady, metav1.ConditionTrue, ReasonPolicyAvailable,

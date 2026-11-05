@@ -41,12 +41,12 @@ func grantFor(domain, ns string, includeSubdomains bool) *cnmsv1alpha1.MailDomai
 
 func TestMapGrantDomains(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(watchTestScheme(t)).WithObjects(
-		domainClaimIn("a", "apex", "example.org"),
-		domainClaimIn("b", "other-tenant", "example.org"), // competes for the domain
-		domainClaimIn("b", "sub", "mail.example.org"),     // covered by includeSubdomains
-		domainClaimIn("a", "own-namespace", "unrelated.example"),
-		domainClaimIn("c", "unrelated", "other.example"),
-		domainClaimIn("c", "lookalike", "notexample.org"), // a suffix, but not a subdomain
+		domainClaimIn("a", "apex", "example.org", "s"),
+		domainClaimIn("b", "other-tenant", "example.org", "s"), // competes for the domain
+		domainClaimIn("b", "sub", "mail.example.org", "s"),     // covered by includeSubdomains
+		domainClaimIn("a", "own-namespace", "unrelated.example", "s"),
+		domainClaimIn("c", "unrelated", "other.example", "s"),
+		domainClaimIn("c", "lookalike", "notexample.org", "s"), // a suffix, but not a subdomain
 	).Build()
 	r := &MailDomainReconciler{Client: c}
 
@@ -60,16 +60,35 @@ func TestMapGrantDomains(t *testing.T) {
 
 func TestMapPeerDomains(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(watchTestScheme(t)).WithObjects(
-		domainClaimIn("a", "x", "example.org"),
-		domainClaimIn("b", "y", "example.org"),
-		domainClaimIn("c", "z", "other.example"),
+		domainClaimIn("a", "x", "example.org", "s"),
+		domainClaimIn("b", "y", "example.org", "s"),
+		domainClaimIn("c", "z", "other.example", "s"),
 	).Build()
 	r := &MailDomainReconciler{Client: c}
 
 	// A deleted claim is not in the list any more but still reaches the
 	// remaining claimants.
-	got := requestKeys(r.mapPeerDomains(context.Background(), domainClaimIn("d", "gone", "example.org")))
+	got := requestKeys(r.mapPeerDomains(context.Background(), domainClaimIn("d", "gone", "example.org", "s")))
 	if want := []string{"a/x", "b/y"}; !slices.Equal(got, want) {
+		t.Errorf("mapPeerDomains = %v, want %v", got, want)
+	}
+}
+
+func TestMapPeerDomainsReachesTheMTASTSDomainsOfTheServer(t *testing.T) {
+	withMTASTS := func(d *cnmsv1alpha1.MailDomain) *cnmsv1alpha1.MailDomain {
+		d.Spec.MTAStS = &cnmsv1alpha1.MTAStS{Enabled: new(true)}
+		return d
+	}
+	c := fake.NewClientBuilder().WithScheme(watchTestScheme(t)).WithObjects(
+		withMTASTS(domainClaimIn("a", "on", "on.example.org", "s")),
+		domainClaimIn("a", "off", "off.example.org", "s"),                     // no policy to update
+		withMTASTS(domainClaimIn("a", "elsewhere", "else.example.org", "t")),  // another server
+		withMTASTS(domainClaimIn("b", "foreign", "foreign.example.org", "s")), // another namespace
+	).Build()
+	r := &MailDomainReconciler{Client: c}
+
+	got := requestKeys(r.mapPeerDomains(context.Background(), domainClaimIn("a", "new", "new.example.org", "s")))
+	if want := []string{"a/on"}; !slices.Equal(got, want) {
 		t.Errorf("mapPeerDomains = %v, want %v", got, want)
 	}
 }

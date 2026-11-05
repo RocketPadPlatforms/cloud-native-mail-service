@@ -30,6 +30,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -67,8 +68,9 @@ type MailDomainReconciler struct {
 	Resolver dnsrecords.Resolver
 
 	// MTASTSHosts overrides the mx hosts of the MTA-STS policy of the
-	// domain, which are otherwise the host names of the MailServers of
-	// the namespace that serve it (ADR 0012). Tests set it.
+	// domain, which are otherwise the host name of the MailServer in
+	// spec.serverRef when it serves the domain (ADR 0012, 0014). Tests
+	// set it.
 	MTASTSHosts func(ctx context.Context, md *cnmsv1alpha1.MailDomain) ([]string, error)
 
 	// Now is the clock; nil means time.Now. Tests advance a fake one.
@@ -86,7 +88,7 @@ type MailDomainReconciler struct {
 // +kubebuilder:rbac:groups=cnms.rpp.gmbh,resources=maildomains/status,verbs=patch
 // +kubebuilder:rbac:groups=cnms.rpp.gmbh,resources=maildomains/finalizers,verbs=update
 // +kubebuilder:rbac:groups=cnms.rpp.gmbh,resources=maildomaingrants,verbs=get;list;watch
-// The MTA-STS policy lists the hosts of the MailServers that serve the domain.
+// The MTA-STS policy lists the host of the MailServer in spec.serverRef.
 // +kubebuilder:rbac:groups=cnms.rpp.gmbh,resources=mailservers,verbs=get;list;watch
 // Key Secrets are immutable: created, deleted when a retired key leaves DNS, never updated,
 // and kept when the MailDomain goes away. They are never cached or watched.
@@ -137,6 +139,9 @@ func (r *MailDomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	prevAuth := meta.FindStatusCondition(md.Status.Conditions, ConditionAuthorized).DeepCopy()
 	r.setCondition(md, ConditionAuthorized, conditionStatus(authorized), reason, message)
 	r.emitAuthorizationEvent(md, prevAuth, authorized, reason, message)
+	if err := r.reconcileServerFound(ctx, md); err != nil {
+		return ctrl.Result{}, err
+	}
 
 	var requeue time.Duration
 	if authorized {
@@ -149,6 +154,24 @@ func (r *MailDomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 	r.setReady(md)
 	return r.finish(ctx, md, before, requeue)
+}
+
+// reconcileServerFound sets ServerFound from the existence of the
+// MailServer in spec.serverRef.
+func (r *MailDomainReconciler) reconcileServerFound(ctx context.Context, md *cnmsv1alpha1.MailDomain) error {
+	name := md.Spec.ServerRef.Name
+	err := r.Get(ctx, types.NamespacedName{Namespace: md.Namespace, Name: name}, &cnmsv1alpha1.MailServer{})
+	switch {
+	case errors.IsNotFound(err):
+		r.setCondition(md, ConditionServerFound, metav1.ConditionFalse, ReasonServerNotFound,
+			fmt.Sprintf("MailServer %q does not exist in namespace %q; the domain keeps its keys and records, but nothing serves it", name, md.Namespace))
+	case err != nil:
+		return err
+	default:
+		r.setCondition(md, ConditionServerFound, metav1.ConditionTrue, ReasonServerFound,
+			fmt.Sprintf("MailServer %q exists", name))
+	}
+	return nil
 }
 
 // reconcileAuthorized handles an authorized domain and returns the
@@ -398,8 +421,9 @@ func (r *MailDomainReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return b.
 		Watches(&cnmsv1alpha1.MailDomain{}, handler.EnqueueRequestsFromMapFunc(r.mapPeerDomains)).
 		Watches(&cnmsv1alpha1.MailDomainGrant{}, handler.EnqueueRequestsFromMapFunc(r.mapGrantDomains)).
-		// A server that starts or stops serving the domain changes the mx
-		// hosts of the MTA-STS policy; its status writes do not.
+		// A server that appears, disappears or is edited changes the mx
+		// host of the MTA-STS policy and ServerFound; its status writes
+		// do not.
 		Watches(&cnmsv1alpha1.MailServer{}, handler.EnqueueRequestsFromMapFunc(r.mapServerDomains),
 			builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Complete(r)
@@ -407,16 +431,21 @@ func (r *MailDomainReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 // mapPeerDomains enqueues the MailDomains that claim the same domain as
 // obj: the uniqueness check is cluster wide, so a new, changed or
-// deleted claim blocks or frees the other claimants. It lists every
-// MailDomain instead of using an index, which the MailServer controller
-// owns.
+// deleted claim blocks or frees the other claimants. It also enqueues
+// the MailDomains with MTA-STS on that share the server of obj: the mx
+// host of their policy is the server hostname, which is the first
+// domain the server serves, so another domain that attaches or leaves
+// can change it. For a changed spec.serverRef the handler also maps the
+// old object.
 func (r *MailDomainReconciler) mapPeerDomains(ctx context.Context, obj client.Object) []reconcile.Request {
 	d, ok := obj.(*cnmsv1alpha1.MailDomain)
 	if !ok {
 		return nil
 	}
 	return r.matchingDomains(ctx, func(o *cnmsv1alpha1.MailDomain) bool {
-		return o.Spec.Domain == d.Spec.Domain
+		return o.Spec.Domain == d.Spec.Domain ||
+			(o.Namespace == d.Namespace && o.Spec.ServerRef.Name == d.Spec.ServerRef.Name &&
+				o.Spec.MTAStS != nil && o.Spec.MTAStS.Enabled != nil && *o.Spec.MTAStS.Enabled)
 	})
 }
 

@@ -31,25 +31,23 @@ import (
 )
 
 func TestMapServerDomains(t *testing.T) {
-	r := &MailDomainReconciler{Client: fake.NewClientBuilder().WithScheme(watchTestScheme(t)).Build()}
-	s := serverIn("a", "s1")
-	s.Spec.Domains = []cnmsv1alpha1.NameReference{{Name: "x"}, {Name: "y"}}
+	c := fake.NewClientBuilder().WithScheme(watchTestScheme(t)).
+		WithIndex(&cnmsv1alpha1.MailDomain{}, mailDomainServerIndex, indexMailDomainByServer).
+		WithObjects(
+			domainClaimIn("a", "x", "x.example.org", "s1"),
+			domainClaimIn("a", "y", "y.example.org", "s1"),
+			domainClaimIn("a", "z", "z.example.org", "s2"),
+			domainClaimIn("b", "w", "w.example.org", "s1"), // same server name, other namespace
+		).Build()
+	r := &MailDomainReconciler{Client: c}
 	// The domains are in the namespace of the server; a server that is
-	// gone is mapped by its last spec.
-	got := requestKeys(r.mapServerDomains(context.Background(), s))
+	// gone is mapped by its name.
+	got := requestKeys(r.mapServerDomains(context.Background(), serverIn("a", "s1")))
 	if want := []string{"a/x", "a/y"}; !slices.Equal(got, want) {
 		t.Errorf("mapServerDomains = %v, want %v", got, want)
 	}
 	if got := r.mapServerDomains(context.Background(), &cnmsv1alpha1.MailDomain{}); got != nil {
 		t.Errorf("mapServerDomains(MailDomain) = %v, want none", got)
-	}
-}
-
-func TestServerLists(t *testing.T) {
-	s := serverIn("a", "s1")
-	s.Spec.Domains = []cnmsv1alpha1.NameReference{{Name: "x"}}
-	if !serverLists(s, "x") || serverLists(s, "y") {
-		t.Error("serverLists must match the referenced MailDomain names only")
 	}
 }
 
@@ -83,15 +81,14 @@ var _ = Describe("MailDomain MTA-STS hosts", func() {
 		Expect(status).To(Equal(metav1.ConditionFalse))
 		Expect(reason).To(Equal(ReasonNoMailServer))
 
-		// A server of the namespace that lists another domain does not count.
-		other := uniqueDomain()
-		createDomainG(ns, other)
-		createServerG(ns, "mail", other, nil)
+		// A server of the namespace that the domain does not reference
+		// does not count.
+		createServerG(ns, otherServer, nil)
 		Expect(policyHosts()).To(BeEmpty())
 	})
 
 	It("lists the host name of the server that serves the domain", func() {
-		createServerG(ns, "mail", domain, nil)
+		createServerG(ns, "mail", nil)
 		Expect(policyHosts()).To(ContainSubstring("mx: " + domain + "\r\n"))
 		status, reason, _ := domainCondG(ns, name, ConditionMTASTSReady)
 		Expect(status).To(Equal(metav1.ConditionTrue))
@@ -104,30 +101,31 @@ var _ = Describe("MailDomain MTA-STS hosts", func() {
 		// The server presents its first sorted domain: a subdomain sorts
 		// before its parent.
 		sub := "a." + domain
-		createDomainG(ns, sub)
-		createServerG(ns, "mail", domain, func(s *cnmsv1alpha1.MailServer) {
-			s.Spec.Domains = append(s.Spec.Domains, cnmsv1alpha1.NameReference{Name: domainLabel(sub)})
-		})
+		createMailDomainG(ns, sub, nil)
+		createServerG(ns, "mail", nil)
 		Expect(policyHosts()).To(ContainSubstring("mx: " + sub + "\r\n"))
 		Expect(policyHosts()).ToNot(ContainSubstring("mx: " + domain + "\r\n"))
 	})
 
-	It("lists every serving server once, sorted, whatever the order of creation", func() {
+	It("follows the domain to the server it moves to", func() {
 		sub := "a." + domain
-		createDomainG(ns, sub)
-		createServerG(ns, "mail-b", domain, nil)
-		createServerG(ns, "mail-c", domain, nil) // the same host again
-		createServerG(ns, "mail-a", domain, func(s *cnmsv1alpha1.MailServer) {
-			s.Spec.Domains = append(s.Spec.Domains, cnmsv1alpha1.NameReference{Name: domainLabel(sub)})
-		})
-		Expect(policyHosts()).To(ContainSubstring("mx: " + sub + "\r\nmx: " + domain + "\r\nmax_age:"))
+		createMailDomainG(ns, sub, func(d *cnmsv1alpha1.MailDomain) { d.Spec.ServerRef.Name = "mail-2" })
+		createServerG(ns, "mail", nil)
+		createServerG(ns, "mail-2", nil)
+		Expect(policyHosts()).To(ContainSubstring("mx: " + domain + "\r\n"))
+
+		d := getMailDomainG(ns, name)
+		d.Spec.ServerRef.Name = "mail-2"
+		Expect(k8sClient.Update(ctx, d)).To(Succeed())
+		// mail-2 now serves both; its first sorted domain is the host.
+		Expect(policyHosts()).To(ContainSubstring("mx: " + sub + "\r\n"))
 	})
 
 	It("does not list a server of another namespace", func() {
 		ns2 := uniqueNamespace()
 		createNamespaceG(ns2)
 		createDirectoryG(ns2)
-		createServerG(ns2, "mail", domain, nil)
+		createServerG(ns2, "mail", nil)
 		Expect(policyHosts()).To(BeEmpty())
 	})
 })
@@ -151,11 +149,11 @@ var _ = Describe("MailDomain MTA-STS watches", func() {
 
 		// The ten-minute safety net is far outside the wait: only the
 		// MailServer watch can flip the condition.
-		createServerG(ns, "mail", domain, nil)
+		createServerG(ns, "mail", nil)
 		Eventually(reason, wait, poll).Should(Equal(ReasonPolicyAvailable))
 		Expect(getMailDomainG(ns, name).Status.MTAStS.Policy).To(ContainSubstring("mx: " + domain))
 
-		Expect(k8sClient.Delete(ctx, newServerG(ns, "mail", domain, nil))).To(Succeed())
+		Expect(k8sClient.Delete(ctx, newServerG(ns, "mail", nil))).To(Succeed())
 		Eventually(reason, wait, poll).Should(Equal(ReasonNoMailServer))
 	})
 })

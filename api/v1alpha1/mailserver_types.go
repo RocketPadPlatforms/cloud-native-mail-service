@@ -32,9 +32,11 @@ import (
 // MailServerSpec defines the desired state of a MailServer.
 //
 // A MailServer is a tenant-facing mail system: inbound and submission
-// services, outbound delivery, mailboxes, and the set of domains it
-// handles. Each MailServer is isolated from all others: own workloads,
-// queues, IPs, DKIM keys and Rspamd/Valkey instances.
+// services, outbound delivery and mailboxes. The domains it handles
+// are the MailDomains of its namespace that reference it in
+// spec.serverRef (status.domains lists them). Each MailServer is
+// isolated from all others: own workloads, queues, IPs, DKIM keys and
+// Rspamd/Valkey instances.
 type MailServerSpec struct {
 	// Directory used for recipient validation and user authentication.
 	// References a MailDirectory in the same namespace. Optional: a
@@ -48,16 +50,6 @@ type MailServerSpec struct {
 	// Outbound selects the outbound delivery mode.
 	// +kubebuilder:validation:Required
 	Outbound Outbound `json:"outbound"`
-
-	// Domains handled by this mail server. They are signed with DKIM
-	// (when enabled on the domain) and accepted for submission.
-	// Each entry references a MailDomain in the same namespace.
-	// +kubebuilder:validation:Required
-	// +listType=atomic
-	// +kubebuilder:validation:MinItems=1
-	// +kubebuilder:validation:MaxItems=50
-	// +kubebuilder:validation:XValidation:rule="self.all(x, self.filter(y, y == x).size() == 1)",message="domain references must be unique"
-	Domains []NameReference `json:"domains"`
 
 	// TLS for inbound, submission and outbound mail. The certificate
 	// is managed by cert-manager from the referenced issuer.
@@ -351,6 +343,43 @@ type MailServerStatus struct {
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// Domains lists the MailDomains of the namespace that reference
+	// this MailServer in spec.serverRef: those that are not served
+	// first, then by name, at most 128 entries (the DomainsListed
+	// condition says when the list is cut). It is derived from the
+	// MailDomains and holds no state of its own.
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=128
+	// +optional
+	Domains []ServerDomainStatus `json:"domains,omitempty"`
+}
+
+// ServerDomainStatus reports one MailDomain that references the
+// MailServer.
+type ServerDomainStatus struct {
+	// Name of the MailDomain object.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MaxLength=253
+	Name string `json:"name"`
+
+	// Domain is the domain name of the MailDomain (spec.domain).
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MaxLength=253
+	Domain string `json:"domain"`
+
+	// Served is true when the domain is authorized and part of the
+	// configuration the operator renders for the server. Whether the
+	// pods already run it is reported by the WorkloadsReady condition.
+	Served bool `json:"served"`
+
+	// Reason why the domain is served or not (a reason of the
+	// DomainsAuthorized condition, or the reason that blocks the
+	// whole server).
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MaxLength=128
+	Reason string `json:"reason"`
 }
 
 // +kubebuilder:object:root=true

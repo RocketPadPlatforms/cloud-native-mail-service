@@ -42,6 +42,17 @@ type MailDomainSpec struct {
 	// +kubebuilder:validation:Pattern=`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?[.])+[a-z]([a-z0-9-]{0,61}[a-z0-9])?$`
 	Domain string `json:"domain"`
 
+	// ServerRef references the MailServer in the same namespace that
+	// serves the domain: it signs, accepts and delivers the mail of
+	// the domain (ADR 0014). The server need not exist yet; the
+	// ServerFound condition says whether it does. Mutable, which moves
+	// the domain to another server: the DKIM keys and DNS records
+	// stay with the MailDomain, but the mail data on the old server
+	// (mailboxes, queued mail) does not move (see the how-to guide
+	// for the risks).
+	// +kubebuilder:validation:Required
+	ServerRef NameReference `json:"serverRef"`
+
 	// DNS mode: "manual" (default) reports the required records in
 	// the status for the operator to create; "externalDNS" creates
 	// DNSEndpoint resources.
@@ -322,7 +333,8 @@ type MailDomainStatus struct {
 
 	// Conditions represent the current state of the MailDomain:
 	// Authorized (the domain is granted to the namespace and unique),
-	// DKIMKeysValid (every key is present and usable), DKIMRotation
+	// ServerFound (the MailServer in spec.serverRef exists; a warning
+	// that never feeds into Ready), DKIMKeysValid (every key is present and usable), DKIMRotation
 	// (false while a new key waits for its DNS record),
 	// RecordsVerified (a lookup found the required records),
 	// DNSPublished (the DNSEndpoint is managed, externalDNS mode),
@@ -436,6 +448,7 @@ type MTAStSStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Domain",type="string",JSONPath=".spec.domain"
+// +kubebuilder:printcolumn:name="Server",type="string",JSONPath=".spec.serverRef.name"
 // +kubebuilder:printcolumn:name="Authorized",type="string",JSONPath=".status.conditions[?(@.type=='Authorized')].status"
 // +kubebuilder:printcolumn:name="Ready",type="string",JSONPath=".status.conditions[?(@.type=='Ready')].status"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"

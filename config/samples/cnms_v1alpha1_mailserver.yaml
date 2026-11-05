@@ -10,8 +10,6 @@ spec:
     name: maildirectory-sample
   outbound:
     direct: {}
-  domains:
-    - name: maildomain-sample
   tls:
     issuerRef:
       kind: Issuer
