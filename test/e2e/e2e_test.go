@@ -25,6 +25,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -87,9 +88,9 @@ var _ = Describe("CNMS e2e", Ordered, func() {
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to install CRDs")
 
-		By("waiting for a stale MailDomainGrant of a previous run")
+		By("waiting for stale MailDomainGrants of a previous run")
 		cmd = exec.Command("kubectl", "wait", "--for=delete",
-			"maildomaingrant", e2eDomain, "--timeout=3m")
+			"maildomaingrant", e2eDomain, e2eHostname, "--timeout=3m")
 		_, _ = utils.Run(cmd) // no-op when the grant is gone
 
 		By("deploying the controller-manager")
@@ -127,8 +128,8 @@ var _ = Describe("CNMS e2e", Ordered, func() {
 		By("removing the data plane namespace")
 		_, _ = kubectl("delete", "ns", e2eNamespace, "--wait=false", "--ignore-not-found")
 
-		By("removing the MailDomainGrant (cluster-scoped)")
-		_, _ = kubectl("delete", "maildomaingrant", e2eDomain, "--wait=false", "--ignore-not-found")
+		By("removing the MailDomainGrants (cluster-scoped)")
+		_, _ = kubectl("delete", "maildomaingrant", e2eDomain, e2eHostname, "--wait=false", "--ignore-not-found")
 
 		By("cleaning up the curl pod for metrics")
 		_, _ = kubectl("delete", "pod", "curl-metrics", "-n", namespace, "--ignore-not-found")
@@ -499,6 +500,55 @@ subjects:
 			)
 			Expect(out).To(ContainSubstring("Ok: queued as"),
 				"authenticated submission over TLS failed: %s", out)
+		})
+
+		It("should authorize the hostname and present it, not the domains", func() {
+			status, err := mailServerCondition("HostnameAuthorized")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(status).To(Equal("True"))
+			// The inbound Service is of type ClusterIP, which has no
+			// address a record could point at.
+			reason, err := mailServerConditionReason("AddressRecords")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(reason).To(Equal("NoExternalAddress"))
+
+			By("the certificate carries the hostname only")
+			var names string
+			Eventually(func(g Gomega) {
+				names, err = servedCertNames()
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(names).To(ContainSubstring("DNS:" + e2eHostname))
+			}, 5*time.Minute, 10*time.Second).Should(Succeed())
+			// OpenSSL 3 prints "subject=CN=<name>", older versions
+			// "subject=CN = <name>".
+			Expect(names).To(MatchRegexp(`CN ?= ?` + regexp.QuoteMeta(e2eHostname)))
+			Expect(names).NotTo(ContainSubstring("DNS:" + e2eDomain))
+			Expect(names).NotTo(ContainSubstring("DNS:" + dkimGenDomain))
+			Expect(names).NotTo(ContainSubstring("svc.cluster.local"))
+
+			By("the greeting and the Received header use the hostname")
+			Eventually(func(g Gomega) {
+				out := swaks("--server", e2ePostfixSVC+":25", "--quit-after", "CONNECT")
+				g.Expect(out).To(MatchRegexp(`220\s+` + regexp.QuoteMeta(e2eHostname) + `\s+ESMTP`))
+			}, 3*time.Minute, 10*time.Second).Should(Succeed())
+			out := swaks(
+				"--to", "sink@"+e2eMailpitSink,
+				"--from", e2eMailbox,
+				"--server", e2ePostfixSVC+":587",
+				"--tls",
+				"--auth", "PLAIN",
+				"--auth-user", e2eUser,
+				"--auth-password", e2ePassword,
+				"--header", "Subject: e2e-hostname",
+				"--body", "hostname test",
+			)
+			Expect(out).To(ContainSubstring("Ok: queued as"), "swaks output: %s", out)
+			Eventually(func(g Gomega) {
+				raw, found, err := mailpitRawBySubject("e2e-hostname")
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(found).To(BeTrue(), "the sink did not receive the message")
+				g.Expect(raw).To(MatchRegexp(`by\s+` + regexp.QuoteMeta(e2eHostname) + `\s+\(Postfix`))
+			}, 5*time.Minute, 5*time.Second).Should(Succeed())
 		})
 
 		It("should deliver authenticated mail to the Mailpit sink", func() {

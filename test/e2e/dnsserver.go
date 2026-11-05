@@ -125,25 +125,33 @@ spec:
     - {name: dns-tcp, port: 53, protocol: TCP}
 `
 
-// zoneFile renders the test zone with the TXT records recs. A TXT value
-// is written as character-strings of at most 255 octets, the way a
-// provider stores the RSA-2048 DKIM value; the resolver joins them again
-// (RFC 6376). Only TXT records are published: they are all CNMS requires
-// (ADR 0012).
+// zoneFile renders the test zone with the records recs. A TXT value is
+// written as character-strings of at most 255 octets, the way a provider
+// stores the RSA-2048 DKIM value; the resolver joins them again (RFC
+// 6376). The MX records of the domains are served too (ADR 0014). The
+// zone holds an address for the hostname, which the MX records point at,
+// but no address records come from the status: the fixture server is of
+// type ClusterIP and requires none.
 func zoneFile(serial int64, recs []cnmsv1alpha1.DNSRecord) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "$ORIGIN %s.\n$TTL 60\n", dnsZone)
 	fmt.Fprintf(&b, "@ IN SOA ns.%s. hostmaster.%s. %d 60 60 3600 60\n", dnsZone, dnsZone, serial)
-	b.WriteString("@ IN NS ns\nns IN A 127.0.0.1\n")
+	b.WriteString("@ IN NS ns\nns IN A 127.0.0.1\nmail IN A 203.0.113.10\n")
 	for _, rec := range recs {
-		if rec.Type != "TXT" {
-			panic("the test DNS server serves TXT records only, got " + rec.Type)
+		name := strings.TrimSuffix(rec.Name, ".") + "."
+		switch rec.Type {
+		case "TXT":
+			b.WriteString(name + " IN TXT")
+			for _, chunk := range txtChunks(rec.Value) {
+				fmt.Fprintf(&b, " %q", chunk)
+			}
+			b.WriteString("\n")
+		case "MX":
+			// The value is "<preference> <host>".
+			fmt.Fprintf(&b, "%s IN MX %s.\n", name, strings.TrimSuffix(rec.Value, "."))
+		default:
+			panic("the test DNS server serves TXT and MX records only, got " + rec.Type)
 		}
-		b.WriteString(strings.TrimSuffix(rec.Name, ".") + ". IN TXT")
-		for _, chunk := range txtChunks(rec.Value) {
-			fmt.Fprintf(&b, " %q", chunk)
-		}
-		b.WriteString("\n")
 	}
 	return b.String()
 }
