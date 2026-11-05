@@ -17,6 +17,7 @@ reason and message.
 | `Ready` | `True` | `Ready` | All of the conditions below that feed into it are `True` |
 | `Ready` | `False` or `Unknown` | the reason of the first failing condition (order: `CertificateReady`, `ConfigValidated`, `WorkloadsReady`, `DomainsAuthorized`, `Observability`) | The rollup; see the rows below for those reasons |
 | `Ready` | `False` | `DirectoryNotFound` | `spec.directoryRef` names a `MailDirectory` that does not exist in the namespace |
+| `Ready` | `False` | `NoDomains` | no `MailDomain` of the namespace references the server in `spec.serverRef`; nothing is deployed, and a running data plane is re-rendered fail closed ([ADR 0014](../decisions/0014-domain-server-binding-and-hostname.md)) |
 | `Ready` | `False` | `NoUserSource` | no `spec.directoryRef` and no other user source |
 | `Ready` | `False` | `InsecureStaticUsersDisabled` | `spec.submission.insecureStaticUsers` is set but the operator runs without `--enable-insecure-test-features` |
 | `Ready` | `False` | `StaticUsersInvalid` | the users Secret is missing, has no `users.yaml` key, or does not parse |
@@ -25,11 +26,11 @@ reason and message.
 | `Ready` | `False` | `IpPoolClaimNotAvailable` | `outbound.direct.ipPoolClaimRef` is set; IP management arrives in Phase 7 |
 | `Ready` | `False` | `OwnershipConflict` | an object the data plane needs exists and is not controlled by this `MailServer` (also reported by `Observability`) |
 | `Ready` | `False` | `ApplyFailed` | applying the data plane failed; the message has the error |
-| `DomainsAuthorized` | `True` | `Authorized` | every referenced domain is covered by a `MailDomainGrant` for the namespace |
+| `DomainsAuthorized` | `True` | `Authorized` | every `MailDomain` that references the server is covered by a `MailDomainGrant` for the namespace |
+| `DomainsAuthorized` | `True` | `NoDomains` | no `MailDomain` references the server: nothing is unauthorized and nothing is served |
 | `DomainsAuthorized` | `True` | `AuthorizationDisabled` | the operator runs with `--domain-authorization=unrestricted` |
 | `DomainsAuthorized` | `False` | `NotGranted` | no grant covers a domain for the namespace |
 | `DomainsAuthorized` | `False` | `DuplicateDomain` | several `MailDomain` objects claim the domain among the competing claimants; all are blocked |
-| `DomainsAuthorized` | `False` | `DomainNotFound` | a `spec.domains` entry names a `MailDomain` that does not exist |
 | `DomainsAuthorized` | `False` | `PublicSuffix` | a referenced domain is a public suffix such as `co.uk` |
 | `DomainsAuthorized` | `False` | `PartiallyAuthorized` | some, not all, domains are authorized; only those are rendered and the message names the blocked ones |
 | `CertificateReady` | `True` | `Issued` | the TLS Secret carries `tls.crt` and `tls.key` |
@@ -47,6 +48,8 @@ reason and message.
 | `Observability` | `True` | `Disabled` | `prometheusOperator: disabled`; no ServiceMonitors |
 | `Observability` | `False` | `CRDsRequired` | `prometheusOperator: enabled` but the CRDs are not installed |
 | `Observability` | `False` | `CRDCheckFailed`, `ListFailed`, `DeleteFailed`, `ApplyFailed`, `OwnershipConflict` | the integration could not be checked or applied; the message has the error |
+| `DomainsListed` | `True` | `AllListed` | `status.domains` lists every `MailDomain` that references the server |
+| `DomainsListed` | `False` | `Truncated` | more than 128 `MailDomain`s reference the server; `status.domains` lists 128 of them, those not served first, then by name |
 | `ClientIPPreserved` | `True` | `Preserved` | client addresses reach Postfix unchanged |
 | `ClientIPPreserved` | `False` | `ClusterTrafficPolicy` | `externalTrafficPolicy: Cluster` on a LoadBalancer source-NATs clients, so the per-client rate limits count all senders together |
 | `DedicatedSendingAddress` | `True` | `Dedicated` | outbound mail has its own address or goes through a relay |
@@ -56,8 +59,15 @@ reason and message.
 | `DKIMKeysAvailable` | `True` | `KeysAvailable` | every served domain has all its active signing keys, and each key was read and parsed (also when no domain is served) |
 | `DKIMKeysAvailable` | `False` | `KeysMissing` | a served domain has no active key yet, or a key Secret is missing, has no such key, or does not parse; the message lists each domain and key. Outbound mail of those domains is deferred (451 4.7.1), inbound mail is not affected, and the rollout does not wait. Looked up again every minute ([ADR 0011](../decisions/0011-dkim-keys-and-rotation.md), [ADR 0013](../decisions/0013-never-unsigned-guard.md)) |
 
-`ClientIPPreserved`, `DedicatedSendingAddress`, `NodeDrainable` and
-`DKIMKeysAvailable` are warnings: they never feed into `Ready`.
+`ClientIPPreserved`, `DedicatedSendingAddress`, `NodeDrainable`,
+`DomainsListed` and `DKIMKeysAvailable` are warnings: they never feed into
+`Ready`.
+
+`status.domains` has one entry per `MailDomain` that references the server
+(`name`, `domain`, `served`, `reason`). `served` is true when the domain is
+authorized and part of the rendered configuration; `reason` is the reason
+of `DomainsAuthorized` for that domain, or the reason that blocks the whole
+server.
 
 ## MailDomainGrant
 
@@ -86,6 +96,8 @@ only `Authorized` and `Ready` (and `DNSPublished` while its
 | `Authorized` | `False` | `NotGranted` | no grant covers the domain for the namespace |
 | `Authorized` | `False` | `DuplicateDomain` | several `MailDomain` objects claim the domain; all are blocked |
 | `Authorized` | `False` | `PublicSuffix` | the domain is a public suffix such as `co.uk` |
+| `ServerFound` | `True` | `ServerFound` | the `MailServer` in `spec.serverRef` exists |
+| `ServerFound` | `False` | `ServerNotFound` | the `MailServer` in `spec.serverRef` does not exist; keys and records are still generated. A warning: it never feeds into `Ready` |
 | `DKIMKeysValid` | `True` | `KeysValid` | every key is present and usable |
 | `DKIMKeysValid` | `False` | `InvalidKey` | a key does not parse as RSA of at least 2048 bits or Ed25519; the message names the selector |
 | `DKIMKeysValid` | `False` | `SecretNotFound` | the Secret or Secret key of one of your own keys is missing; it is read again after a minute |
@@ -106,7 +118,7 @@ only `Authorized` and `Ready` (and `DNSPublished` while its
 | `SPFReady` | `True` | `SPFGenerated` | an SPF record is generated from `spec.spf` |
 | `SPFReady` | `False` | `NoSendingSources` | no source is known, so no SPF record is generated |
 | `MTASTSReady` | `True` | `PolicyAvailable` | MTA-STS is enabled and the policy is in `status.mtaSts` |
-| `MTASTSReady` | `False` | `NoMailServer` | MTA-STS is enabled and no `MailServer` of the namespace lists and serves the domain, so there is no `mx` host and no policy |
+| `MTASTSReady` | `False` | `NoMailServer` | MTA-STS is enabled and the `MailServer` in `spec.serverRef` does not exist or does not serve the domain, so there is no `mx` host and no policy |
 | `ReportAuthorization` | `True` | `NotRequired` | every DMARC report address is in the organizational domain of the policy |
 | `ReportAuthorization` | `False` | `ReceiverRecordRequired` | a report address is in another organizational domain; its owner has to publish the record named in the message |
 
