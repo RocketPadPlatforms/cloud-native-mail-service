@@ -9,11 +9,38 @@ gets its own section here.
 ## Unreleased
 
 Changes that an operator running an earlier snapshot of `main` notices.
-Update the CRDs together with the operator: the new CRDs reject or
-prune the old field names.
+Update the CRDs and the operator in the order the entries below give:
+the new CRDs reject or prune the old field names.
 
 ### API fields
 
+- **`MailServer.spec.domains` is removed; `MailDomain.spec.serverRef`
+  replaces it** ([ADR 0014](../decisions/0014-domain-server-binding-and-hostname.md)).
+  `serverRef` is required (same namespace) and mutable. Steps, in this
+  order: scale the operator Deployment to 0 (the data plane keeps
+  running), install the new CRDs, re-apply your objects (add
+  `serverRef: {name: <server>}` to every `MailDomain` and drop
+  `domains` from every `MailServer`), then deploy and start the new
+  operator. Any other order leaves a running server without a domain:
+  once the new CRD is installed, a stored `MailDomain` has no
+  `serverRef` and the new CRD prunes `spec.domains`, so neither operator
+  version finds a domain for the server. It is then `Ready=False` with
+  reason `NoDomains` and its running data plane is re-rendered fail
+  closed (mail is deferred, not lost) until the objects are re-applied.
+  In commands: `kubectl -n cloud-native-mail-service-system scale
+  deployment cloud-native-mail-service-controller-manager --replicas=0`,
+  then `make install` (CRDs only), then `kubectl apply` of the edited
+  objects, then `make deploy IMG=<image>`. A `MailServer` that still
+  contains `domains:` is rejected by `kubectl apply` with an "unknown
+  field" error (strict field validation), so drop the field before
+  applying. No release exists yet, so this only concerns clusters that
+  run a snapshot of `main`. A domain belongs to one server; a second
+  server of the namespace that served the same domain needs its own.
+  New: `MailServer.status.domains`, the conditions `ServerFound` (on the
+  `MailDomain`) and `DomainsListed`, the reason `NoDomains` and the
+  printer column `Server` on `MailDomain`. The reason `DomainNotFound` is
+  gone. Deleting a `MailDomain` now takes it off its server with the
+  next validated rollout.
 - **`MailDomain.spec.dkim.selector` is now `selectorPrefix`.** The
   selector of a key is `<prefix>-<yyyymmdd>`; the selectors in use are
   in `status.dkim`. Rename the field in your manifests. The CRD no
@@ -56,8 +83,9 @@ prune the old field names.
   `MailDomain` is deleted) and the annotation `cnms.rpp.gmbh/rotation`.
   Tell your GitOps tool to ignore that annotation. An unauthorized
   domain gets neither. Its status lists the required DNS records.
-- **The MTA-STS policy lists the hosts of the `MailServer`s** that serve
-  the domain (the primary domain of each server). Without such a server
+- **The MTA-STS policy lists the host of the `MailServer`** in
+  `spec.serverRef` when it serves the domain (the primary domain of the
+  server). Without such a server
   `MTASTSReady` is `False` with reason `NoMailServer` and there is no
   policy. The `MailDomain` controller needs `get`, `list` and `watch` on
   `mailservers` (the operator role has them already).
@@ -67,7 +95,7 @@ prune the old field names.
   optional `externalDNS` mode, `get`, `list`, `watch`, `create`,
   `update`, `patch` and `delete` on `dnsendpoints.externaldns.k8s.io`.
   The Secret permissions are the ones of the `MailServer` controller.
-  Update the CRDs together with the operator: `status.dkim.active`
+  Install the CRDs before the new operator starts: `status.dkim.active`
   allows 8 entries and `kubectl get maildomains` has an `Authorized`
   column.
 - **`externalDNS` mode needs `--managed-record-types=TXT`** on the

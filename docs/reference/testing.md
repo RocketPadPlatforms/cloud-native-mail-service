@@ -127,8 +127,9 @@ it, so the records the operator verifies never leave the cluster. It then
 creates two `MailDomain`s (each with its own `MailDomainGrant`): one with
 generated keys and `ed25519: true`, one with a bring-your-own RSA key whose
 Secret the test creates. The test copies `status.records` of both into the
-zone ConfigMap, restarts the DNS pod to load it, and only then adds the
-domains to the `MailServer`, so the data plane rolls out once. The specs
+zone ConfigMap, restarts the DNS pod to load it, and only then moves the
+domains to the `MailServer` (they start with a `serverRef` to a server
+that does not exist), so the data plane rolls out once. The specs
 check:
 
 - the DKIM records the controller requires are found by the lookups
