@@ -48,9 +48,16 @@ the code and the [status conditions](reference/status-conditions.md).
   `MailServer`. The `MailDomain` controller authorizes
   the domain (grants, duplicates, public suffixes), generates and
   rotates DKIM keys or reads your own, lists and verifies every DNS
-  record, reports the MTA-STS policy with the host of the `MailServer`
-  that serves the domain, and publishes a `DNSEndpoint` in `externalDNS`
-  mode ([how-to](how-to/dkim-keys-and-dns-records.mdx)). The `MailServer`
+  record (the `MX` record among them), reports the MTA-STS policy with the
+  hostname of the `MailServer` that serves the domain, and publishes a
+  `DNSEndpoint` in `externalDNS` mode
+  ([how-to](how-to/dkim-keys-and-dns-records.mdx)). A `MailServer` has a
+  required `hostname` ([ADR 0014](decisions/0014-domain-server-binding-and-hostname.md)):
+  the name it presents in HELO and on its certificate, authorized through
+  the grants like a domain and unique among the competing servers, with its `A`,
+  `AAAA` and SPF records reported and verified in its status (not
+  published) and its sending sources in `spec.spf`. A failing hostname does
+  not stop the server from serving its domains. The `MailServer`
   hands the active keys to Rspamd, which signs with them (RSA, and Ed25519
   when enabled), and a guard defers the outbound mail of a served domain
   that has no usable key instead of sending it unsigned

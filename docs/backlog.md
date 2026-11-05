@@ -24,13 +24,32 @@ committed.
 - Derived-name conflicts (`DerivedNameConflict`, ADR 0003): a `MailDomain`
   whose own name is a derived name of another active domain. Not detected
   by the `MailDomain` controller yet.
-- Server hostname (ADR 0014, part B), to be implemented in a follow-up
-  change: `MailServer.spec.hostname`, its authorization and uniqueness,
-  the `A`/`AAAA`, SPF and `MX` records, `MailServer.spec.spf`. Until then
-  the server name (HELO, certificate, MTA-STS `mx`) is the first sorted
-  domain of the server, so a domain that sorts before the others changes
-  it. The e2e suite serves three domains from one server and picks names
-  that sort after the first one.
+- Publish the records of the server hostname and the `MX` records of the
+  domains through external-dns: `A`/`AAAA` (from the inbound Service
+  address), SPF and `MX` (ADR 0014). They are reported and verified today,
+  and the `DNSEndpoint` of a `MailDomain` holds TXT records only. The
+  external-dns record types and the ownership of the hostname records need
+  a design (the `MailServer` would own a `DNSEndpoint`).
+- Per-pod HELO names from the PTR of a bound `MailIPPoolClaim` (Phase 7,
+  ADR 0014 section 8): the hostname stays the MX target and the TLS name,
+  while each Postfix pod presents the PTR name of its own sending address.
+  The SPF record of the hostname then lists those addresses.
+- Make the fail-closed render defer (`soft_bounce` / a 450 reply)
+  instead of rejecting with a permanent `554 5.7.1`: the render has
+  `mydestination =` and `reject_unauth_destination` and no
+  `unauth_destination_reject_code`, so a running server that is re-rendered
+  fail closed (ADR 0003, 0014) bounces inbound mail instead of letting the
+  sender retry.
+- Close the exposure window of a revoked hostname (ADR 0014): the pods
+  keep presenting the old name in HELO and the old certificate Secret
+  until the next validated rollout, which a blocked server does not reach,
+  and a public ACME issuer cannot issue the Service-name fallback. Options:
+  roll the hostname alone through the validation gate while blocked, or
+  report the stale Secret in a condition.
+- `NetResolver.LookupHost` also reads `/etc/hosts` of the operator pod (the
+  Go resolver has no DNS-only lookup), so a hosts entry can verify an
+  address record that the zone does not hold. Use a DNS-only client for the
+  address records.
 - Graceful domain move (ADR 0014): changing `MailDomain.spec.serverRef`
   moves the signing and the records at once, but not the mailboxes or the
   queued mail of the old server, and the old server may briefly serve the
