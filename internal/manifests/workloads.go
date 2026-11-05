@@ -255,8 +255,8 @@ func dovecotStatefulSet(server *cnmsv1alpha1.MailServer, r *render.RenderResult)
 						// doveconf writes its binary configuration here.
 						emptyDirVolume(tmpVolumeName),
 					},
-					// Dovecot 2.4.5 cannot start without the certificate
-					// files (fatal at startup, whatever ssl says), and
+					// The pinned Dovecot 2.4 image cannot start without the
+					// certificate files (fatal at startup, whatever ssl says), and
 					// it cannot serve without TLS anyway (ssl =
 					// required). Wait for them in an init container:
 					// the pod stays in Init until cert-manager has

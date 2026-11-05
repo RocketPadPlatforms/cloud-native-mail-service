@@ -256,7 +256,7 @@ started.
 - The certificate comes from the `spec.tls` cert-manager Issuer
   (Secret default `<name>-tls`) and is mounted at `/etc/dovecot/ssl`.
   Certificate renewals trigger a **reload**, not a pod restart.
-- **Before the certificate exists:** Dovecot 2.4.5 does not start
+- **Before the certificate exists:** Dovecot 2.4 does not start
   without its certificate files (fatal at startup, whatever `ssl` is),
   and it cannot serve without TLS. The pod therefore waits in the
   `wait-tls` init container (`Init:0/1`, see `kubectl logs -c

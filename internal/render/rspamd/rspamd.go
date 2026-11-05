@@ -123,7 +123,9 @@ func renderWorkerProxy(req *render.RenderRequest) string {
 }
 
 // disableFileInputs turns off the client-named message sources of a
-// worker (verified against the 4.2.3 shipped worker configuration).
+// worker (verified against the worker configuration shipped in the
+// Rspamd image pinned in internal/images/images.go; 4.2.3 when last
+// verified).
 const disableFileInputs = `# CNMS never submits messages via File/Path/Shm inputs;
 # disabling them (the shipped default is true) keeps such
 # inputs from being accepted.

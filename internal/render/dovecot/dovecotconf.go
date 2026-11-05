@@ -43,8 +43,9 @@ const (
 // renderDovecotConf renders the self-contained dovecot.conf. The
 // file is the complete configuration (no includes), so the listener
 // set is exactly the one rendered here. Every setting and its
-// runtime effect was verified against the running 2.4.5 image
-// (doveconf -n plus live protocol probes on the container ports
+// runtime effect was verified against the running Dovecot image
+// pinned in internal/images/images.go (2.4.5 when last verified;
+// doveconf -n plus live protocol probes on the container ports
 // 31024, 31143, 31993 and 12345, and LMTP/IMAP deliveries).
 func renderDovecotConf(req *render.RenderRequest) string {
 	var b strings.Builder
