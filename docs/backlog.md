@@ -120,6 +120,10 @@ committed.
 - List the licenses of the npm tooling of the docs site (Docusaurus and its
   dependencies, not shipped) in the third-party notices; only the Go modules
   and the data-plane images are listed today.
+- Ship license texts with the images: run `go-licenses save` in the
+  Dockerfile builder stage and copy the licenses into the image (or attach
+  them to the release artifacts), so the MIT/BSD/Apache notice obligations
+  are met for the operator binary; the distroless image carries none today.
 
 ## No phase yet
 

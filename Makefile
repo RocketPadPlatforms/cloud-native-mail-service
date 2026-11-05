@@ -247,15 +247,18 @@ CRD_REF_DOCS ?= $(LOCALBIN)/crd-ref-docs
 # BSL, unknown, ...) fails the check; extend the list only after review.
 ALLOWED_LICENSES ?= Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC,MIT
 
-# The e2e build tag brings the modules of the e2e suite into the check and
-# the report (test/e2e is not part of the operator binary).
+OWN_MODULE ?= github.com/RocketPadPlatforms/cloud-native-mail-service
+
+# The e2e build tag brings the packages of the e2e suite into the check and
+# the report (test/e2e is not part of the operator binary). The repository's
+# own packages are ignored; their dependencies are still checked.
 .PHONY: license-check
 license-check: $(GO_LICENSES) ## Check dependency licenses; fails on any license outside ALLOWED_LICENSES.
-	GOFLAGS=-tags=e2e "$(GO_LICENSES)" check --include_tests ./... --allowed_licenses=$(ALLOWED_LICENSES)
+	GOFLAGS=-tags=e2e "$(GO_LICENSES)" check --include_tests --ignore $(OWN_MODULE) ./... --allowed_licenses=$(ALLOWED_LICENSES)
 
 .PHONY: license-report
 license-report: $(GO_LICENSES) ## Generate the third-party license report under docs/.
-	GOFLAGS=-tags=e2e "$(GO_LICENSES)" report --include_tests ./... --template=hack/licenses.tpl > docs/reference/third-party-licenses.md
+	GOFLAGS=-tags=e2e "$(GO_LICENSES)" report --include_tests --ignore $(OWN_MODULE) ./... --template=hack/licenses.tpl > docs/reference/third-party-licenses.md
 
 .PHONY: api-ref
 api-ref: $(CRD_REF_DOCS) ## Generate the API reference from the Go types into docs/reference/api.md.
