@@ -78,10 +78,11 @@ type gate struct {
 
 // renderDataPlane renders every component and builds the staged
 // object set.
-func renderDataPlane(server *cnmsv1alpha1.MailServer, authorized []string, users []render.StaticUser, keys []render.DomainKeys) (*manifests.DataPlane, error) {
+func renderDataPlane(server *cnmsv1alpha1.MailServer, authorized []string, hostname string, users []render.StaticUser, keys []render.DomainKeys) (*manifests.DataPlane, error) {
 	req := &render.RenderRequest{
 		Server:            server,
 		AuthorizedDomains: authorized,
+		Hostname:          hostname,
 		StaticUsers:       users,
 		DKIMKeys:          keys,
 	}
@@ -103,8 +104,8 @@ func renderDataPlane(server *cnmsv1alpha1.MailServer, authorized []string, users
 // workloads only when every validation Job for a changed
 // configuration succeeded. A rejected or running validation leaves
 // the existing workloads untouched (fail closed, ADR 0009).
-func (r *MailServerReconciler) applyDataPlane(ctx context.Context, server *cnmsv1alpha1.MailServer, authorized []string, users []render.StaticUser, keys []render.DomainKeys, certCRDs bool) (*gate, error) {
-	plane, err := renderDataPlane(server, authorized, users, keys)
+func (r *MailServerReconciler) applyDataPlane(ctx context.Context, server *cnmsv1alpha1.MailServer, authorized []string, hostname string, users []render.StaticUser, keys []render.DomainKeys, certCRDs bool) (*gate, error) {
+	plane, err := renderDataPlane(server, authorized, hostname, users, keys)
 	if err != nil {
 		return nil, err
 	}

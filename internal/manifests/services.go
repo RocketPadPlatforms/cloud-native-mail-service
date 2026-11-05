@@ -17,8 +17,6 @@ limitations under the License.
 package manifests
 
 import (
-	"slices"
-
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	policyv1 "k8s.io/api/policy/v1"
@@ -350,38 +348,28 @@ func rspamdPodDisruptionBudget(server *cnmsv1alpha1.MailServer) *policyv1.PodDis
 
 // certificate renders the cert-manager Certificate for the MailServer
 // (unstructured, so the operator works without the cert-manager
-// CRDs, principle 10). Unauthorized domains are dropped from the SANs
-// (ADR 0003); the primary domain (first sorted) is the common name.
-// With no authorized domain the certificate keeps only the in-cluster
-// server name (cert-manager needs at least one name, and the data
-// plane mounts the Secret) and has no common name.
+// CRDs, principle 10). The certificate carries one name, the authorized
+// hostname, which is also the common name (ADR 0014): the domains the
+// server serves are not on it, and neither is the in-cluster name next
+// to a hostname, because public ACME issuers reject
+// *.svc.cluster.local. While no hostname is authorized the certificate
+// keeps only the in-cluster server name (cert-manager needs at least
+// one name, and the data plane mounts the Secret) and has no common
+// name.
 func certificate(req *render.RenderRequest) *unstructured.Unstructured {
 	server := req.Server
-	domains := slices.Clone(req.AuthorizedDomains)
-	slices.Sort(domains)
 	spec := map[string]any{
 		"issuerRef": map[string]any{
 			"kind": server.Spec.TLS.IssuerRef.Kind,
 			"name": server.Spec.TLS.IssuerRef.Name,
 		},
 		"secretName": TLSSecretName(server),
-		"dnsNames":   domainsToAny(domains),
+		"dnsNames":   []any{req.ServerHostname()},
 		"usages":     []any{"server auth", "client auth"},
 	}
-	if len(domains) > 0 {
-		spec["commonName"] = domains[0]
-	} else {
-		spec["dnsNames"] = domainsToAny([]string{req.ServerHostname()})
+	if req.Hostname != "" {
+		spec["commonName"] = req.Hostname
 	}
 	return unstructuredObj("cert-manager.io/v1", "Certificate",
 		server.Name, server.Namespace, objectLabels(server, ""), spec)
-}
-
-// domainsToAny converts a []string to a []any (unstructured).
-func domainsToAny(domains []string) []any {
-	out := make([]any, 0, len(domains))
-	for _, d := range domains {
-		out = append(out, d)
-	}
-	return out
 }

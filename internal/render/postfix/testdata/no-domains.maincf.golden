@@ -1,7 +1,7 @@
 # CNMS-rendered Postfix main.cf -- do not edit.
 # Source: MailServer tenant1/mail, authorized domains: none
 
-# --- identity (first authorized domain, else the in-cluster Service) ---
+# --- identity (authorized hostname, else the in-cluster Service) ---
 myhostname = mail-postfix.tenant1.svc.cluster.local
 myorigin = $myhostname
 # --- version (ADR 0001 pin: Postfix 3.11) ---

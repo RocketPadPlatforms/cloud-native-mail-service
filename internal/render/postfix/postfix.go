@@ -92,11 +92,10 @@ func (r *Renderer) Render(req *render.RenderRequest) (*render.RenderResult, erro
 	}, nil
 }
 
-// primaryDomain is the name used for myhostname, the postmaster
-// address and the certificate (D2). Domains are sorted so rendering is
-// deterministic across replicas and reconciles; with no authorized
-// domain it is the in-cluster Service name.
-func primaryDomain(req *render.RenderRequest) string {
+// serverHostname is the name used for myhostname, which is also the HELO
+// name and, through myorigin, the identity of bounces (ADR 0014): the
+// authorized hostname, or the in-cluster Service name without one.
+func serverHostname(req *render.RenderRequest) string {
 	return req.ServerHostname()
 }
 
