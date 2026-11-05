@@ -97,8 +97,8 @@ interval:
 
 ## What the data plane does with the keys
 
-A `MailServer` lists the `MailDomain` in `spec.domains`. For every domain
-that is authorized, it takes the **active** keys (not the pending or
+The `MailDomain` names its server in `spec.serverRef`. For every domain
+that references it and is authorized, the `MailServer` takes the **active** keys (not the pending or
 retiring ones), reads their Secrets and gives them to its Rspamd pods
 as read-only files; the configuration names the key files and
 selectors, never key bytes. With both algorithms enabled every message
@@ -153,14 +153,18 @@ kubectl get maildomain example-org -o jsonpath='{range .status.records[*]}{.name
   receiver; `ReportAuthorization` names it.
 - **MTA-STS** is report-only: the status holds the policy text and its
   id, you serve it at `https://mta-sts.<domain>/.well-known/mta-sts.txt`.
-  The `mx` hosts come from the `MailServer`s of the namespace that list
-  the domain and serve it: each contributes its host name, the first
-  sorted domain it serves (the name in its certificate and HELO), so the
-  MX record of your domain has to point at that name. Several servers give
-  several hosts, sorted, without duplicates. While no server serves the
-  domain there is no policy and `MTASTSReady` is `False` with reason
-  `NoMailServer`; a server that starts or stops serving the domain
-  updates the policy and its id.
+  The `mx` host is the host name of the `MailServer` in `spec.serverRef`
+  when it serves the domain: the first sorted domain it serves (the name
+  in its certificate and HELO), so the MX record of your domain has to
+  point at that name. While the server does not exist or does not serve
+  the domain there is no policy and `MTASTSReady` is `False` with reason
+  `NoMailServer`; a server that starts or stops serving the domain, or
+  another domain that changes its first sorted domain, updates the policy
+  and its id.
+- **The server need not exist yet.** A `MailDomain` whose `serverRef`
+  names a missing `MailServer` still authorizes, generates its keys and
+  lists its records, so you can prepare DNS first. `ServerFound` is
+  `False` (reason `ServerNotFound`) and never feeds into `Ready`.
 - **Verification** asks a resolver for the records: the system resolver of
   the pod, or `--dns-resolver=host:port`. Unverified records are checked
   after one minute, backing off to ten; verified ones every hour. A
@@ -206,10 +210,48 @@ records. The `DNSEndpoint` is removed 15 minutes later (counted from the
 `Authorized` condition; a grant that returns in time keeps it) and the key
 Secrets stay.
 
+## Move a domain to another server
+
+Changing `spec.serverRef` moves the domain; it is the one way to hand it
+to another `MailServer` of the namespace
+([ADR 0014](../decisions/0014-domain-server-binding-and-hostname.md)).
+The old server is re-rendered without the domain, like a revoked one: it
+stops signing and accepting submission for it with its next validated
+rollout, and the certificate loses the name. The new server picks the
+domain up and signs with the same key Secrets, so the selectors do not
+change, and the `DNSEndpoint` stays.
+
+What does not move, and what to check:
+
+- **Mailboxes and queued mail stay on the old server.** Nothing copies
+  them. Let the queue drain first, and move the mailbox data yourself if
+  the old server has mailboxes.
+- **MX and MTA-STS.** Point the MX record at the new server before the
+  old one stops answering. Receivers cache an MTA-STS policy for a week
+  (`max_age`); an enabled policy lists the host of the new server once
+  the domain moved, so publish it and keep the old host reachable for
+  that time.
+- **Both servers may serve the domain for a short time:** the old one
+  until its new revision is rolled out, the new one from its own.
+- **The old server's other domains.** If the old server's normal
+  configuration cannot be applied at that moment (the directory or the
+  users Secret is missing, or the new revision is still validating),
+  the fail-closed render replaces it and takes its remaining domains down
+  until the blocking input is fixed
+  ([domain authorization](../concepts/domain-authorization.md#revocation)).
+  Move a domain while the old server is healthy.
+- **The last domain leaving** leaves a server with `Ready` reason
+  `NoDomains` and a fail-closed data plane.
+
+A graceful move (queue drain, mailbox copy, ordered DNS changes) is in the
+[backlog](../backlog.md).
+
 ## Deleting a MailDomain
 
 Deleting the `MailDomain` removes its DNS records at once, with no grace
-period ([ADR 0012](../decisions/0012-dns-records-and-dmarc.md)). In
+period ([ADR 0012](../decisions/0012-dns-records-and-dmarc.md)), and the
+`MailServer` it referenced stops serving it with its next validated
+rollout, like a revoked domain. In
 `externalDNS` mode the `DNSEndpoint` it owns is garbage-collected, so
 external-dns removes every DKIM record, including those of retiring
 keys: mail that is still queued and was signed then fails DKIM at the
