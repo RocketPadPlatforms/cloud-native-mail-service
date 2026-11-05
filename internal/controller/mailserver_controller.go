@@ -51,6 +51,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/recorder"
 
 	cnmsv1alpha1 "github.com/RocketPadPlatforms/cloud-native-mail-service/api/v1alpha1"
+	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/dnsrecords"
 	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/manifests"
 	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/render"
 )
@@ -189,7 +190,26 @@ type MailServerReconciler struct {
 	// (nil in tests).
 	Recorder recorder.EventRecorder
 
+	// Resolver looks the DNS records of the hostname up
+	// (--dns-resolver). Without one no record is verified.
+	Resolver dnsrecords.Resolver
+
+	// Now is the clock of the DNS lookup schedule; nil means time.Now.
+	// Tests advance a fake one.
+	Now func() time.Time
+
 	crds crdCache
+	dns  dnsCache
+}
+
+// now returns the current time in UTC, truncated to the second like the
+// times in the status.
+func (r *MailServerReconciler) now() time.Time {
+	t := time.Now()
+	if r.Now != nil {
+		t = r.Now()
+	}
+	return t.UTC().Truncate(time.Second)
 }
 
 // The controller never writes a MailServer itself, only its status. It uses no finalizer,
@@ -224,6 +244,7 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	server := &cnmsv1alpha1.MailServer{}
 	if err := r.Get(ctx, req.NamespacedName, server); err != nil {
 		if errors.IsNotFound(err) {
+			r.dns.forget(req.NamespacedName)
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
@@ -232,10 +253,20 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	prevReady := meta.FindStatusCondition(server.Status.Conditions, conditionReady)
 	conds := &server.Status.Conditions
 	generation := server.Generation
+	// dnsDelay is when the records are looked up again; the re-check
+	// of the server is never later.
+	var dnsDelay time.Duration
+	done := func() (ctrl.Result, error) {
+		res, err := r.finish(ctx, server, orig, prevReady)
+		if dnsDelay > 0 && res.RequeueAfter > 0 {
+			res.RequeueAfter = min(res.RequeueAfter, dnsDelay)
+		}
+		return res, err
+	}
 	// block records a fail-closed Ready condition and finishes.
 	block := func(reason, message string) (ctrl.Result, error) {
 		setCondition(conds, generation, conditionReady, metav1.ConditionFalse, reason, message)
-		return r.finish(ctx, server, orig, prevReady)
+		return done()
 	}
 
 	// Domain authorization (ADR 0003) is evaluated first and on every
@@ -246,6 +277,11 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 	authReason, authMessage := auth.condition()
+	// The records of the hostname are reported whatever else blocks the
+	// render; they never feed into Ready.
+	if dnsDelay, err = r.reconcileRecords(ctx, server, auth); err != nil {
+		return ctrl.Result{}, err
+	}
 
 	// Anything that keeps the normal render from being applied: an
 	// input the tenant controls is missing or invalid, or no domain is
@@ -264,11 +300,21 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	renderDomains, renderUsers := auth.domains, users
 	failClosed := false
 	if blocked != nil {
-		need, err := r.needsFailClosed(ctx, server, auth.domains, auth.hostname)
+		need, exists, err := r.needsFailClosed(ctx, server, auth.domains)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
 		if !need {
+			// The running pods stay as they are, but the Certificate
+			// must not keep names that are no longer authorized (a
+			// renamed or revoked hostname, or the domains an older
+			// version put on it). A hostname change never fails the
+			// domains closed (ADR 0014).
+			if exists {
+				if err := r.reapplyCertificate(ctx, server, auth.hostname); err != nil {
+					return block(r.reportApplyFailure(ctx, server, prevReady, err), err.Error())
+				}
+			}
 			return block(blocked.reason, blocked.message)
 		}
 		failClosed, renderDomains, renderUsers = true, nil, nil
@@ -299,16 +345,7 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	prevValidated = prevValidated.DeepCopy()
 	g, rolloutWant, err := r.applyGuarded(ctx, server, renderDomains, auth.hostname, renderUsers, keys.keys, certCRDs, failClosed)
 	if err != nil {
-		log.FromContext(ctx).Error(err, "Could not apply data plane")
-		reason := applyFailureReason(err)
-		// A transition to not-ready already emits an Event; a conflict
-		// that appears while the server was not ready would not.
-		if reason == ReasonOwnershipConflict && r.Recorder != nil && prevReady != nil &&
-			prevReady.Status == metav1.ConditionFalse &&
-			(prevReady.Reason != reason || prevReady.Message != err.Error()) {
-			r.Recorder.Eventf(server, nil, corev1.EventTypeWarning, reason, "ApplyDataPlane", "%s", eventMessage(err.Error()))
-		}
-		return block(reason, err.Error())
+		return block(r.reportApplyFailure(ctx, server, prevReady, err), err.Error())
 	}
 	r.setValidationCondition(server, g, prevValidated)
 
@@ -330,14 +367,7 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	if newRollout && !rollout.ready {
 		meta.FindStatusCondition(*conds, ConditionWorkloadsReady).LastTransitionTime = metav1.Now()
 	}
-	obsStatus, obsReason, obsMessage := r.reconcileObservability(ctx, server)
-	setCondition(conds, generation, ConditionObservability, obsStatus, obsReason, obsMessage)
-	ipStatus, ipReason, ipMessage := clientIPPreserved(server)
-	setCondition(conds, generation, ConditionClientIPPreserved, ipStatus, ipReason, ipMessage)
-	sendStatus, sendReason, sendMessage := dedicatedSendingAddress(server)
-	setCondition(conds, generation, ConditionDedicatedSendingAddress, sendStatus, sendReason, sendMessage)
-	drainStatus, drainReason, drainMessage := nodeDrainable(server)
-	setCondition(conds, generation, ConditionNodeDrainable, drainStatus, drainReason, drainMessage)
+	r.setAuxiliaryConditions(ctx, server)
 	if g.want != nil && rollout.ready {
 		// This pass applied the workloads and their rollout finished:
 		// nothing runs the superseded configuration anymore. While a
@@ -362,7 +392,7 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 	setCondition(conds, generation, conditionReady,
 		conditionStatus(reason == ReasonReady), reason, message)
-	res, err := r.finish(ctx, server, orig, prevReady)
+	res, err := done()
 	return keys.requeue(res), err
 }
 
@@ -401,6 +431,34 @@ func (r *MailServerReconciler) authorize(ctx context.Context, server *cnmsv1alph
 	return auth, domains, nil
 }
 
+// reportApplyFailure logs a failed apply and returns the reason of the
+// Ready condition. A transition to not-ready already emits an Event; a
+// conflict that appears while the server was not ready would not.
+func (r *MailServerReconciler) reportApplyFailure(ctx context.Context, server *cnmsv1alpha1.MailServer, prevReady *metav1.Condition, err error) string {
+	log.FromContext(ctx).Error(err, "Could not apply data plane")
+	reason := applyFailureReason(err)
+	if reason == ReasonOwnershipConflict && r.Recorder != nil && prevReady != nil &&
+		prevReady.Status == metav1.ConditionFalse &&
+		(prevReady.Reason != reason || prevReady.Message != err.Error()) {
+		r.Recorder.Eventf(server, nil, corev1.EventTypeWarning, reason, "ApplyDataPlane", "%s", eventMessage(err.Error()))
+	}
+	return reason
+}
+
+// setAuxiliaryConditions sets the conditions that are not about the
+// rollout: the observability integration and the warnings.
+func (r *MailServerReconciler) setAuxiliaryConditions(ctx context.Context, server *cnmsv1alpha1.MailServer) {
+	conds, generation := &server.Status.Conditions, server.Generation
+	obsStatus, obsReason, obsMessage := r.reconcileObservability(ctx, server)
+	setCondition(conds, generation, ConditionObservability, obsStatus, obsReason, obsMessage)
+	ipStatus, ipReason, ipMessage := clientIPPreserved(server)
+	setCondition(conds, generation, ConditionClientIPPreserved, ipStatus, ipReason, ipMessage)
+	sendStatus, sendReason, sendMessage := dedicatedSendingAddress(server)
+	setCondition(conds, generation, ConditionDedicatedSendingAddress, sendStatus, sendReason, sendMessage)
+	drainStatus, drainReason, drainMessage := nodeDrainable(server)
+	setCondition(conds, generation, ConditionNodeDrainable, drainStatus, drainReason, drainMessage)
+}
+
 // applyGuarded applies the render for domains and users. If the
 // workloads were not replaced (the new render is still validating or
 // was rejected) while they serve a domain that is no longer
@@ -414,7 +472,7 @@ func (r *MailServerReconciler) applyGuarded(ctx context.Context, server *cnmsv1a
 	if failClosed || g.want != nil {
 		return g, g.want, nil
 	}
-	need, err := r.needsFailClosed(ctx, server, domains, hostname)
+	need, _, err := r.needsFailClosed(ctx, server, domains)
 	if err != nil || !need {
 		return g, nil, err
 	}
@@ -478,32 +536,53 @@ func (r *MailServerReconciler) preflight(ctx context.Context, server *cnmsv1alph
 
 // needsFailClosed reports whether the running data plane must be
 // replaced by the fail-closed render: it exists and either no domain
-// is authorized (re-applying is idempotent) or it serves a name
-// outside the authorized set: an unauthorized domain, or a hostname
-// that is no longer the authorized one (a revoked or renamed one is
-// revoked like a domain, ADR 0014).
-func (r *MailServerReconciler) needsFailClosed(ctx context.Context, server *cnmsv1alpha1.MailServer, authorized []string, hostname string) (bool, error) {
-	served, exists, err := r.servedNames(ctx, server)
+// is authorized (re-applying is idempotent) or it serves a domain that
+// is no longer authorized. Only domains count: a renamed or revoked
+// hostname never fails the domains closed (ADR 0014). exists reports
+// whether a data plane was ever applied.
+func (r *MailServerReconciler) needsFailClosed(ctx context.Context, server *cnmsv1alpha1.MailServer, authorized []string) (need, exists bool, err error) {
+	served, exists, err := r.servedDomains(ctx, server)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	if len(authorized) == 0 {
-		return exists, nil
+		return exists, exists, nil
 	}
-	return slices.ContainsFunc(served, func(n string) bool { return n != hostname && !slices.Contains(authorized, n) }), nil
+	return slices.ContainsFunc(served, func(d string) bool { return !slices.Contains(authorized, d) }), exists, nil
 }
 
-// servedNames returns the names the existing workloads of the server
-// serve (its domains and its hostname), read from the served-domains
-// annotation that every workload carries since the revision was applied
-// (the annotation is set together with the pod template, so it names the
-// revision being rolled out; an older pod of a rollout in progress is
-// not tracked), and the names of the Certificate. Only the in-cluster
-// Service name is left out: it belongs to no tenant and is the name of
-// a server without an authorized hostname. exists reports whether any
-// workload or the Certificate exists, that is, whether a data plane was
-// ever applied.
-func (r *MailServerReconciler) servedNames(ctx context.Context, server *cnmsv1alpha1.MailServer) (served []string, exists bool, err error) {
+// reapplyCertificate applies the Certificate alone, with the authorized
+// hostname (empty: the in-cluster name), while the rest of the render
+// is blocked. cert-manager then stops renewing names that are no
+// longer authorized. It does nothing without the cert-manager CRDs. For
+// a refused ClusterIssuer it deletes the Certificate the server owns
+// instead: one made while the issuer was allowed would keep renewing
+// names the namespace no longer owns.
+func (r *MailServerReconciler) reapplyCertificate(ctx context.Context, server *cnmsv1alpha1.MailServer, hostname string) error {
+	if r.clusterIssuerRefused(server) {
+		return r.deleteCertificate(ctx, server)
+	}
+	installed, err := r.crdsAvailable(ctx, crdCertificate)
+	if err != nil || !installed {
+		return err
+	}
+	cert := manifests.Certificate(&render.RenderRequest{Server: server, Hostname: hostname})
+	if err := applyObject(ctx, r.Client, r.APIReader, r.Scheme, server, cert); err != nil {
+		return fmt.Errorf("apply %T %s: %w", cert, cert.GetName(), err)
+	}
+	return nil
+}
+
+// servedDomains returns the domains the existing workloads of the
+// server serve, read from the served-domains annotation that every
+// workload carries since the revision was applied (it is set together
+// with the pod template, so it names the revision being rolled out; an
+// older pod of a rollout in progress is not tracked). exists reports
+// whether any workload or the Certificate exists, that is, whether a
+// data plane was ever applied. The Certificate lists no domains (ADR
+// 0014; one stored by an older version is replaced by the next
+// reconcile), so only its presence counts.
+func (r *MailServerReconciler) servedDomains(ctx context.Context, server *cnmsv1alpha1.MailServer) (served []string, exists bool, err error) {
 	seen := map[string]bool{}
 	for _, c := range render.AllComponents() {
 		key := types.NamespacedName{Name: render.ServiceName(server.Name, c), Namespace: server.Namespace}
@@ -524,22 +603,13 @@ func (r *MailServerReconciler) servedNames(ctx context.Context, server *cnmsv1al
 			}
 		}
 	}
-	// The Certificate is part of the data plane too: it keeps being
-	// renewed for every name it lists, so a revoked domain or hostname
-	// on it counts as served even before any workload exists.
+	// The Certificate is part of the data plane too, even before any
+	// workload exists.
 	cert, err := r.ownedCertificate(ctx, server)
 	if err != nil {
 		return nil, false, err
 	}
-	if cert != nil {
-		exists = true
-		names, _, _ := unstructured.NestedStringSlice(cert.Object, "spec", "dnsNames")
-		for _, n := range names {
-			seen[n] = true
-		}
-	}
-	delete(seen, render.ServiceFQDN(server.Name, server.Namespace, render.ComponentPostfix))
-	return slices.Sorted(maps.Keys(seen)), exists, nil
+	return slices.Sorted(maps.Keys(seen)), exists || cert != nil, nil
 }
 
 // clusterIssuerRefused reports whether the server references a shared
@@ -972,6 +1042,16 @@ func (r *MailServerReconciler) mapDomainServers(ctx context.Context, obj client.
 	}
 	for i := range peers.Items {
 		add(&peers.Items[i])
+	}
+	// A MailDomain of the hostname itself carries its SPF record (ADR
+	// 0014): the servers of the namespace with that hostname report
+	// records accordingly.
+	hosts := &cnmsv1alpha1.MailServerList{}
+	if err := r.List(ctx, hosts, client.InNamespace(d.Namespace), client.MatchingFields{mailServerHostnameIndex: d.Spec.Domain}); err != nil {
+		log.FromContext(ctx).Error(err, "Could not list MailServers", "hostname", d.Spec.Domain)
+	}
+	for i := range hosts.Items {
+		servers[client.ObjectKeyFromObject(&hosts.Items[i])] = true
 	}
 	reqs := make([]reconcile.Request, 0, len(servers))
 	for _, key := range slices.SortedFunc(maps.Keys(servers), func(a, b types.NamespacedName) int {

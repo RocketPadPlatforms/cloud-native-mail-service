@@ -86,6 +86,28 @@ func certificateDNSNamesG(ns string) []string {
 	return names
 }
 
+func expectCertificateGone(ns string) {
+	cert := &unstructured.Unstructured{}
+	cert.SetGroupVersionKind(certificateGVK)
+	err := k8sClient.Get(ctx, types.NamespacedName{Name: testServerName, Namespace: ns}, cert)
+	Expect(apierrors.IsNotFound(err)).To(BeTrue())
+}
+
+// failClosedJobsG names the validation Jobs of the fail-closed render
+// with the given authorized hostname (empty: the in-cluster name), so a
+// spec can finish those and leave the others.
+func failClosedJobsG(ns, hostname string) map[string]bool {
+	server := &cnmsv1alpha1.MailServer{}
+	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testServerName, Namespace: ns}, server)).To(Succeed())
+	plane, err := renderDataPlane(server, nil, hostname, nil, nil)
+	Expect(err).ToNot(HaveOccurred())
+	names := map[string]bool{}
+	for _, v := range plane.Validations {
+		names[v.Job.Name] = true
+	}
+	return names
+}
+
 // postfixMainCFG returns the main.cf the Postfix StatefulSet of the
 // test server currently references.
 func postfixMainCFG(ns string) string { return postfixMainCFGOf(ns, testServerName) }
@@ -302,8 +324,10 @@ var _ = Describe("MailServer domain revocation", func() {
 	It("revokes a domain and drops the Certificate although the ClusterIssuer is refused", func() {
 		mutateServerG(ns, func(s *cnmsv1alpha1.MailServer) { s.Spec.TLS.IssuerRef.Kind = clusterIssuerKind })
 		settle()
-		// Refused, but nothing is revoked: the running data plane stays.
-		Expect(certificateDNSNamesG(ns)).To(ConsistOf(testHostnameG(ns)))
+		// Refused, but nothing is revoked: the running pods stay, and
+		// the Certificate (made while the issuer was allowed) goes.
+		expectCertificateGone(ns)
+		Expect(postfixMainCFG(ns)).To(ContainSubstring(domainB))
 
 		revoke(domainB)
 		settle()
@@ -311,10 +335,42 @@ var _ = Describe("MailServer domain revocation", func() {
 		expectFailClosed()
 		_, reason, _ := serverConditionG(ns, testServerName, conditionReady)
 		Expect(reason).To(Equal(ReasonClusterIssuerNotAllowed))
+		expectCertificateGone(ns)
+	})
+
+	It("drops the Certificate of a revoked hostname although the ClusterIssuer is refused", func() {
+		mutateServerG(ns, func(s *cnmsv1alpha1.MailServer) { s.Spec.TLS.IssuerRef.Kind = clusterIssuerKind })
+		Expect(k8sClient.Delete(ctx, &cnmsv1alpha1.MailDomainGrant{
+			ObjectMeta: metav1.ObjectMeta{Name: testHostnameG(ns)},
+		})).To(Succeed())
+		settle()
+
+		expectCertificateGone(ns)
+		_, reason, _ := serverConditionG(ns, testServerName, conditionReady)
+		Expect(reason).To(Equal(ReasonClusterIssuerNotAllowed))
+		// The domains are still served, and no fail-closed render was applied.
+		cf := postfixMainCFG(ns)
+		Expect(cf).To(ContainSubstring(domainA))
+		Expect(cf).To(ContainSubstring(domainB))
+		closed := failClosedJobsG(ns, "")
+		// Only the Postfix Job differs from the fail-closed one (the
+		// Dovecot configuration lists no domains).
+		for _, job := range jobsG(ns, testServerName, "postfix") {
+			Expect(closed).ToNot(HaveKey(job.Name))
+		}
+	})
+
+	It("keeps a foreign Certificate when the ClusterIssuer is refused", func() {
 		cert := &unstructured.Unstructured{}
 		cert.SetGroupVersionKind(certificateGVK)
-		err := k8sClient.Get(ctx, types.NamespacedName{Name: testServerName, Namespace: ns}, cert)
-		Expect(apierrors.IsNotFound(err)).To(BeTrue())
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testServerName, Namespace: ns}, cert)).To(Succeed())
+		cert.SetOwnerReferences(nil)
+		Expect(k8sClient.Update(ctx, cert)).To(Succeed())
+
+		mutateServerG(ns, func(s *cnmsv1alpha1.MailServer) { s.Spec.TLS.IssuerRef.Kind = clusterIssuerKind })
+		settle()
+
+		Expect(certificateDNSNamesG(ns)).To(ConsistOf(testHostnameG(ns)))
 	})
 
 	It("revokes a domain although the users Secret is broken", func() {
@@ -337,20 +393,6 @@ var _ = Describe("MailServer domain revocation", func() {
 		Expect(reason).To(Equal(ReasonStaticUsersInvalid))
 	})
 
-	// failClosedJobsG names the validation Jobs of the fail-closed
-	// render, so a spec can finish those and leave the others.
-	failClosedJobsG := func() map[string]bool {
-		server := &cnmsv1alpha1.MailServer{}
-		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testServerName, Namespace: ns}, server)).To(Succeed())
-		plane, err := renderDataPlane(server, nil, server.Spec.Hostname, nil, nil)
-		Expect(err).ToNot(HaveOccurred())
-		names := map[string]bool{}
-		for _, v := range plane.Validations {
-			names[v.Job.Name] = true
-		}
-		return names
-	}
-
 	for _, rejected := range []bool{false, true} {
 		It(fmt.Sprintf("revokes a domain while another change is validating (rejected=%t)", rejected), func() {
 			mutateServerG(ns, func(s *cnmsv1alpha1.MailServer) {
@@ -361,7 +403,7 @@ var _ = Describe("MailServer domain revocation", func() {
 			reconcileServerG(r, ns, testServerName)
 			// The new configuration stays unfinished (or fails); only
 			// the fail-closed one passes.
-			closed := failClosedJobsG()
+			closed := failClosedJobsG(ns, testHostnameG(ns))
 			jobs := jobsG(ns, testServerName, "")
 			for i := range jobs {
 				switch {

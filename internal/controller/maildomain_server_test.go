@@ -168,11 +168,11 @@ var _ = Describe("MailDomain records from the MailServer", func() {
 
 		It("adds the sources of the server to the ones of the domain", func() {
 			createServerG(ns, testServerName, func(s *cnmsv1alpha1.MailServer) {
-				s.Spec.SPF = &cnmsv1alpha1.ServerSPF{IP4: []string{sendIP4, "198.51.100.7"}, IP6: []string{"2001:db8::9"}}
+				s.Spec.SPF = &cnmsv1alpha1.ServerSPF{IP4: []string{sendIP4, sendIP4c}, IP6: []string{"2001:db8::9"}}
 			})
 			createMailDomainG(ns, domain, func(d *cnmsv1alpha1.MailDomain) {
 				d.Spec.SPF = &cnmsv1alpha1.SPF{
-					IP4: []string{"198.51.100.7", "192.0.2.5"}, Include: []string{"_spf.example.net"}, Qualifier: new("fail"),
+					IP4: []string{sendIP4c, "192.0.2.5"}, Include: []string{"_spf.example.net"}, Qualifier: new("fail"),
 				}
 			})
 			env.settle(ns, name)
@@ -225,6 +225,7 @@ var _ = Describe("MailDomain records from the MailServer", func() {
 const (
 	sendIP4  = "203.0.113.9"
 	sendIP4b = "203.0.113.10"
+	sendIP4c = "198.51.100.7"
 	reqAX    = "a/x"
 	reqBY    = "b/y"
 )

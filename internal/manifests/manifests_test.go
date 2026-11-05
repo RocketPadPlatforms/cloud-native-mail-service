@@ -785,8 +785,9 @@ func TestBuildWithoutAuthorizedHostname(t *testing.T) {
 	}
 }
 
-// Every workload records the domains and the hostname it serves,
-// outside the pod template so the annotation never rolls pods.
+// Every workload records the domains it serves, outside the pod
+// template so the annotation never rolls pods. The hostname is not a
+// domain and is not recorded.
 func TestBuildRecordsServedDomains(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -794,8 +795,8 @@ func TestBuildRecordsServedDomains(t *testing.T) {
 		hostname string
 		want     string
 	}{
-		{"domains and hostname", []string{domainB, domainA}, testHostname, domainA + "," + domainB + "," + testHostname},
-		{"hostname only", nil, testHostname, testHostname},
+		{"domains and hostname", []string{domainB, domainA}, testHostname, domainA + "," + domainB},
+		{"hostname only", nil, testHostname, ""},
 		{"domains only", []string{domainB, domainA}, "", domainA + "," + domainB},
 		{"neither", nil, "", ""},
 		{"hostname that is a domain", []string{domainA}, domainA, domainA},

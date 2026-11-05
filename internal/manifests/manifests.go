@@ -58,10 +58,9 @@ const (
 
 	// ServedDomainsAnnotation is set on the workload objects (not the
 	// pod templates, so it never rolls pods) and lists, comma
-	// separated and sorted, the domains and the hostname the revision
-	// applied with it serves (ServedNames). The controller compares it
-	// with the authorized set to find out whether a revoked name is
-	// still being served.
+	// separated and sorted, the domains the revision applied with it
+	// serves. The controller compares it with the authorized set to
+	// find out whether a revoked domain is still being served.
 	ServedDomainsAnnotation = "cnms.rpp.gmbh/served-domains"
 
 	// ManagedByLabel marks CNMS-managed resources. It is a label for
@@ -240,25 +239,22 @@ func Build(req *render.RenderRequest, renders map[render.Component]*render.Rende
 		rspamdDeployment(server, renders[render.ComponentRspamd], dkimVolume(req)),
 		valkeyDeployment(server, renders[render.ComponentValkey]),
 	}
-	served := strings.Join(ServedNames(req), ",")
+	domains := slices.Clone(req.AuthorizedDomains)
+	slices.Sort(domains)
+	// The hostname is not recorded: a renamed or revoked hostname never
+	// makes the data plane fail closed (ADR 0014).
+	served := map[string]string{ServedDomainsAnnotation: strings.Join(slices.Compact(domains), ",")}
 	for _, w := range dp.Workloads {
-		w.SetAnnotations(map[string]string{ServedDomainsAnnotation: served})
+		w.SetAnnotations(maps.Clone(served))
 	}
 	return dp, nil
 }
 
-// ServedNames returns the names a revision serves, sorted: its
-// authorized domains and its authorized hostname (the name it presents
-// in HELO and on the certificate, ADR 0014). A server without an
-// authorized hostname presents the in-cluster Service name, which is no
-// tenant name and is not listed.
-func ServedNames(req *render.RenderRequest) []string {
-	names := slices.Clone(req.AuthorizedDomains)
-	if req.Hostname != "" {
-		names = append(names, req.Hostname)
-	}
-	slices.Sort(names)
-	return slices.Compact(names)
+// Certificate renders the Certificate of Build alone. It needs only the
+// server and the hostname of the request, so the controller can
+// re-apply it while the rest of the render is blocked.
+func Certificate(req *render.RenderRequest) *unstructured.Unstructured {
+	return certificate(req)
 }
 
 // ServiceMonitors returns the monitoring.coreos.com/v1

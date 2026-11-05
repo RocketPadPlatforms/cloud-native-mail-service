@@ -103,6 +103,7 @@ func main() {
 			"would let any tenant obtain certificates from it.")
 	flag.StringVar(&dnsResolver, "dns-resolver", "",
 		"DNS resolver (host:port) that verifies the DNS records of MailDomains "+
+			"and of MailServer hostnames "+
 			"(ADR 0012). Empty uses the system resolver of the pod.")
 	// Production defaults: structured JSON on stdout. --zap-devel
 	// switches to the console encoder for local runs.
@@ -227,7 +228,7 @@ func main() {
 	}
 
 	if err := controller.IndexFields(mgr); err != nil {
-		setupLog.Error(err, "Failed to index MailDomains")
+		setupLog.Error(err, "Failed to index MailDomains and MailServers")
 		os.Exit(1)
 	}
 	if err := (&controller.MailServerReconciler{
@@ -238,6 +239,7 @@ func main() {
 		DomainAuthorization:        authMode,
 		EnableInsecureTestFeatures: enableInsecureTestFeatures,
 		AllowClusterIssuers:        allowClusterIssuers,
+		Resolver:                   resolver,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "mailserver")
 		os.Exit(1)

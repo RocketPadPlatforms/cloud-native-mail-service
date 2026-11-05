@@ -260,29 +260,10 @@ func deref(s *string) string {
 // the records: RecordsVerified, SPFReady, MTASTSReady and
 // ReportAuthorization.
 func (r *MailDomainReconciler) reportRecords(md *cnmsv1alpha1.MailDomain, composed dnsrecords.Composed, st *dnsState, view serverView) {
-	prev := md.Status.Records
-	records := make([]cnmsv1alpha1.DNSRecord, 0, len(composed.Records))
-	var unverified []string
-	unknown := 0
-	for _, rec := range composed.Records {
-		out := cnmsv1alpha1.DNSRecord{Name: rec.Name, Type: rec.Type, Value: rec.Value()}
-		res := st.results[recordKey(rec)]
-		out.Verified = res.verified
-		out.LastChecked = lastChecked(prev, out, res)
-		records = append(records, out)
-		switch {
-		case res.verified == nil:
-			unknown++
-		case !*res.verified:
-			reason := res.reason
-			if reason == "" {
-				reason = "not verified"
-			}
-			unverified = append(unverified, rec.Name+": "+reason)
-		}
-	}
+	records, unverified, unknown := statusRecords(composed.Records, md.Status.Records, st)
 	md.Status.Records = records
-	r.setRecordsVerified(md, len(records), unverified, unknown, st)
+	status, reason, message := recordsVerifiedCondition(len(records), unverified, unknown, st)
+	r.setCondition(md, ConditionRecordsVerified, status, reason, message)
 
 	if composed.NoSPFSources {
 		r.setCondition(md, ConditionSPFReady, metav1.ConditionFalse, ReasonNoSendingSources,
@@ -345,28 +326,54 @@ func lastChecked(prev []cnmsv1alpha1.DNSRecord, rec cnmsv1alpha1.DNSRecord, res 
 	return oldTime
 }
 
-// setRecordsVerified sets RecordsVerified: True when every record is
-// verified, False when a lookup found one missing or different, and
-// Unknown while lookups have not answered yet or keep failing, never
-// False (ADR 0012).
-func (r *MailDomainReconciler) setRecordsVerified(md *cnmsv1alpha1.MailDomain, total int, unverified []string, unknown int, st *dnsState) {
+// statusRecords converts the composed records to their status form with
+// the verification state of the last lookups, and counts the records
+// that are not verified (with the reason) and those without an answer
+// yet. prev is the list of the status before: it keeps the time of the
+// last check while nothing changes.
+func statusRecords(recs []dnsrecords.Record, prev []cnmsv1alpha1.DNSRecord, st *dnsState) (records []cnmsv1alpha1.DNSRecord, unverified []string, unknown int) {
+	records = make([]cnmsv1alpha1.DNSRecord, 0, len(recs))
+	for _, rec := range recs {
+		out := cnmsv1alpha1.DNSRecord{Name: rec.Name, Type: rec.Type, Value: rec.Value()}
+		res := st.results[recordKey(rec)]
+		out.Verified = res.verified
+		out.LastChecked = lastChecked(prev, out, res)
+		records = append(records, out)
+		switch {
+		case res.verified == nil:
+			unknown++
+		case !*res.verified:
+			reason := res.reason
+			if reason == "" {
+				reason = "not verified"
+			}
+			unverified = append(unverified, rec.Name+": "+reason)
+		}
+	}
+	return records, unverified, unknown
+}
+
+// recordsVerifiedCondition returns the RecordsVerified condition: True
+// when every record is verified, False when a lookup found one missing
+// or different, and Unknown while lookups have not answered yet or keep
+// failing, never False (ADR 0012).
+func recordsVerifiedCondition(total int, unverified []string, unknown int, st *dnsState) (metav1.ConditionStatus, string, string) {
 	switch {
 	case total == 0:
-		r.setCondition(md, ConditionRecordsVerified, metav1.ConditionTrue, ReasonNoRecords, "no DNS record is required")
+		return metav1.ConditionTrue, ReasonNoRecords, "no DNS record is required"
 	case st.failures >= dnsrecords.FailuresBeforeUnknown:
-		r.setCondition(md, ConditionRecordsVerified, metav1.ConditionUnknown, ReasonLookupFailing,
-			"DNS lookups keep failing, so the records cannot be checked; check --dns-resolver and the resolver")
+		return metav1.ConditionUnknown, ReasonLookupFailing,
+			"DNS lookups keep failing, so the records cannot be checked; check --dns-resolver and the resolver"
 	case len(unverified) > 0:
 		msg := fmt.Sprintf("%d of %d records are not verified: %s", len(unverified), total, strings.Join(firstN(unverified, maxReportedRecords), "; "))
 		if len(unverified) > maxReportedRecords {
 			msg += fmt.Sprintf("; and %d more", len(unverified)-maxReportedRecords)
 		}
-		r.setCondition(md, ConditionRecordsVerified, metav1.ConditionFalse, ReasonRecordsNotVerified, msg)
+		return metav1.ConditionFalse, ReasonRecordsNotVerified, msg
 	case unknown > 0:
-		r.setCondition(md, ConditionRecordsVerified, metav1.ConditionUnknown, ReasonChecking, "waiting for the answer of the DNS lookups")
-	default:
-		r.setCondition(md, ConditionRecordsVerified, metav1.ConditionTrue, ReasonAllVerified, "every required record is verified")
+		return metav1.ConditionUnknown, ReasonChecking, "waiting for the answer of the DNS lookups"
 	}
+	return metav1.ConditionTrue, ReasonAllVerified, "every required record is verified"
 }
 
 func firstN(s []string, n int) []string {
