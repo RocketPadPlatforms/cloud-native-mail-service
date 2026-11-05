@@ -15,7 +15,9 @@ namespace (name-only references, no cross-namespace RBAC). The fourth,
 The full API reference is [generated from the Go types](../reference/api.md)
 (`make api-ref`). Design decisions are recorded in
 [ADR 0002](../decisions/0002-v1alpha1-api-design.md) and
-[ADR 0003](../decisions/0003-security-defaults-and-domain-ownership.md).
+[ADR 0003](../decisions/0003-security-defaults-and-domain-ownership.md);
+the domain-to-server binding is
+[ADR 0014](../decisions/0014-domain-server-binding-and-hostname.md).
 How domain authorization works is explained in
 [domain authorization](domain-authorization.md).
 
@@ -64,9 +66,12 @@ Key spec fields:
 - `outbound` — exactly one of `direct` (own sending addresses, optionally via
   a `MailIPPoolClaim`) or `relay` (a smart host; the `MailRelay` resource
   arrives with the relay phase).
-- `domains` — the `MailDomain`s this server handles: they are accepted
-  for delivery and submission once authorized, and their outbound mail
-  is signed with the DKIM keys of the `MailDomain`.
+- The domains it handles are not listed here: every `MailDomain` of the
+  namespace that names the server in its `spec.serverRef` is accepted for
+  delivery and submission once authorized, and its outbound mail is signed
+  with the DKIM keys of the `MailDomain`. `status.domains` lists them, with
+  `served` and the `reason`; a server without any `MailDomain` is not ready
+  (`NoDomains`).
 - `tls` — the cert-manager issuer the server certificate comes from.
 - `submission`, `mailboxes` — enable submission (on by default) and Dovecot
   mail storage (off by default). With submission on and mailboxes off,
@@ -84,6 +89,12 @@ Key spec fields:
 Owns the public DNS records of one domain: DKIM (selector + key rotation with
 overlap), SPF, DMARC (DMARC1 / RFC 9989-9991 semantics for the records CNMS
 publishes), MTA-STS, and TLS-RPT.
+
+- `serverRef` — the `MailServer` of the same namespace that serves the
+  domain (required). It may point at a server that does not exist yet
+  (`ServerFound=False`; keys and records are still generated). It is
+  mutable: changing it moves the domain to another server
+  ([how to move a domain](../how-to/dkim-keys-and-dns-records.mdx#move-a-domain-to-another-server)).
 
 - `dnsMode` is `manual` (default) or `externalDNS`. In manual mode the status
   lists every required record and whether a lookup verified it; the admin
@@ -128,16 +139,16 @@ shows how to apply it.
 ```
 MailDomainGrant ──authorizes──> namespace + domain   (admin-owned, cluster-scoped)
 MailServer ──references──> MailDirectory   (auth + recipient validation)
-MailServer ──references──> MailDomain      (DKIM signing, submission domains)
+MailDomain ──serverRef──> MailServer       (DKIM signing, submission domains)
 MailDomain ─── publishes ──> DNS records   (DKIM/SPF/DMARC/MTA-STS/TLS-RPT)
 ```
 
-`MailServer` references its domains; `MailDomain` is independent and can in
-principle be used by several `MailServer`s. A `MailDomain` is only active for
+A `MailDomain` references the one `MailServer` that serves it; a server
+serves every domain that references it. A `MailDomain` is only active for
 its domain when a `MailDomainGrant` names its namespace (or the operator
 runs unrestricted); without one, the domain is inactive and fail closed.
-The `MailServer` controller validates those references and evaluates
-the grants at reconcile time; the API server enforces only the per-object
+The `MailServer` controller evaluates the grants for the domains attached
+to it at reconcile time; the API server enforces only the per-object
 rules (schema, defaults, CEL).
 
 ## What is not here yet

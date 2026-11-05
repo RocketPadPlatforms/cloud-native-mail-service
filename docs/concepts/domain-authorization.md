@@ -49,7 +49,7 @@ spec:
 
 The operator is the authoritative check, and it is fail closed: it
 re-evaluates grants on every reconcile. A `MailServer` only serves a
-domain of its `spec.domains` when:
+`MailDomain` that references it in `spec.serverRef` (same namespace) when:
 
 - a grant covers the domain and names the `MailDomain`'s own namespace
   (`DomainsAuthorized=True, reason=Authorized`), or
@@ -59,7 +59,7 @@ domain of its `spec.domains` when:
 
 Otherwise the domain is inactive: it is left out of the Postfix
 configuration and of the certificate's names. The condition
-explains why (`NotGranted`, `DuplicateDomain`, `DomainNotFound`; see
+explains why (`NotGranted`, `DuplicateDomain`, `PublicSuffix`; see
 the [status conditions](../reference/status-conditions.md)), and
 `kubectl get maildomaingrants` shows who owns a domain. The `MailDomain`
 shows the same verdict the `MailServer` controller reaches in its own
@@ -90,7 +90,10 @@ gets a `DerivedNameConflict`; the more specific name wins.
 
 When a grant stops covering a domain, the `MailServer` stops accepting
 mail and submission for it with its next validated rollout, as described
-below. The `MailDomain` controller stops listing records at once and
+below. The same path applies when a domain leaves the server for another
+reason: its `MailDomain` is deleted, or `spec.serverRef` points at another
+server ([ADR 0014](../decisions/0014-domain-server-binding-and-hostname.md);
+see [moving a domain](../how-to/dkim-keys-and-dns-records.mdx#move-a-domain-to-another-server)). The `MailDomain` controller stops listing records at once and
 removes the `DNSEndpoint` after a grace period of 15 minutes, counted
 from the `Authorized` transition (so a brief GitOps prune-and-recreate
 does not delete DKIM records worldwide, and a restore, which has no
@@ -108,10 +111,11 @@ For a `MailServer` this means:
   validation or rollout state first; afterwards it stays `False` with
   `PartiallyAuthorized` until the whole spec is realised, even though the
   authorized domains keep working.
-- If no domain is authorized any longer, a running server is re-rendered
-  fail closed: Postfix rejects all recipients, submission is off, and the
-  certificate keeps only the in-cluster Service name. A server that never
-  had a data plane gets none.
+- If no domain is authorized any longer, or no `MailDomain` references
+  the server any more (`Ready` reason `NoDomains`), a running server is
+  re-rendered fail closed: Postfix rejects all recipients, submission is
+  off, and the certificate keeps only the in-cluster Service name. A
+  server that never had a data plane gets none.
 - The new configuration goes through the usual [validation
   gate](../decisions/0009-config-validation-gate.md): until its Job
   passes, the previous configuration keeps running. A revoked domain is
