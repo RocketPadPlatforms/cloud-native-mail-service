@@ -17,7 +17,8 @@ limitations under the License.
 // Package valkey renders the Valkey configuration (valkey.conf) of
 // a MailServer. Rendered values target Valkey 9.x (ADR 0001); the
 // image layout facts (entrypoint behaviour, run user, config path)
-// are verified against valkey/valkey:9.1.2 (ADR 0004).
+// are verified against the Valkey image pinned in
+// internal/images/images.go (9.1.3 when last verified; ADR 0004).
 package valkey
 
 import (
@@ -45,8 +46,10 @@ func (r *Renderer) Render(req *render.RenderRequest) (*render.RenderResult, erro
 	if req == nil || req.Server == nil {
 		return nil, errors.New("render request without MailServer")
 	}
-	// 9.1.2 has no config-check flag (`--check-config` is parsed
-	// as a config directive), so the gate briefly starts the
+	// The pinned image (9.1.3 when last verified) has no
+	// config-check flag (`--check-config` is parsed as a config
+	// directive; `valkey-server --help` lists only `--test-memory`
+	// and `--check-system`), so the gate briefly starts the
 	// server with the rendered configuration, pings it and shuts
 	// it down. Verified against the running image: exit 0 for a
 	// valid, 1 for an invalid configuration. D4: a bad config

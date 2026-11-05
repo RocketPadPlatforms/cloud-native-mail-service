@@ -26,15 +26,16 @@ import (
 // valkeyConfPath is where the rendered configuration lives in the
 // container. The image entrypoint starts the server with a `.conf`
 // argument, so the container args are just this path (verified
-// against the 9.1.2 image: the entrypoint chowns the data directory
-// to the valkey user and drops privileges via setpriv).
+// against the pinned image, 9.1.3 when last verified: when started as
+// root the entrypoint chowns the data directory to the valkey user
+// and drops privileges via setpriv).
 const valkeyConfPath = "/etc/valkey/valkey.conf"
 
 // renderValkeyConf renders valkey.conf. Verified against the running
-// valkey/valkey:9.1.2 image: `bind * -::*` is accepted and listens
-// on IPv4 and IPv6; with protected-mode off the server is reachable
-// from another container on the network without auth; `logfile ""`
-// logs to stdout; RDB snapshots (SAVE) land in `dir`.
+// pinned image (9.1.3 when last verified): `bind * -::*` is accepted
+// and listens on IPv4 and IPv6; with protected-mode off the server
+// is reachable from another container on the network without auth;
+// `logfile ""` logs to stdout; RDB snapshots (SAVE) land in `dir`.
 func renderValkeyConf(req *render.RenderRequest) string {
 	var b strings.Builder
 	b.WriteString("# CNMS-rendered Valkey valkey.conf -- do not edit.\n")
