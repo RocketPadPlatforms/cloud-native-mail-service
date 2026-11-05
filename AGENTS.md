@@ -111,8 +111,12 @@ Namespaced (tenant):
 - `MailServer`: engines + replicas + storage, inbound service, outbound mode
   (`direct` with `ipPoolClaimRef`, or `relay` with `relayRef`), `directoryRef`,
   submission settings, mailbox settings (Dovecot), TLS (cert-manager
-  issuerRef), availability (PDB, spread), observability toggles.
-- `MailDomain`: domain, DKIM selectors + rotation (overlapping selectors), SPF
+  issuerRef), availability (PDB, spread), observability toggles. It serves the
+  `MailDomain`s that reference it (ADR 0014); the server hostname
+  (`hostname`) and the server SPF sources (`spf`) are decided in ADR 0014 and
+  arrive in a follow-up change.
+- `MailDomain`: domain, `serverRef` (the `MailServer` that serves it, same
+  namespace, mutable), DKIM selectors + rotation (overlapping selectors), SPF
   (generated), DMARC (RFC 9989-9991 semantics, not RFC 7489), MTA-STS, TLS-RPT,
   DNS mode (`externalDNS` via DNSEndpoint | `manual`: report required records
   in status). Status lists every required DNS record and whether lookup verifies.
