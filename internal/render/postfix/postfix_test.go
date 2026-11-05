@@ -36,6 +36,9 @@ const (
 	testName      = "mail"
 	domainA       = "a.example"
 	domainB       = "b.example"
+	// testHostname is the authorized hostname of the test server; it is
+	// no domain of the server, so a mix-up of the two shows.
+	testHostname = "mx.a.example"
 )
 
 // testRequest builds a RenderRequest for the test MailServer.
@@ -51,6 +54,7 @@ func testRequest(t *testing.T, mutate func(*v1alpha1.MailServer)) *render.Render
 	return &render.RenderRequest{
 		Server:            server,
 		AuthorizedDomains: []string{domainB, domainA},
+		Hostname:          testHostname,
 		StaticUsers: []render.StaticUser{
 			{Username: "testuser", PasswordHash: "{SHA512-CRYPT}x", Mailbox: "testuser@" + domainA},
 		},
@@ -225,14 +229,44 @@ func TestRenderResultCommands(t *testing.T) {
 	}
 }
 
+// The name the server presents (myhostname, which is also the HELO name
+// and the origin of bounces) is the authorized hostname, whatever
+// domains the server serves; without an authorized hostname it is the
+// in-cluster Service name and the domains stay (ADR 0014).
+func TestRenderPresentsTheHostname(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		domains  []string
+		hostname string
+		want     string
+	}{
+		{"hostname and domains", []string{domainB, domainA}, testHostname, testHostname},
+		{"a domain that sorts first does not change it", []string{"0.example", domainA}, testHostname, testHostname},
+		{"hostname without domains", nil, testHostname, testHostname},
+		{"domains without an authorized hostname", []string{domainB, domainA}, "", "mail-postfix.tenant1.svc.cluster.local"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := testRequest(t, nil)
+			req.AuthorizedDomains, req.Hostname = tc.domains, tc.hostname
+			mainCF := renderMainCF(req)
+			if !strings.Contains(mainCF, "\nmyhostname = "+tc.want+"\n") || !strings.Contains(mainCF, "\nmyorigin = $myhostname\n") {
+				t.Errorf("main.cf does not present %s:\n%s", tc.want, mainCF)
+			}
+			if len(tc.domains) > 0 && !strings.Contains(mainCF, domainA) {
+				t.Error("the domains are gone from main.cf")
+			}
+		})
+	}
+}
+
 // With every domain revoked the configuration is fail closed: no
 // virtual domains, no SASL, no submission listener, and the hostname
-// is the in-cluster Service name.
+// is the in-cluster Service name while none is authorized.
 func TestRenderNoAuthorizedDomains(t *testing.T) {
 	req := testRequest(t, func(s *v1alpha1.MailServer) {
 		s.Spec.Mailboxes = &v1alpha1.Mailboxes{Enabled: new(true)}
 	})
-	req.AuthorizedDomains = nil
+	req.AuthorizedDomains, req.Hostname = nil, ""
 	res, err := New().Render(req)
 	if err != nil {
 		t.Fatalf("Render() = %v, want success", err)

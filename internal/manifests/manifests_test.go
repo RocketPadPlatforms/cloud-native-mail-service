@@ -47,6 +47,9 @@ const (
 	testName      = "mail"
 	domainA       = "a.example"
 	domainB       = "b.example"
+	// testHostname is the authorized hostname of the test server: not a
+	// domain it serves, so a mix-up of the two shows.
+	testHostname = "mx.a.example"
 )
 
 func testServer(t *testing.T, mutate func(*cnmsv1alpha1.MailServer)) *cnmsv1alpha1.MailServer {
@@ -82,10 +85,18 @@ func buildPlane(t *testing.T, mutate func(*cnmsv1alpha1.MailServer), users []ren
 // buildPlaneFor is buildPlane with an explicit authorized domain set.
 func buildPlaneFor(t *testing.T, mutate func(*cnmsv1alpha1.MailServer), users []render.StaticUser, domains []string) *DataPlane {
 	t.Helper()
+	return buildPlaneHost(t, mutate, users, domains, testHostname)
+}
+
+// buildPlaneHost is buildPlaneFor with an explicit authorized hostname
+// ("" while it is not authorized).
+func buildPlaneHost(t *testing.T, mutate func(*cnmsv1alpha1.MailServer), users []render.StaticUser, domains []string, hostname string) *DataPlane {
+	t.Helper()
 	server := testServer(t, mutate)
 	req := &render.RenderRequest{
 		Server:            server,
 		AuthorizedDomains: domains,
+		Hostname:          hostname,
 		StaticUsers:       users,
 	}
 	renders := map[render.Component]*render.RenderResult{}
@@ -702,14 +713,15 @@ func TestCertificate(t *testing.T) {
 	})
 	cert := mustFind[*unstructured.Unstructured](t, find(t, objs, kindCertificate, testName), testName)
 	spec := cert.Object["spec"].(map[string]any)
-	// The primary domain is the first SORTED authorized domain, even
-	// though the request carries them unsorted.
-	if cn, _ := spec["commonName"].(string); cn != domainA {
-		t.Errorf("commonName = %q, want %q", cn, domainA)
+	// The certificate carries the hostname and nothing else: not the
+	// domains of the server, and not the in-cluster name, which public
+	// ACME issuers reject (ADR 0014).
+	if cn, _ := spec["commonName"].(string); cn != testHostname {
+		t.Errorf("commonName = %q, want %q", cn, testHostname)
 	}
 	dns, _ := spec["dnsNames"].([]any)
-	if len(dns) != 2 || dns[0] != domainA || dns[1] != domainB {
-		t.Errorf("dnsNames = %v, want [%s %s]", dns, domainA, domainB)
+	if len(dns) != 1 || dns[0] != testHostname {
+		t.Errorf("dnsNames = %v, want [%s]", dns, testHostname)
 	}
 	if sn, _ := spec["secretName"].(string); sn != "my-tls" {
 		t.Errorf("secretName = %q, want my-tls", sn)
@@ -723,12 +735,35 @@ func TestCertificate(t *testing.T) {
 	}
 }
 
-// With every domain revoked the plane still builds: the Certificate
-// keeps only the in-cluster server name and has no common name.
+// With every domain revoked the plane still builds, and the Certificate
+// keeps the authorized hostname: revoking the last domain does not
+// revoke the name of the server, and the certificate is not reissued.
 func TestBuildWithoutAuthorizedDomains(t *testing.T) {
 	dp := buildPlaneFor(t, func(s *cnmsv1alpha1.MailServer) {
 		s.Spec.Mailboxes = &cnmsv1alpha1.Mailboxes{Enabled: new(true)}
 	}, nil, nil)
+	cert := mustFind[*unstructured.Unstructured](t,
+		find(t, dp.Base, kindCertificate, testName), testName)
+	spec := cert.Object["spec"].(map[string]any)
+	if cn, _ := spec["commonName"].(string); cn != testHostname {
+		t.Errorf("commonName = %q, want %q", cn, testHostname)
+	}
+	if dns, _ := spec["dnsNames"].([]any); len(dns) != 1 || dns[0] != testHostname {
+		t.Errorf("dnsNames = %v, want [%s]", dns, testHostname)
+	}
+	postfixCM := mustFind[*corev1.ConfigMap](t,
+		find(t, dp.Configs, kindConfigMap, configMapNameOf(t, dp, render.ComponentPostfix)), "postfix")
+	if strings.Contains(postfixCM.Data["main.cf"], "virtual_mailbox_domains") {
+		t.Error("postfix main.cf still lists virtual domains")
+	}
+}
+
+// While the hostname is not authorized the Certificate keeps only the
+// in-cluster server name and has no common name; the domains stay.
+func TestBuildWithoutAuthorizedHostname(t *testing.T) {
+	dp := buildPlaneHost(t, func(s *cnmsv1alpha1.MailServer) {
+		s.Spec.Mailboxes = &cnmsv1alpha1.Mailboxes{Enabled: new(true)}
+	}, nil, []string{domainB, domainA}, "")
 	cert := mustFind[*unstructured.Unstructured](t,
 		find(t, dp.Base, kindCertificate, testName), testName)
 	spec := cert.Object["spec"].(map[string]any)
@@ -741,29 +776,38 @@ func TestBuildWithoutAuthorizedDomains(t *testing.T) {
 	}
 	postfixCM := mustFind[*corev1.ConfigMap](t,
 		find(t, dp.Configs, kindConfigMap, configMapNameOf(t, dp, render.ComponentPostfix)), "postfix")
-	if strings.Contains(postfixCM.Data["main.cf"], "virtual_mailbox_domains") {
-		t.Error("postfix main.cf still lists virtual domains")
+	mainCF := postfixCM.Data["main.cf"]
+	if !strings.Contains(mainCF, "virtual_mailbox_domains = "+domainA+", "+domainB) {
+		t.Error("postfix main.cf does not serve the domains")
+	}
+	if !strings.Contains(mainCF, "myhostname = "+want+"\n") {
+		t.Errorf("postfix main.cf myhostname is not %s", want)
 	}
 }
 
-// Every workload records the domains it serves, outside the pod
-// template so the annotation never rolls pods.
+// Every workload records the domains and the hostname it serves,
+// outside the pod template so the annotation never rolls pods.
 func TestBuildRecordsServedDomains(t *testing.T) {
 	for _, tc := range []struct {
-		domains []string
-		want    string
+		name     string
+		domains  []string
+		hostname string
+		want     string
 	}{
-		{[]string{domainB, domainA}, domainA + "," + domainB},
-		{nil, ""},
+		{"domains and hostname", []string{domainB, domainA}, testHostname, domainA + "," + domainB + "," + testHostname},
+		{"hostname only", nil, testHostname, testHostname},
+		{"domains only", []string{domainB, domainA}, "", domainA + "," + domainB},
+		{"neither", nil, "", ""},
+		{"hostname that is a domain", []string{domainA}, domainA, domainA},
 	} {
-		dp := buildPlaneFor(t, nil, nil, tc.domains)
+		dp := buildPlaneHost(t, nil, nil, tc.domains, tc.hostname)
 		if len(dp.Workloads) != 4 {
 			t.Fatalf("workloads = %d, want 4", len(dp.Workloads))
 		}
 		for _, w := range dp.Workloads {
 			got, ok := w.GetAnnotations()[ServedDomainsAnnotation]
 			if !ok || got != tc.want {
-				t.Errorf("%s: %s = %q (set %t), want %q", w.GetName(), ServedDomainsAnnotation, got, ok, tc.want)
+				t.Errorf("%s, %s: %s = %q (set %t), want %q", tc.name, w.GetName(), ServedDomainsAnnotation, got, ok, tc.want)
 			}
 		}
 	}

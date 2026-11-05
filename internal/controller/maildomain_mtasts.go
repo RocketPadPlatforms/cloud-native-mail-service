@@ -27,36 +27,48 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	cnmsv1alpha1 "github.com/RocketPadPlatforms/cloud-native-mail-service/api/v1alpha1"
-	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/render"
 )
 
 // mtaSTSHosts returns the mx hosts of the MTA-STS policy of md (ADR
-// 0012, 0014): the server hostname of the MailServer in spec.serverRef,
-// when it exists and serves the domain. The hostname is the name the
-// server presents (HELO, certificate), so it is the name the MX record
-// has to point at. A server that does not serve the domain (it is not
-// authorized for it) contributes nothing.
+// 0012, 0014): the authorized hostname of the MailServer in
+// spec.serverRef, when it exists and serves the domain. The hostname is
+// the name the server presents (HELO, certificate), so it is the name
+// the MX record has to point at. A server that does not serve the domain
+// (it is not authorized for it) contributes nothing, and neither does
+// one whose hostname is not authorized: the in-cluster name of its
+// Service is never published.
 func (r *MailDomainReconciler) mtaSTSHosts(ctx context.Context, md *cnmsv1alpha1.MailDomain) ([]string, error) {
+	auth, found, err := r.evaluateServer(ctx, md)
+	if err != nil || !found || !slices.Contains(auth.domains, md.Spec.Domain) || auth.hostname == "" {
+		return nil, err
+	}
+	return []string{auth.hostname}, nil
+}
+
+// evaluateServer evaluates the MailServer in spec.serverRef of md, the
+// same way the MailServer controller does. found is false when the
+// server does not exist.
+func (r *MailDomainReconciler) evaluateServer(ctx context.Context, md *cnmsv1alpha1.MailDomain) (auth authorization, found bool, err error) {
 	s := &cnmsv1alpha1.MailServer{}
-	err := r.Get(ctx, types.NamespacedName{Namespace: md.Namespace, Name: md.Spec.ServerRef.Name}, s)
+	err = r.Get(ctx, types.NamespacedName{Namespace: md.Namespace, Name: md.Spec.ServerRef.Name}, s)
 	if errors.IsNotFound(err) {
-		return nil, nil
+		return authorization{}, false, nil
 	}
 	if err != nil {
-		return nil, err
+		return authorization{}, false, err
 	}
 	grants, claims, err := listAuthorizationInput(ctx, r)
 	if err != nil {
-		return nil, err
+		return authorization{}, false, err
 	}
-	auth := (&authorizationEvaluator{
-		server: s, grants: grantRefs(grants), claims: domainClaims(claims), mode: r.DomainAuthorization,
-	}).Evaluate()
-	if !slices.Contains(auth.domains, md.Spec.Domain) {
-		return nil, nil
+	servers := &cnmsv1alpha1.MailServerList{}
+	if err := r.List(ctx, servers); err != nil {
+		return authorization{}, false, err
 	}
-	req := render.RenderRequest{Server: s, AuthorizedDomains: auth.domains}
-	return []string{req.ServerHostname()}, nil
+	return (&authorizationEvaluator{
+		server: s, grants: grantRefs(grants), claims: domainClaims(claims),
+		servers: serverClaims(servers), mode: r.DomainAuthorization,
+	}).Evaluate(), true, nil
 }
 
 // mapServerDomains enqueues the MailDomains that reference a

@@ -21,8 +21,6 @@ limitations under the License.
 package render
 
 import (
-	"slices"
-
 	cnmsv1alpha1 "github.com/RocketPadPlatforms/cloud-native-mail-service/api/v1alpha1"
 )
 
@@ -55,11 +53,15 @@ type RenderRequest struct {
 
 	// AuthorizedDomains are the MailServer domains that passed the
 	// domain authorization check (ADR-0003). Renderers must only
-	// reference these; the first entry is the primary domain
-	// (HELO name, certificate SAN order, postmaster address). It may
-	// be empty (every domain revoked): renderers then produce a
-	// fail-closed configuration that accepts and sends no mail.
+	// reference these. It may be empty (every domain revoked):
+	// renderers then produce a fail-closed configuration that accepts
+	// and sends no mail.
 	AuthorizedDomains []string
+
+	// Hostname is the hostname of the MailServer when it passed the
+	// hostname authorization (ADR 0014); empty otherwise. It is the
+	// name the server presents, see ServerHostname.
+	Hostname string
 
 	// StaticUsers holds the parsed users from
 	// spec.submission.insecureStaticUsers (empty when unset).
@@ -71,15 +73,16 @@ type RenderRequest struct {
 	DKIMKeys []DomainKeys
 }
 
-// ServerHostname is the name the server presents (Postfix myhostname,
-// certificate): the first sorted authorized domain, or, when no domain
-// is authorized, the in-cluster Postfix Service name, which belongs to
-// no tenant domain.
+// ServerHostname is the name the server presents (Postfix myhostname and
+// HELO, the certificate): the authorized hostname, or, while the
+// hostname is not authorized, the in-cluster Postfix Service name, which
+// belongs to no tenant. It does not depend on the domains the server
+// serves (ADR 0014).
 func (r *RenderRequest) ServerHostname() string {
-	if len(r.AuthorizedDomains) == 0 {
+	if r.Hostname == "" {
 		return ServiceFQDN(r.Server.Name, r.Server.Namespace, ComponentPostfix)
 	}
-	return slices.Min(r.AuthorizedDomains)
+	return r.Hostname
 }
 
 // RenderResult is the rendered configuration of one component.

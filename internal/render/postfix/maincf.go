@@ -35,8 +35,8 @@ func renderMainCF(req *render.RenderRequest) string {
 
 	domains := sortedDomains(req)
 
-	b.WriteString("# --- identity (first authorized domain, else the in-cluster Service) ---\n")
-	fmt.Fprintf(&b, "myhostname = %s\n", primaryDomain(req))
+	b.WriteString("# --- identity (authorized hostname, else the in-cluster Service) ---\n")
+	fmt.Fprintf(&b, "myhostname = %s\n", serverHostname(req))
 	b.WriteString("myorigin = $myhostname\n")
 
 	b.WriteString("# --- version (ADR 0001 pin: Postfix 3.11) ---\n")

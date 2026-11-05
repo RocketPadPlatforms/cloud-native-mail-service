@@ -264,7 +264,7 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	renderDomains, renderUsers := auth.domains, users
 	failClosed := false
 	if blocked != nil {
-		need, err := r.needsFailClosed(ctx, server, auth.domains)
+		need, err := r.needsFailClosed(ctx, server, auth.domains, auth.hostname)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
@@ -297,7 +297,7 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 	prevValidated := meta.FindStatusCondition(*conds, ConditionConfigValidated)
 	prevValidated = prevValidated.DeepCopy()
-	g, rolloutWant, err := r.applyGuarded(ctx, server, renderDomains, renderUsers, keys.keys, certCRDs, failClosed)
+	g, rolloutWant, err := r.applyGuarded(ctx, server, renderDomains, auth.hostname, renderUsers, keys.keys, certCRDs, failClosed)
 	if err != nil {
 		log.FromContext(ctx).Error(err, "Could not apply data plane")
 		reason := applyFailureReason(err)
@@ -406,19 +406,19 @@ func (r *MailServerReconciler) authorize(ctx context.Context, server *cnmsv1alph
 // was rejected) while they serve a domain that is no longer
 // authorized, it applies the fail-closed render instead of waiting.
 // The returned map holds the revision the rollout check waits for.
-func (r *MailServerReconciler) applyGuarded(ctx context.Context, server *cnmsv1alpha1.MailServer, domains []string, users []render.StaticUser, keys []render.DomainKeys, certCRDs, failClosed bool) (*gate, map[string]string, error) {
-	g, err := r.applyDataPlane(ctx, server, domains, users, keys, certCRDs)
+func (r *MailServerReconciler) applyGuarded(ctx context.Context, server *cnmsv1alpha1.MailServer, domains []string, hostname string, users []render.StaticUser, keys []render.DomainKeys, certCRDs, failClosed bool) (*gate, map[string]string, error) {
+	g, err := r.applyDataPlane(ctx, server, domains, hostname, users, keys, certCRDs)
 	if err != nil {
 		return nil, nil, err
 	}
 	if failClosed || g.want != nil {
 		return g, g.want, nil
 	}
-	need, err := r.needsFailClosed(ctx, server, domains)
+	need, err := r.needsFailClosed(ctx, server, domains, hostname)
 	if err != nil || !need {
 		return g, nil, err
 	}
-	closed, err := r.applyDataPlane(ctx, server, nil, nil, nil, certCRDs)
+	closed, err := r.applyDataPlane(ctx, server, nil, hostname, nil, nil, certCRDs)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -478,28 +478,32 @@ func (r *MailServerReconciler) preflight(ctx context.Context, server *cnmsv1alph
 
 // needsFailClosed reports whether the running data plane must be
 // replaced by the fail-closed render: it exists and either no domain
-// is authorized (re-applying is idempotent) or it serves a domain
-// outside the authorized set.
-func (r *MailServerReconciler) needsFailClosed(ctx context.Context, server *cnmsv1alpha1.MailServer, authorized []string) (bool, error) {
-	served, exists, err := r.servedDomains(ctx, server)
+// is authorized (re-applying is idempotent) or it serves a name
+// outside the authorized set: an unauthorized domain, or a hostname
+// that is no longer the authorized one (a revoked or renamed one is
+// revoked like a domain, ADR 0014).
+func (r *MailServerReconciler) needsFailClosed(ctx context.Context, server *cnmsv1alpha1.MailServer, authorized []string, hostname string) (bool, error) {
+	served, exists, err := r.servedNames(ctx, server)
 	if err != nil {
 		return false, err
 	}
 	if len(authorized) == 0 {
 		return exists, nil
 	}
-	return slices.ContainsFunc(served, func(d string) bool { return !slices.Contains(authorized, d) }), nil
+	return slices.ContainsFunc(served, func(n string) bool { return n != hostname && !slices.Contains(authorized, n) }), nil
 }
 
-// servedDomains returns the domains the existing workloads of the
-// server serve, read from the served-domains annotation that every
-// workload carries since the revision was applied (the annotation
-// is set together with the pod template, so it names the revision
-// being rolled out; an older pod of a rollout in progress is not
-// tracked), and the names of the Certificate. exists reports whether
-// any workload or the Certificate exists, that is, whether a data
-// plane was ever applied.
-func (r *MailServerReconciler) servedDomains(ctx context.Context, server *cnmsv1alpha1.MailServer) (served []string, exists bool, err error) {
+// servedNames returns the names the existing workloads of the server
+// serve (its domains and its hostname), read from the served-domains
+// annotation that every workload carries since the revision was applied
+// (the annotation is set together with the pod template, so it names the
+// revision being rolled out; an older pod of a rollout in progress is
+// not tracked), and the names of the Certificate. Only the in-cluster
+// Service name is left out: it belongs to no tenant and is the name of
+// a server without an authorized hostname. exists reports whether any
+// workload or the Certificate exists, that is, whether a data plane was
+// ever applied.
+func (r *MailServerReconciler) servedNames(ctx context.Context, server *cnmsv1alpha1.MailServer) (served []string, exists bool, err error) {
 	seen := map[string]bool{}
 	for _, c := range render.AllComponents() {
 		key := types.NamespacedName{Name: render.ServiceName(server.Name, c), Namespace: server.Namespace}
@@ -521,8 +525,8 @@ func (r *MailServerReconciler) servedDomains(ctx context.Context, server *cnmsv1
 		}
 	}
 	// The Certificate is part of the data plane too: it keeps being
-	// renewed for every name it lists, so a revoked domain on it
-	// counts as served even before any workload exists.
+	// renewed for every name it lists, so a revoked domain or hostname
+	// on it counts as served even before any workload exists.
 	cert, err := r.ownedCertificate(ctx, server)
 	if err != nil {
 		return nil, false, err
@@ -530,13 +534,11 @@ func (r *MailServerReconciler) servedDomains(ctx context.Context, server *cnmsv1
 	if cert != nil {
 		exists = true
 		names, _, _ := unstructured.NestedStringSlice(cert.Object, "spec", "dnsNames")
-		own := render.ServiceFQDN(server.Name, server.Namespace, render.ComponentPostfix)
 		for _, n := range names {
-			if n != own {
-				seen[n] = true
-			}
+			seen[n] = true
 		}
 	}
+	delete(seen, render.ServiceFQDN(server.Name, server.Namespace, render.ComponentPostfix))
 	return slices.Sorted(maps.Keys(seen)), exists, nil
 }
 
