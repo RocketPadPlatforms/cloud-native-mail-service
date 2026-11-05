@@ -207,7 +207,7 @@ func (r *MailDomainReconciler) reconcileAuthorized(ctx context.Context, md *cnms
 			}
 		}
 	}
-	in, err := r.composeInput(ctx, md, current)
+	in, _, err := r.composeInput(ctx, md, current)
 	if err != nil {
 		return 0, err
 	}
@@ -227,14 +227,15 @@ func (r *MailDomainReconciler) reconcileAuthorized(ctx context.Context, md *cnms
 	}
 	r.reportKeys(md, set)
 
-	if in, err = r.composeInput(ctx, md, set.all()); err != nil {
+	in, view, err := r.composeInput(ctx, md, set.all())
+	if err != nil {
 		return 0, err
 	}
 	composed, err := dnsrecords.Compose(in)
 	if err != nil {
 		return 0, err
 	}
-	r.reportRecords(md, composed, st)
+	r.reportRecords(md, composed, st, view)
 	endpointRetry := r.reconcileDNSEndpoint(ctx, md, composed.Records)
 
 	// Schedule the next lookup round. A key that was just created has
@@ -431,21 +432,14 @@ func (r *MailDomainReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 // mapPeerDomains enqueues the MailDomains that claim the same domain as
 // obj: the uniqueness check is cluster wide, so a new, changed or
-// deleted claim blocks or frees the other claimants. It also enqueues
-// the MailDomains with MTA-STS on that share the server of obj: the mx
-// host of their policy is the server hostname, which is the first
-// domain the server serves, so another domain that attaches or leaves
-// can change it. For a changed spec.serverRef the handler also maps the
-// old object.
+// deleted claim blocks or frees the other claimants.
 func (r *MailDomainReconciler) mapPeerDomains(ctx context.Context, obj client.Object) []reconcile.Request {
 	d, ok := obj.(*cnmsv1alpha1.MailDomain)
 	if !ok {
 		return nil
 	}
 	return r.matchingDomains(ctx, func(o *cnmsv1alpha1.MailDomain) bool {
-		return o.Spec.Domain == d.Spec.Domain ||
-			(o.Namespace == d.Namespace && o.Spec.ServerRef.Name == d.Spec.ServerRef.Name &&
-				o.Spec.MTAStS != nil && o.Spec.MTAStS.Enabled != nil && *o.Spec.MTAStS.Enabled)
+		return o.Spec.Domain == d.Spec.Domain
 	})
 }
 

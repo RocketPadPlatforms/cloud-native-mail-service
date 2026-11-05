@@ -68,11 +68,16 @@ const (
 func dnsEndpointName(md *cnmsv1alpha1.MailDomain) string { return md.Name + "-dns" }
 
 // desiredDNSEndpoint builds the DNSEndpoint of md: one endpoint per
-// record, type TXT, one plain target with the whole value (ADR 0012;
-// how a provider handles a value over 255 octets is not verified).
+// TXT record, one plain target with the whole value (ADR 0012; how a
+// provider handles a value over 255 octets is not verified). The MX
+// record of the domain is reported and verified, not published (ADR
+// 0014), so it is not in the DNSEndpoint.
 func desiredDNSEndpoint(md *cnmsv1alpha1.MailDomain, records []dnsrecords.Record) *unstructured.Unstructured {
 	endpoints := make([]any, 0, len(records))
 	for _, rec := range records {
+		if rec.Type != dnsrecords.TypeTXT {
+			continue
+		}
 		endpoints = append(endpoints, map[string]any{
 			"dnsName":    rec.Name,
 			"recordType": rec.Type,
@@ -120,13 +125,14 @@ func (r *MailDomainReconciler) reconcileDNSEndpoint(ctx context.Context, md *cnm
 		return crdCacheTTL
 	}
 	desired := desiredDNSEndpoint(md, records)
+	endpoints, _, _ := unstructured.NestedSlice(desired.Object, "spec", "endpoints")
 	if err := applyObject(ctx, r.Client, r.APIReader, r.Scheme, md, desired); err != nil {
 		r.setCondition(md, ConditionDNSPublished, metav1.ConditionFalse, applyFailureReason(err), err.Error())
 		return requeueInterval
 	}
 	r.setCondition(md, ConditionDNSPublished, metav1.ConditionTrue, ReasonDNSEndpointApplied,
 		fmt.Sprintf("DNSEndpoint %s declares %d records; external-dns publishes them, the verification shows when they are live",
-			desired.GetName(), len(records)))
+			desired.GetName(), len(endpoints)))
 	return 0
 }
 

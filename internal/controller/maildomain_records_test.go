@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -51,8 +52,25 @@ func (e *domainTestEnv) restart() {
 
 // publish puts every record of the status into the fake DNS.
 func (e *domainTestEnv) publish(d *cnmsv1alpha1.MailDomain) {
-	for _, rec := range d.Status.Records {
-		e.dns.Set(rec.Name, rec.Value)
+	publishRecords(e.dns, d.Status.Records)
+}
+
+// publishRecords puts records into the fake DNS, by type.
+func publishRecords(dns *dnsrecords.FakeResolver, records []cnmsv1alpha1.DNSRecord) {
+	hosts := map[string][]string{}
+	for _, rec := range records {
+		switch rec.Type {
+		case dnsrecords.TypeA, dnsrecords.TypeAAAA:
+			hosts[rec.Name] = append(hosts[rec.Name], rec.Value)
+		case dnsrecords.TypeMX:
+			_, host, _ := strings.Cut(rec.Value, " ")
+			dns.SetMX(rec.Name, dnsrecords.MX{Host: host, Pref: dnsrecords.MXPreference})
+		default:
+			dns.Set(rec.Name, rec.Value)
+		}
+	}
+	for name, addrs := range hosts {
+		dns.SetHost(name, addrs...)
 	}
 }
 

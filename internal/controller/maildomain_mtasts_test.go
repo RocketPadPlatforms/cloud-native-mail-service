@@ -43,11 +43,47 @@ func TestMapServerDomains(t *testing.T) {
 	// The domains are in the namespace of the server; a server that is
 	// gone is mapped by its name.
 	got := requestKeys(r.mapServerDomains(context.Background(), serverIn("a", "s1")))
-	if want := []string{"a/x", "a/y"}; !slices.Equal(got, want) {
+	if want := []string{reqAX, "a/y"}; !slices.Equal(got, want) {
 		t.Errorf("mapServerDomains = %v, want %v", got, want)
 	}
 	if got := r.mapServerDomains(context.Background(), &cnmsv1alpha1.MailDomain{}); got != nil {
 		t.Errorf("mapServerDomains(MailDomain) = %v, want none", got)
+	}
+}
+
+// The domains of every server that shares a hostname are reached: the
+// uniqueness of the hostname makes the verdict on each of them depend on
+// the others.
+func TestMapServerDomainsReachesTheServersOfTheSameHostname(t *testing.T) {
+	server := func(ns, name, host string) *cnmsv1alpha1.MailServer {
+		return &cnmsv1alpha1.MailServer{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+			Spec:       cnmsv1alpha1.MailServerSpec{Hostname: host},
+		}
+	}
+	c := fake.NewClientBuilder().WithScheme(watchTestScheme(t)).
+		WithIndex(&cnmsv1alpha1.MailDomain{}, mailDomainServerIndex, indexMailDomainByServer).
+		WithIndex(&cnmsv1alpha1.MailServer{}, mailServerHostnameIndex, indexMailServerByHostname).
+		WithObjects(
+			server("a", "s1", "mail.example.org"),
+			server("b", "s2", "mail.example.org"), // same hostname, other namespace
+			server("c", "s3", "other.example.org"),
+			domainClaimIn("a", "x", "x.example.org", "s1"),
+			domainClaimIn("b", "y", "y.example.org", "s2"),
+			domainClaimIn("c", "z", "z.example.org", "s3"),
+		).Build()
+	r := &MailDomainReconciler{Client: c}
+
+	got := requestKeys(r.mapServerDomains(context.Background(), server("a", "s1", "mail.example.org")))
+	slices.Sort(got)
+	if want := []string{reqAX, reqBY}; !slices.Equal(got, want) {
+		t.Errorf("mapServerDomains = %v, want %v", got, want)
+	}
+	// A server that left its hostname is mapped by the old content too.
+	got = requestKeys(r.mapServerDomains(context.Background(), server("d", "gone", "mail.example.org")))
+	slices.Sort(got)
+	if want := []string{reqAX, reqBY}; !slices.Equal(got, want) {
+		t.Errorf("mapServerDomains(gone) = %v, want %v", got, want)
 	}
 }
 

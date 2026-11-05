@@ -126,7 +126,7 @@ var _ = Describe("API validation", func() {
 					{Name: testDomain, Type: "TXT", Value: "v=spf1 -all"},
 					{Name: testDomain, Type: "MX", Value: "10 mail.example.org."},
 					{Name: testDomain, Type: "MX", Value: "20 mail2.example.org."},
-					{Name: mtaStsName, Type: "A", Value: "203.0.113.10"},
+					{Name: mtaStsName, Type: "A", Value: sendIP4b},
 					{Name: mtaStsName, Type: "A", Value: "203.0.113.11"},
 					{Name: mtaStsName, Type: "AAAA", Value: "2001:db8::10"},
 				}
@@ -423,7 +423,7 @@ var _ = Describe("API validation of SPF, DMARC, MTA-STS and TLS-RPT", func() {
 	v6 := "must be an IPv6 address or CIDR"
 	runAPICases([]apiCase{
 		{name: "accepts SPF sources and a qualifier", mutate: spf(cnmsv1alpha1.SPF{
-			IP4: []string{"203.0.113.10", "198.51.100.0/24"}, IP6: []string{spfIP6Sample, "2001:db8::/32"},
+			IP4: []string{sendIP4b, "198.51.100.0/24"}, IP6: []string{spfIP6Sample, "2001:db8::/32"},
 			Include: []string{"_spf.example.net", "spf.example.com"}, Qualifier: new("fail"),
 		})},
 		{name: "rejects an IPv6 address in ip4", mutate: spf(cnmsv1alpha1.SPF{IP4: []string{spfIP6Sample}}), wantErr: v4},
@@ -636,7 +636,7 @@ var _ = Describe("API validation of the MailServer hostname and SPF sources", fu
 		{name: "accepts renaming the hostname", mutate: rename("mail2.example.org")},
 		{name: "rejects renaming the hostname to an invalid name", mutate: rename("mail"), wantErr: hostnameField},
 		{name: "accepts SPF sources", mutate: spf(cnmsv1alpha1.ServerSPF{
-			IP4: []string{"203.0.113.9", "198.51.100.0/24"}, IP6: []string{"2001:db8::/32"},
+			IP4: []string{sendIP4, "198.51.100.0/24"}, IP6: []string{"2001:db8::/32"},
 		})},
 		{name: "rejects an IPv6 address in ip4", mutate: spf(cnmsv1alpha1.ServerSPF{IP4: []string{spfIP6Sample}}), wantErr: "IPv4 address or CIDR"},
 		{name: "rejects an IPv4 address in ip6", mutate: spf(cnmsv1alpha1.ServerSPF{IP6: []string{spfIP4Sample}}), wantErr: "IPv6 address or CIDR"},
