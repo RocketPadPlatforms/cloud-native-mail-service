@@ -63,6 +63,7 @@ module.exports = {
         'decisions/dkim-keys-and-rotation',
         'decisions/dns-records-and-dmarc',
         'decisions/never-unsigned-guard',
+        'decisions/domain-server-binding-and-hostname',
       ],
     },
     { type: 'doc', id: 'roadmap' },
