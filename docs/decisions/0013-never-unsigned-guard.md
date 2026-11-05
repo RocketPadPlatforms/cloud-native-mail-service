@@ -249,11 +249,11 @@ milters and are therefore unsigned. Reasons:
   still `reject` or `discard` a bounce by score, which loses it (README).
 - The benefit is small: a bounce has an empty envelope sender, and the HELO
   identity stands in for it in Rspamd's DMARC check
-  (`dmarc.lua`). The HELO name is the primary domain of the `MailServer`,
-  so SPF of that domain aligns with the bounce's From (ADR 0012). (Amended
-  by ADR 0014: once the server hostname exists, the HELO identity is the
-  hostname, whose SPF record is reported at the hostname, not at the
-  primary domain.)
+  (`dmarc.lua`). The HELO name was the primary domain of the `MailServer`,
+  so SPF of that domain aligned with the bounce's From (ADR 0012).
+  (Amended by ADR 0014: the HELO identity, and the origin of bounces
+  (`myorigin = $myhostname`), is the hostname of the server, whose SPF
+  record is reported at the hostname, not at a domain.)
 
 Revisit when a Postfix release with `{postfix_internal_origin}` is pinned
 (a new ADR). `non_smtpd_milters` stays configured: it signs `sendmail(1)`

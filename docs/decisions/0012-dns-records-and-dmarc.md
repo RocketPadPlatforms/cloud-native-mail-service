@@ -182,12 +182,13 @@ all no SPF record is published or required (a record `v=spf1 -all` would
 declare a sending domain silent and fail its own mail); `SPFReady=False`
 with reason `NoSendingSources` says so. Not checked: the RFC 7208
 10-lookup limit across nested `include`s (needs lookups of other
-people's records; documented). The apex SPF record also serves as the
-SPF identity of the HELO name, because the HELO name is the primary
-domain of the `MailServer`; with empty-sender mail (bounces) that is the
-identity receivers check. (Amended by ADR 0014: after the server hostname
-exists, the HELO identity is the hostname, not the primary domain, and its
-SPF record is reported at the hostname.)
+people's records; documented). The HELO name is the hostname of the
+`MailServer`; with empty-sender mail (bounces) the SPF record of that
+name is the identity receivers check. (Amended by ADR 0014: the original
+text made the HELO name the primary domain of the server and its apex SPF
+record the identity. The HELO identity is the hostname, and its SPF record
+is reported in `MailServer.status.records`. The SPF record of a domain
+lists the sources of its server and its own.)
 
 ### 4. Verification
 
@@ -259,15 +260,18 @@ receiver in another organizational domain has to publish). `SPFReady`,
 `RecordsVerified`. The mx hosts of the MTA-STS policy come from the
 `MailServer` in the domain's `spec.serverRef` when it serves the domain
 (authorized, ADR 0003; amended by ADR 0014, which replaced the list in the
-server's spec by this reference): it contributes its `ServerHostname`,
-which is the first sorted domain it serves, so a server of several
-domains gives the same host for each of them. While the server does not
-exist or does not serve the domain an enabled MTA-STS has no policy and
-`MTASTSReady` is `False` with reason `NoMailServer`. The `MailDomain`
-controller watches `MailServer` spec changes and the domains that share
-the server for this. The
-name is the one in the certificate and the HELO; the MX record of the
-domain has to point at it, which CNMS does not publish (section 1).
+server's spec by this reference): it contributes its authorized
+hostname (ADR 0014; the original text used the first sorted domain it
+serves), so a server of several domains gives the same host for each of
+them. While the server does not exist or does not serve the domain an
+enabled MTA-STS has no policy and `MTASTSReady` is `False` with reason
+`NoMailServer`; while its hostname is not authorized the reason is
+`HostnameNotAuthorized`. The `MailDomain` controller watches
+`MailServer` spec changes, also of the servers that share a hostname, for
+this. The name is the one in the certificate and the HELO; the MX record
+of the domain has to point at it. The record is reported in
+`MailDomain.status.records` and verified, but CNMS does not publish it
+(section 1).
 
 ### 5. Public suffixes
 
