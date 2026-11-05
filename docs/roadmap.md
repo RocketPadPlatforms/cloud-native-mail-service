@@ -10,7 +10,7 @@ Status as of 2026-11-04:
 |---|---|---|
 | 0 | Scaffold: repo, kubebuilder init, CI, lint, license check, docs site, ADRs | Done |
 | 1 | API (core subset): `MailServer`, `MailDomain`, `MailDirectory` CRDs with defaults, CEL validation, generated CRDs and API reference, samples | Done |
-| 2 | `MailServer` core: Postfix + Rspamd + Valkey rendering, workloads, config validation, golden-file tests, metrics, swaks e2e; plus domain-authorization gating of `spec.domains` (`MailDomainGrant`, `--domain-authorization` flag), default-deny NetworkPolicy floor, security floor (AUTH only over TLS, TLS >= 1.2, rate limits, `reject_unauth_destination`) with an open-relay e2e test | Done |
+| 2 | `MailServer` core: Postfix + Rspamd + Valkey rendering, workloads, config validation, golden-file tests, metrics, swaks e2e; plus domain-authorization gating of the domains a server serves (`MailDomainGrant`, `--domain-authorization` flag), default-deny NetworkPolicy floor, security floor (AUTH only over TLS, TLS >= 1.2, rate limits, `reject_unauth_destination`) with an open-relay e2e test | Done |
 | 3 | User sources and service accounts: `MailDirectory` (LDAP and SQL maps for Postfix and Dovecot auth), operator-managed `MailUser` accounts for environments without a directory service, `MailServiceAccount` application credentials (cross-namespace reference, operator-provided SMTP credential Secret, sender binding, including sender login maps on submission) — ADR 0008 | Planned |
 | 4 | Mailboxes (Dovecot): IMAP, LMTP delivery, mail storage, quota, backup hooks | Planned |
 | 5 | `MailDomain`: DKIM keys and rotation, SPF/DMARC/MTA-STS/TLS-RPT records, DNS verification; plus domain uniqueness and derived-name conflicts, public-suffix rejection, revocation semantics (grace period, kept DKIM keys), apex TXT conflict detection, dedicated external-dns wiring; the never-unsigned Rspamd guard ([ADR 0013](decisions/0013-never-unsigned-guard.md)) | Done |
@@ -42,12 +42,14 @@ the code and the [status conditions](reference/status-conditions.md).
 - **Mailboxes (Phase 4):** IMAP, LMTP delivery and the maildir volume
   work with the data plane. Open: quota, Dovecot metrics, the mailbox
   format ADR, and the k8up backup and restore e2e.
-- **Domains (Phase 5):** the authorization of `spec.domains` is
-  enforced on the `MailServer`. The `MailDomain` controller authorizes
+- **Domains (Phase 5):** a `MailDomain` names its server in
+  `spec.serverRef` ([ADR 0014](decisions/0014-domain-server-binding-and-hostname.md));
+  the authorization of the domains of a server is enforced on the
+  `MailServer`. The `MailDomain` controller authorizes
   the domain (grants, duplicates, public suffixes), generates and
   rotates DKIM keys or reads your own, lists and verifies every DNS
-  record, reports the MTA-STS policy with the hosts of the `MailServer`s
-  that serve the domain, and publishes a `DNSEndpoint` in `externalDNS`
+  record, reports the MTA-STS policy with the host of the `MailServer`
+  that serves the domain, and publishes a `DNSEndpoint` in `externalDNS`
   mode ([how-to](how-to/dkim-keys-and-dns-records.mdx)). The `MailServer`
   hands the active keys to Rspamd, which signs with them (RSA, and Ed25519
   when enabled), and a guard defers the outbound mail of a served domain

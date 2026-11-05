@@ -24,16 +24,26 @@ committed.
 - Derived-name conflicts (`DerivedNameConflict`, ADR 0003): a `MailDomain`
   whose own name is a derived name of another active domain. Not detected
   by the `MailDomain` controller yet.
-- Decide how many `MailDomain`s a `MailServer` may serve. The API accepts up
-  to 50 domains per server and nothing limits them to one; the server name
-  (HELO, certificate) is the first sorted domain, so a domain that sorts
-  before the others changes both. The e2e suite serves three domains from
-  one server and picks names that sort after the first one.
+- Server hostname (ADR 0014, part B), to be implemented in a follow-up
+  change: `MailServer.spec.hostname`, its authorization and uniqueness,
+  the `A`/`AAAA`, SPF and `MX` records, `MailServer.spec.spf`. Until then
+  the server name (HELO, certificate, MTA-STS `mx`) is the first sorted
+  domain of the server, so a domain that sorts before the others changes
+  it. The e2e suite serves three domains from one server and picks names
+  that sort after the first one.
+- Graceful domain move (ADR 0014): changing `MailDomain.spec.serverRef`
+  moves the signing and the records at once, but not the mailboxes or the
+  queued mail of the old server, and the old server may briefly serve the
+  domain while the new one already does. Tooling could drain the queue,
+  copy the mailboxes and order the MX and MTA-STS changes.
+- Reconsider the cap of 128 entries in `MailServer.status.domains`
+  (ADR 0014); a server with more domains lists those not served first and
+  sets `DomainsListed=False`.
 - Avoid the double rollout at first install: a `MailDomain` without the
-  rotation annotation has no active key, so a `MailServer` that references
-  it renders its domain without keys (fail closed) and again once the
+  rotation annotation has no active key, so the `MailServer` it references
+  renders the domain without keys (fail closed) and again once the
   `MailDomain` controller has written the state (ADR 0011, section 5). The
-  e2e suite creates the domains first and references them afterwards.
+  e2e suite creates the domains first and the server afterwards.
 - Check that a `DNSEndpoint` target longer than 255 octets (the RSA-2048
   DKIM value) is published as one TXT record by the common external-dns
   providers (ADR 0012 left it unverified); split it into character-strings
