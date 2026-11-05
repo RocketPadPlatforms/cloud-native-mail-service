@@ -32,9 +32,10 @@ kubectl apply -k config/default
 
 `config/samples/full-setup/` is a draft scenario (not an agreed
 reference) that uses only what the v1alpha1 API offers today: a
-`MailDomainGrant` per domain, two `MailDomain`s (each names the server in
-`spec.serverRef`), an LDAP `MailDirectory` with its Secrets, and a
-`MailServer`. The files are applied by the
+`MailDomainGrant` per domain (the hostname `mail.example.com` of the server
+is covered by the grant of `example.com`), two `MailDomain`s (each names the
+server in `spec.serverRef`), an LDAP `MailDirectory` with its Secrets, and a
+`MailServer` with its `hostname`. The files are applied by the
 envtest suite, so they stay valid against the CRDs. The
 [resource model](../concepts/resource-model.mdx) shows the individual
 objects. Create the cert-manager `Issuer` named in `mailserver.yaml`
@@ -46,6 +47,13 @@ kubectl apply -n mail-full-setup -k config/samples/full-setup
 ```
 
 <CodeBlock language="yaml" title="config/samples/full-setup/kustomization.yaml">{Kustomization}</CodeBlock>
+
+Then create the DNS records the status lists: the `MX` record of each
+domain, the `A`/`AAAA` records of the hostname at the inbound address and
+its SPF record ([DNS records you must create](dkim-keys-and-dns-records.mdx#dns-records-you-must-create)).
+The certificate of the server is for the hostname only; a public ACME
+issuer needs the DNS-01 challenge there, because the mail load balancer
+serves no HTTP.
 
 The Secrets hold placeholders; replace them with your values or create
 them from your secret store:
@@ -82,7 +90,7 @@ without an expiry.
 | `--domain-authorization` | `allowlist` | `allowlist` requires a `MailDomainGrant` covering every `MailDomain` that references a `MailServer` and naming its namespace ([domain authorization](../concepts/domain-authorization.md)); `unrestricted` skips the grant requirement for single-tenant clusters (the operator logs a warning at startup). Uniqueness is enforced in both modes. |
 | `--allow-cluster-issuers` | `false` | Lets a `MailServer` reference a cert-manager `ClusterIssuer` in `spec.tls.issuerRef`. Without the flag such a server is fail-closed (`Ready=False, reason=ClusterIssuerNotAllowed`) and no `Certificate` is created; a namespaced `Issuer` is always allowed. A shared `ClusterIssuer` lets every tenant obtain certificates from it, so enable the flag only on clusters where that is intended. Add it to the manager `args` in `config/manager/manager.yaml` (Kustomize); the Helm chart will expose it as a value (Phase 10). |
 | `--enable-insecure-test-features` | `false` | Accepts `spec.submission.insecureStaticUsers` (Phase 2 test users from a Secret). For tests only: the operator logs a warning at startup when it is set. Without the flag a `MailServer` that sets the field is fail-closed (`Ready=False, reason=InsecureStaticUsersDisabled`). |
-| `--dns-resolver` | empty | `host:port` of the DNS resolver that verifies the records of `MailDomain`s ([DKIM keys and DNS records](dkim-keys-and-dns-records.mdx)). Empty uses the system resolver of the operator pod. |
+| `--dns-resolver` | empty | `host:port` of the DNS resolver that verifies the records of `MailDomain`s and of the hostnames of `MailServer`s ([DKIM keys and DNS records](dkim-keys-and-dns-records.mdx)). Empty uses the system resolver of the operator pod. |
 
 The operator logs structured JSON to stdout and records important state
 changes (a rejected configuration, a revoked domain, an ownership
@@ -173,13 +181,15 @@ this version; annotate the PVCs of an older server by hand
 
 `kubectl get mailserver` shows a `Ready` rollup; its reason names the
 first failing sub-condition (`CertificateReady`, `ConfigValidated`,
-`WorkloadsReady`, `DomainsAuthorized`, `Observability`) or the input
+`WorkloadsReady`, `DomainsAuthorized`, `HostnameAuthorized`,
+`Observability`) or the input
 that blocks the render (`DirectoryNotFound`, `NoUserSource`,
 `NoDomains` while no `MailDomain` references the server, ...).
 `status.domains` lists the `MailDomain`s that reference the server and
 whether each is served. `ClientIPPreserved`, `DedicatedSendingAddress`,
-`NodeDrainable`, `DomainsListed` and `DKIMKeysAvailable` are warnings
-that never feed into `Ready`. Every condition and reason is
+`NodeDrainable`, `DomainsListed`, `DKIMKeysAvailable`, `AddressRecords` and
+`RecordsVerified` (the DNS records of the hostname in `status.records`)
+are warnings that never feed into `Ready`. Every condition and reason is
 listed in the [status conditions reference](../reference/status-conditions.md).
 
 The operator only changes objects it controls. If an object it needs
@@ -194,6 +204,8 @@ A not-ready `MailServer` is re-checked every 30 seconds (certificates
 get issued, workloads come up, CRDs get installed), a ready one every
 10 minutes as a safety net behind the watches. Every change to a
 `MailDomainGrant` re-evaluates all `MailServer`s, and a change to a
+`MailServer` re-evaluates the servers of the same hostname (it is unique
+across the cluster), and a change to a
 `MailDomain` re-evaluates its server (the old one as well when
 `spec.serverRef` changed) and the servers of every other claimant of the
 same domain, because uniqueness is checked cluster wide. A
@@ -254,7 +266,9 @@ started.
   has a short LMTP and IMAP interruption while the Dovecot pod rolls to
   the new ports; mail for LMTP is deferred by Postfix, not lost.
 - The certificate comes from the `spec.tls` cert-manager Issuer
-  (Secret default `<name>-tls`) and is mounted at `/etc/dovecot/ssl`.
+  (Secret default `<name>-tls`) for the `hostname` of the server (and
+  only for it) and is mounted at `/etc/dovecot/ssl`. IMAP clients connect
+  to the hostname.
   Certificate renewals trigger a **reload**, not a pod restart.
 - **Before the certificate exists:** Dovecot 2.4.5 does not start
   without its certificate files (fatal at startup, whatever `ssl` is),
