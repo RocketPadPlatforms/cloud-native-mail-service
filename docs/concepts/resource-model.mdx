@@ -58,6 +58,19 @@ keys, own Rspamd and Valkey instances. Nothing is shared between
 
 Key spec fields:
 
+- `hostname` — the name the server presents (required, mutable): HELO,
+  the name of the certificate, the target of the MX records of its domains
+  and the `mx` host of their MTA-STS policies. It is authorized through a
+  `MailDomainGrant` like a domain and unique among the competing servers
+  ([domain authorization](domain-authorization.md#the-hostname-of-a-server)).
+  Create its `A`/`AAAA` records at the inbound address:
+  `status.records` lists them and whether a lookup verified them. A
+  hostname that is not authorized does not take the domains down; the
+  server presents the name of its Postfix Service instead
+  (`HostnameAuthorized=False`).
+- `spf` — the sending sources of the server (`ip4`, `ip6`). They are
+  added to the SPF record of every domain the server serves and make up
+  the SPF record of the hostname, which is the HELO identity.
 - `directoryRef` — the `MailDirectory` used for recipient validation and
   authentication. Optional (ADR 0008): without it the server needs another
   user source, otherwise it is not ready (`NoUserSource`). Until Phase 3
@@ -109,13 +122,16 @@ publishes), MTA-STS, and TLS-RPT.
   rotation publishes a new selector next to the old one. The rotation
   schedule progress is recorded in the `cnms.rpp.gmbh/rotation` annotation so
   it survives a restore without status.
-- `spf` lists the sending sources (`ip4`, `ip6`, up to 5 `include`s and a
-  `qualifier`); `dmarc` can set `subdomainPolicy` and
+- `spf` lists the sending sources of the domain (`ip4`, `ip6`, up to 5
+  `include`s and a `qualifier`), on top of the ones of its server
+  (`MailServer.spec.spf`); `dmarc` can set `subdomainPolicy` and
   `nonExistentSubdomainPolicy`; `mtaSts` is report-only and has a `mode`
   (CNMS does not serve the policy); TLS-RPT needs a report address in
   `tlsRpt.rua` or `dmarc.rua`.
 - `status.records` is the contract for DNS verification: every required
-  record with name, type, expected value, and `verified` state.
+  record with name, type, expected value, and `verified` state. Besides the
+  TXT records it lists the `MX` record of the domain, which points at the
+  hostname of the server (reported and verified, not published).
 
 <CodeBlock language="yaml" title="config/samples/full-setup/maildomain.yaml">{DomainSample}</CodeBlock>
 
@@ -141,14 +157,18 @@ MailDomainGrant ──authorizes──> namespace + domain   (admin-owned, clust
 MailServer ──references──> MailDirectory   (auth + recipient validation)
 MailDomain ──serverRef──> MailServer       (DKIM signing, submission domains)
 MailDomain ─── publishes ──> DNS records   (DKIM/SPF/DMARC/MTA-STS/TLS-RPT)
+MailDomain ─── MX ───> MailServer hostname (reported and verified; the hostname
+                                            carries A/AAAA and SPF records)
 ```
 
 A `MailDomain` references the one `MailServer` that serves it; a server
 serves every domain that references it. A `MailDomain` is only active for
 its domain when a `MailDomainGrant` names its namespace (or the operator
 runs unrestricted); without one, the domain is inactive and fail closed.
-The `MailServer` controller evaluates the grants for the domains attached
-to it at reconcile time; the API server enforces only the per-object
+The hostname of the server is granted the same way and is judged on its own,
+so a missing grant for it does not stop the server from serving its domains.
+The `MailServer` controller evaluates the grants for the hostname and the
+domains attached to it at reconcile time; the API server enforces only the per-object
 rules (schema, defaults, CEL).
 
 ## What is not here yet
