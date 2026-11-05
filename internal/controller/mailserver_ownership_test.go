@@ -55,7 +55,7 @@ var _ = Describe("MailServer object ownership", func() {
 			},
 		}
 		Expect(k8sClient.Create(ctx, foreign)).To(Succeed())
-		createServerG(ns, testServerName, domain, nil)
+		createServerG(ns, testServerName, nil)
 
 		reconcileServerG(newReconcilerG(AuthorizationAllowlist, true), ns, testServerName)
 
@@ -81,7 +81,7 @@ var _ = Describe("MailServer object ownership", func() {
 	Describe("pre-created content-named objects", func() {
 		var plane *manifests.DataPlane
 		BeforeEach(func() {
-			createServerG(ns, testServerName, domain, nil)
+			createServerG(ns, testServerName, nil)
 			server := &cnmsv1alpha1.MailServer{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testServerName, Namespace: ns}, server)).To(Succeed())
 			var err error
@@ -156,7 +156,7 @@ var _ = Describe("MailServer object ownership", func() {
 				Ports:    []corev1.ServicePort{{Name: "http", Port: 8080}},
 			},
 		})).To(Succeed())
-		createServerG(ns, testServerName, domain, nil)
+		createServerG(ns, testServerName, nil)
 		mgr := startManagerG()
 		Expect(mgr.GetCache().WaitForCacheSync(ctx)).To(BeTrue())
 		cached := &corev1.Service{}
@@ -179,7 +179,7 @@ var _ = Describe("MailServer object ownership", func() {
 	})
 
 	It("keeps updating the objects it controls", func() {
-		createServerG(ns, testServerName, domain, nil)
+		createServerG(ns, testServerName, nil)
 		r := newReconcilerG(AuthorizationAllowlist, true)
 		deployG(r, ns, testServerName)
 
@@ -233,7 +233,7 @@ var _ = Describe("MailServer object ownership", func() {
 			Expect(k8sClient.Create(ctx, monitor("lookalike", cnms))).To(Succeed())
 
 			enabled, disabled := prometheusEnabled, "disabled"
-			createServerG(ns, testServerName, domain, func(s *cnmsv1alpha1.MailServer) {
+			createServerG(ns, testServerName, func(s *cnmsv1alpha1.MailServer) {
 				s.Spec.Observability = &cnmsv1alpha1.Observability{PrometheusOperator: &enabled}
 			})
 			r := newReconcilerG(AuthorizationAllowlist, true)

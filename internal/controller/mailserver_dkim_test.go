@@ -99,7 +99,7 @@ var _ = Describe("MailServer DKIM keys", func() {
 		name = domainLabel(domain)
 		r = newReconcilerG(AuthorizationAllowlist, true)
 		env = newDomainEnvG(AuthorizationAllowlist)
-		createServerG(ns, testServerName, domain, nil)
+		createServerG(ns, testServerName, nil)
 	})
 
 	// useOwnKeys switches the MailDomain to bring-your-own keys.
@@ -274,11 +274,8 @@ var _ = Describe("MailServer DKIM keys", func() {
 
 	It("takes a revoked domain out of the signer, the guard and the pods", func() {
 		other := uniqueDomain()
-		createDomainG(ns, other)
+		createDomainG(ns, other, testServerName)
 		createGrantG(other, ns, false)
-		mutateServerG(ns, func(s *cnmsv1alpha1.MailServer) {
-			s.Spec.Domains = append(s.Spec.Domains, cnmsv1alpha1.NameReference{Name: domainLabel(other)})
-		})
 		env.reconcile(ns, name)
 		env.reconcile(ns, domainLabel(other))
 		deployG(r, ns, testServerName)

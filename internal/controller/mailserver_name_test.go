@@ -27,9 +27,9 @@ var _ = Describe("MailServer name limit", func() {
 	// The generated object names add up to 19 characters to the
 	// MailServer name (see maxServerNameLength in internal/manifests).
 	It("accepts 44 characters and rejects 45", func() {
-		ns, domain := grantFixture()
+		ns, _ := grantFixture()
 		create := func(name string) error {
-			return k8sClient.Create(ctx, newServerG(ns, name, domain, nil))
+			return k8sClient.Create(ctx, newServerG(ns, name, nil))
 		}
 		Expect(create(strings.Repeat("a", 44))).To(Succeed())
 		err := create(strings.Repeat("b", 45))

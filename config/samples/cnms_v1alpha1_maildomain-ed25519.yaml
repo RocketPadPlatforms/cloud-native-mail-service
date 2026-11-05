@@ -11,6 +11,8 @@ metadata:
   name: maildomain-ed25519-sample
 spec:
   domain: example.org
+  serverRef:
+    name: mailserver-sample
   dkim:
     ed25519: true
     rotation:

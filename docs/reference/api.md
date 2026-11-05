@@ -510,6 +510,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `domain` _string_ | Domain name, e.g. "example.org". Lowercase DNS name with at<br />least two labels of up to 63 characters (A-labels only, no<br />trailing dot). The last label starts with a letter, so an IP<br />address is not a domain. The same rule applies to the name of a<br />MailDomainGrant; keep the two patterns in sync. Immutable:<br />DKIM keys, DNS records and the domain authorization belong to<br />one domain; create a new MailDomain for another one. |  | MaxLength: 253 <br />Pattern: `^([a-z0-9]([a-z0-9-]\{0,61\}[a-z0-9])?[.])+[a-z]([a-z0-9-]\{0,61\}[a-z0-9])?$` <br />Required: \{\} <br /> |
+| `serverRef` _[NameReference](#namereference)_ | ServerRef references the MailServer in the same namespace that<br />serves the domain: it signs, accepts and delivers the mail of<br />the domain (ADR 0014). The server need not exist yet; the<br />ServerFound condition says whether it does. Mutable, which moves<br />the domain to another server: the DKIM keys and DNS records<br />stay with the MailDomain, but the mail data on the old server<br />(mailboxes, queued mail) does not move (see the how-to guide<br />for the risks). |  | Required: \{\} <br /> |
 | `dnsMode` _string_ | DNS mode: "manual" (default) reports the required records in<br />the status for the operator to create; "externalDNS" creates<br />DNSEndpoint resources. | manual | Enum: [manual externalDNS] <br />Optional: \{\} <br /> |
 | `dkim` _[DKIM](#dkim)_ | DKIM signing configuration. |  | Optional: \{\} <br /> |
 | `dmarc` _[DMARC](#dmarc)_ | DMARC policy. Records published by CNMS use DMARC1 semantics<br />(RFC 9989-9991). |  | Optional: \{\} <br /> |
@@ -535,7 +536,7 @@ _Appears in:_
 | `records` _[DNSRecord](#dnsrecord) array_ | Records lists every DNS record required by this domain and<br />whether a lookup verified it. The list is atomic: neither the<br />name nor name and type identify a record, because one name can<br />hold several records of the same type (MX, A). |  | MaxItems: 64 <br />Optional: \{\} <br /> |
 | `dkim` _[DKIMStatus](#dkimstatus)_ | DKIM reports the current signing state. |  | Optional: \{\} <br /> |
 | `mtaSts` _[MTAStSStatus](#mtastsstatus)_ | MTAStS reports the published policy state. |  | Optional: \{\} <br /> |
-| `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#condition-v1-meta) array_ | Conditions represent the current state of the MailDomain:<br />Authorized (the domain is granted to the namespace and unique),<br />DKIMKeysValid (every key is present and usable), DKIMRotation<br />(false while a new key waits for its DNS record),<br />RecordsVerified (a lookup found the required records),<br />DNSPublished (the DNSEndpoint is managed, externalDNS mode),<br />SPFReady (an SPF record can be generated), MTASTSReady (a policy<br />exists, when MTA-STS is enabled) and Ready. "Ready" is true when<br />the domain is authorized, the DKIM keys are valid and every<br />required record is verified. |  | Optional: \{\} <br /> |
+| `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#condition-v1-meta) array_ | Conditions represent the current state of the MailDomain:<br />Authorized (the domain is granted to the namespace and unique),<br />ServerFound (the MailServer in spec.serverRef exists; a warning<br />that never feeds into Ready), DKIMKeysValid (every key is present and usable), DKIMRotation<br />(false while a new key waits for its DNS record),<br />RecordsVerified (a lookup found the required records),<br />DNSPublished (the DNSEndpoint is managed, externalDNS mode),<br />SPFReady (an SPF record can be generated), MTASTSReady (a policy<br />exists, when MTA-STS is enabled) and Ready. "Ready" is true when<br />the domain is authorized, the DKIM keys are valid and every<br />required record is verified. |  | Optional: \{\} <br /> |
 
 
 #### MailServer
@@ -566,9 +567,11 @@ MailServer is the Schema for the cnms mail servers.
 MailServerSpec defines the desired state of a MailServer.
 
 A MailServer is a tenant-facing mail system: inbound and submission
-services, outbound delivery, mailboxes, and the set of domains it
-handles. Each MailServer is isolated from all others: own workloads,
-queues, IPs, DKIM keys and Rspamd/Valkey instances.
+services, outbound delivery and mailboxes. The domains it handles
+are the MailDomains of its namespace that reference it in
+spec.serverRef (status.domains lists them). Each MailServer is
+isolated from all others: own workloads, queues, IPs, DKIM keys and
+Rspamd/Valkey instances.
 
 
 
@@ -579,7 +582,6 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `directoryRef` _[NameReference](#namereference)_ | Directory used for recipient validation and user authentication.<br />References a MailDirectory in the same namespace. Optional: a<br />server without a directory needs another user source, which is<br />MailUser accounts (ADR 0008, not implemented yet) or, for tests,<br />submission.insecureStaticUsers. Without any user source the<br />server is not Ready (reason NoUserSource). |  | Optional: \{\} <br /> |
 | `outbound` _[Outbound](#outbound)_ | Outbound selects the outbound delivery mode. |  | Required: \{\} <br /> |
-| `domains` _[NameReference](#namereference) array_ | Domains handled by this mail server. They are signed with DKIM<br />(when enabled on the domain) and accepted for submission.<br />Each entry references a MailDomain in the same namespace. |  | MaxItems: 50 <br />MinItems: 1 <br />Required: \{\} <br /> |
 | `tls` _[TLS](#tls)_ | TLS for inbound, submission and outbound mail. The certificate<br />is managed by cert-manager from the referenced issuer. |  | Required: \{\} <br /> |
 | `inbound` _[Inbound](#inbound)_ | Inbound mail (port 25) service settings. |  | Optional: \{\} <br /> |
 | `submission` _[Submission](#submission)_ | Submission (port 587) settings. |  | Optional: \{\} <br /> |
@@ -607,6 +609,7 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `observedGeneration` _integer_ | ObservedGeneration is the generation of the spec last applied. |  | Optional: \{\} <br /> |
 | `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#condition-v1-meta) array_ | Conditions represent the current state of the MailServer. The<br />"Ready" condition is true when all managed workloads are<br />running with validated configuration. |  | Optional: \{\} <br /> |
+| `domains` _[ServerDomainStatus](#serverdomainstatus) array_ | Domains lists the MailDomains of the namespace that reference<br />this MailServer in spec.serverRef: those that are not served<br />first, then by name, at most 128 entries (the DomainsListed<br />condition says when the list is cut). It is derived from the<br />MailDomains and holds no state of its own. |  | MaxItems: 128 <br />Optional: \{\} <br /> |
 
 
 #### Mailboxes
@@ -641,6 +644,7 @@ isolation simple and requires no cross-namespace RBAC.
 
 _Appears in:_
 - [DirectOutbound](#directoutbound)
+- [MailDomainSpec](#maildomainspec)
 - [MailServerSpec](#mailserverspec)
 - [RelayOutbound](#relayoutbound)
 
@@ -826,6 +830,26 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `name` _string_ | Name of the Secret. |  | MaxLength: 253 <br />Pattern: `^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$` <br />Required: \{\} <br /> |
+
+
+#### ServerDomainStatus
+
+
+
+ServerDomainStatus reports one MailDomain that references the
+MailServer.
+
+
+
+_Appears in:_
+- [MailServerStatus](#mailserverstatus)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `name` _string_ | Name of the MailDomain object. |  | MaxLength: 253 <br />Required: \{\} <br /> |
+| `domain` _string_ | Domain is the domain name of the MailDomain (spec.domain). |  | MaxLength: 253 <br />Required: \{\} <br /> |
+| `served` _boolean_ | Served is true when the domain is authorized and part of the<br />configuration the operator renders for the server. Whether the<br />pods already run it is reported by the WorkloadsReady condition. |  |  |
+| `reason` _string_ | Reason why the domain is served or not (a reason of the<br />DomainsAuthorized condition, or the reason that blocks the<br />whole server). |  | MaxLength: 128 <br />Required: \{\} <br /> |
 
 
 #### Submission

@@ -1,5 +1,5 @@
 # DRAFT: part of a complete example scenario, not an agreed reference.
-# Two domains served by one MailServer. dnsMode manual: the required DNS
+# Two domains served by one MailServer (serverRef). dnsMode manual: the required DNS
 # records are listed in each MailDomain's status for you to create at
 # your DNS host. example.com uses generated keys (RSA plus an Ed25519
 # second signature); example.net brings its own keys (secrets.yaml).
@@ -12,6 +12,8 @@ metadata:
   name: example-com
 spec:
   domain: example.com
+  serverRef:
+    name: mail
   dnsMode: manual
   dkim:
     selectorPrefix: cnms
@@ -42,6 +44,8 @@ metadata:
   name: example-net
 spec:
   domain: example.net
+  serverRef:
+    name: mail
   dnsMode: manual
   dkim:
     keys:

@@ -18,6 +18,9 @@ spec:
     - jsonPath: .spec.domain
       name: Domain
       type: string
+    - jsonPath: .spec.serverRef.name
+      name: Server
+      type: string
     - jsonPath: .status.conditions[?(@.type=='Authorized')].status
       name: Authorized
       type: string
@@ -285,6 +288,25 @@ spec:
                     - none
                     type: string
                 type: object
+              serverRef:
+                description: |-
+                  ServerRef references the MailServer in the same namespace that
+                  serves the domain: it signs, accepts and delivers the mail of
+                  the domain (ADR 0014). The server need not exist yet; the
+                  ServerFound condition says whether it does. Mutable, which moves
+                  the domain to another server: the DKIM keys and DNS records
+                  stay with the MailDomain, but the mail data on the old server
+                  (mailboxes, queued mail) does not move (see the how-to guide
+                  for the risks).
+                properties:
+                  name:
+                    description: Name of the referenced resource.
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                    type: string
+                required:
+                - name
+                type: object
               spf:
                 description: 'SPF record generation: the sending sources of the domain.'
                 properties:
@@ -359,6 +381,7 @@ spec:
                 type: object
             required:
             - domain
+            - serverRef
             type: object
             x-kubernetes-validations:
             - message: tlsRpt.enabled requires a report address in tlsRpt.rua or dmarc.rua
@@ -371,7 +394,8 @@ spec:
                 description: |-
                   Conditions represent the current state of the MailDomain:
                   Authorized (the domain is granted to the namespace and unique),
-                  DKIMKeysValid (every key is present and usable), DKIMRotation
+                  ServerFound (the MailServer in spec.serverRef exists; a warning
+                  that never feeds into Ready), DKIMKeysValid (every key is present and usable), DKIMRotation
                   (false while a new key waits for its DNS record),
                   RecordsVerified (a lookup found the required records),
                   DNSPublished (the DNSEndpoint is managed, externalDNS mode),

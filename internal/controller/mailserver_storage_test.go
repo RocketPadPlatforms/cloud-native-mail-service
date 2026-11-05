@@ -37,9 +37,8 @@ var _ = Describe("MailServer storage and scale-down validation", func() {
 	// update creates a server with the given initial spec mutation,
 	// then applies the change and returns the update error.
 	update := func(initial, change func(*cnmsv1alpha1.MailServer)) error {
-		var domain string
-		ns, domain = grantFixture()
-		createServerG(ns, testServerName, domain, initial)
+		ns, _ = grantFixture()
+		createServerG(ns, testServerName, initial)
 		server := &cnmsv1alpha1.MailServer{}
 		Expect(k8sClient.Get(ctx, serverKey(ns), server)).To(Succeed())
 		change(server)

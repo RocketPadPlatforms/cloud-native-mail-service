@@ -32,7 +32,7 @@ import (
 // A shared ClusterIssuer lets every tenant obtain certificates from
 // it, so it needs the operator's opt-in (ADR 0003).
 var _ = Describe("MailServer ClusterIssuer gate", func() {
-	var ns, domain string
+	var ns string
 	getCertificate := func() error {
 		cert := &unstructured.Unstructured{}
 		cert.SetGroupVersionKind(certificateGVK)
@@ -41,8 +41,8 @@ var _ = Describe("MailServer ClusterIssuer gate", func() {
 
 	BeforeEach(func() {
 		installCertificateCRD()
-		ns, domain = grantFixture()
-		createServerG(ns, testServerName, domain, func(s *cnmsv1alpha1.MailServer) {
+		ns, _ = grantFixture()
+		createServerG(ns, testServerName, func(s *cnmsv1alpha1.MailServer) {
 			s.Spec.TLS.IssuerRef = cnmsv1alpha1.IssuerReference{Kind: clusterIssuerKind, Name: "shared"}
 		})
 	})

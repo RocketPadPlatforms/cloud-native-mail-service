@@ -45,12 +45,13 @@ var apiNSCounter int
 // Names shared by the cases of this file.
 const (
 	apiDomainName     = "dom"
+	apiServerName     = "srv"
 	apiDirectoryName  = "dir"
 	mtaStsName        = "mta-sts." + testDomain
 	ldapHostField     = "spec.ldap.host"
 	dmarcRuaField     = "spec.dmarc.rua"
 	domainField       = "spec.domain"
-	domainRefField    = "spec.domains[0].name"
+	serverRefField    = "spec.serverRef.name"
 	dkimSelectorField = "spec.dkim.keys[0].selector"
 	spfIncludeField   = "spec.spf.include"
 	algRSA            = "rsa"
@@ -83,19 +84,28 @@ func runAPICases(cases []apiCase) {
 // createServer creates a valid MailServer in ns after applying mutate.
 func createServer(mutate func(*cnmsv1alpha1.MailServer)) func(string) error {
 	return func(ns string) error {
-		ms := validMailServer("srv")
+		ms := validMailServer(apiServerName)
 		ms.Namespace = ns
 		mutate(ms)
 		return k8sClient.Create(ctx, ms)
 	}
 }
 
-// createDomain creates a valid MailDomain "dom" for example.org in ns
-// after applying mutate, and returns it with the create error.
+// apiDomainMeta is the metadata of the MailDomain of the unstructured cases.
+func apiDomainMeta(ns string) map[string]any {
+	return map[string]any{"name": apiDomainName, "namespace": ns}
+}
+
+// createDomain creates a valid MailDomain "dom" for example.org on the
+// server "srv" in ns after applying mutate, and returns it with the
+// create error.
 func createDomain(ns string, mutate func(*cnmsv1alpha1.MailDomain)) (*cnmsv1alpha1.MailDomain, error) {
 	d := &cnmsv1alpha1.MailDomain{
 		ObjectMeta: metav1.ObjectMeta{Name: apiDomainName, Namespace: ns},
-		Spec:       cnmsv1alpha1.MailDomainSpec{Domain: testDomain},
+		Spec: cnmsv1alpha1.MailDomainSpec{
+			Domain:    testDomain,
+			ServerRef: cnmsv1alpha1.NameReference{Name: apiServerName},
+		},
 	}
 	if mutate != nil {
 		mutate(d)
@@ -275,8 +285,11 @@ var _ = Describe("API validation of DKIM rotation", func() {
 			u := &unstructured.Unstructured{Object: map[string]any{
 				"apiVersion": cnmsv1alpha1.GroupVersion.String(),
 				"kind":       "MailDomain",
-				"metadata":   map[string]any{"name": apiDomainName, "namespace": ns},
-				"spec":       map[string]any{"domain": testDomain},
+				"metadata":   apiDomainMeta(ns),
+				"spec": map[string]any{
+					"domain":    testDomain,
+					"serverRef": map[string]any{"name": apiServerName},
+				},
 			}}
 			r := map[string]any{"interval": interval}
 			if overlap != nil {
@@ -462,7 +475,10 @@ var _ = Describe("API validation of the MailDomain name", func() {
 		return func(ns string) error {
 			d := &cnmsv1alpha1.MailDomain{
 				ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
-				Spec:       cnmsv1alpha1.MailDomainSpec{Domain: testDomain},
+				Spec: cnmsv1alpha1.MailDomainSpec{
+					Domain:    testDomain,
+					ServerRef: cnmsv1alpha1.NameReference{Name: apiServerName},
+				},
 			}
 			return k8sClient.Create(ctx, d)
 		}
@@ -549,10 +565,20 @@ var _ = Describe("API validation of storage and topology spread", func() {
 })
 
 var _ = Describe("API validation of references", func() {
-	domains := func(name string) func(string) error {
-		return createServer(func(ms *cnmsv1alpha1.MailServer) {
-			ms.Spec.Domains = []cnmsv1alpha1.NameReference{{Name: name}}
-		})
+	serverRef := func(name string) func(string) error {
+		return func(ns string) error {
+			_, err := createDomain(ns, func(d *cnmsv1alpha1.MailDomain) { d.Spec.ServerRef.Name = name })
+			return err
+		}
+	}
+	noServerRef := func(ns string) error {
+		u := &unstructured.Unstructured{Object: map[string]any{
+			"apiVersion": cnmsv1alpha1.GroupVersion.String(),
+			"kind":       "MailDomain",
+			"metadata":   apiDomainMeta(ns),
+			"spec":       map[string]any{"domain": testDomain},
+		}}
+		return k8sClient.Create(ctx, u)
 	}
 	tlsSecret := func(name string) func(string) error {
 		return createServer(func(ms *cnmsv1alpha1.MailServer) { ms.Spec.TLS.SecretName = &name })
@@ -565,10 +591,12 @@ var _ = Describe("API validation of references", func() {
 		})
 	}
 	runAPICases([]apiCase{
-		{name: "accepts a domain reference named after the domain", mutate: domains(testDomain)},
-		{name: "rejects a reference with an upper-case letter", mutate: domains("Example.org"), wantErr: domainRefField},
-		{name: "rejects a reference with an empty label", mutate: domains("example..org"), wantErr: domainRefField},
-		{name: "rejects a reference ending in a dot", mutate: domains("example.org."), wantErr: domainRefField},
+		{name: "accepts a server reference with dots", mutate: serverRef("mail.example")},
+		{name: "rejects a MailDomain without a server reference", mutate: noServerRef, wantErr: "spec.serverRef"},
+		{name: "rejects a server reference with an upper-case letter", mutate: serverRef("Mail"), wantErr: serverRefField},
+		{name: "rejects a server reference with an empty label", mutate: serverRef("mail..example"), wantErr: serverRefField},
+		{name: "rejects a server reference ending in a dot", mutate: serverRef("mail."), wantErr: serverRefField},
+		{name: "rejects an empty server reference", mutate: serverRef(""), wantErr: serverRefField},
 		{name: "accepts a TLS secret name with dots", mutate: tlsSecret("example.org-tls")},
 		{name: "rejects a TLS secret name with an underscore", mutate: tlsSecret("example_org"), wantErr: "spec.tls.secretName"},
 		{name: "accepts a bind secret name with dots", mutate: bindSecret("ldap.bind")},
@@ -585,9 +613,16 @@ var _ = Describe("API validation of MailDomain updates", func() {
 			return k8sClient.Update(ctx, d)
 		}
 	}
+	move := func(ns string) error {
+		d, err := createDomain(ns, nil)
+		Expect(err).NotTo(HaveOccurred())
+		d.Spec.ServerRef.Name = otherServer
+		return k8sClient.Update(ctx, d)
+	}
 	runAPICases([]apiCase{
 		{name: "accepts an update that keeps the domain", mutate: update(testDomain)},
 		{name: "rejects changing the domain", mutate: update("example.net"), wantErr: "domain is immutable"},
+		{name: "accepts moving the domain to another server", mutate: move},
 	})
 })
 
@@ -607,40 +642,57 @@ var _ = Describe("API validation of Valkey persistence", func() {
 	})
 })
 
-var _ = Describe("MailServer printer columns", func() {
-	It("shows the relay of a relay server", func() {
-		apiNSCounter++
-		ns := fmt.Sprintf("cnms-api-%d", apiNSCounter)
-		Expect(k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}})).To(Succeed())
+// printerCell returns the cell of a printer column of one object, as
+// kubectl get shows it.
+func printerCell(ns, plural, name, column string) any {
+	c := rest.CopyConfig(cfg)
+	c.NegotiatedSerializer = scheme.Codecs.WithoutConversion()
+	restClient, err := rest.UnversionedRESTClientFor(c)
+	Expect(err).NotTo(HaveOccurred())
+	raw, err := restClient.Get().
+		AbsPath("/apis/cnms.rpp.gmbh/v1alpha1/namespaces/"+ns+"/"+plural+"/"+name).
+		SetHeader("Accept", "application/json;as=Table;g=meta.k8s.io;v=v1").
+		DoRaw(ctx)
+	Expect(err).NotTo(HaveOccurred())
+
+	// Only the parts of the Table the check needs.
+	var table struct {
+		ColumnDefinitions []struct{ Name string }
+		Rows              []struct{ Cells []any }
+	}
+	Expect(json.Unmarshal(raw, &table)).To(Succeed())
+	Expect(table.Rows).To(HaveLen(1))
+	for i, col := range table.ColumnDefinitions {
+		if col.Name == column {
+			return table.Rows[0].Cells[i]
+		}
+	}
+	Fail("no " + column + " column")
+	return nil
+}
+
+func newAPINamespace() string {
+	apiNSCounter++
+	ns := fmt.Sprintf("cnms-api-%d", apiNSCounter)
+	Expect(k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}})).To(Succeed())
+	return ns
+}
+
+var _ = Describe("printer columns", func() {
+	It("shows the relay of a relay MailServer", func() {
+		ns := newAPINamespace()
 		Expect(createServer(func(ms *cnmsv1alpha1.MailServer) {
 			ms.Spec.Outbound = cnmsv1alpha1.Outbound{
 				Relay: &cnmsv1alpha1.RelayOutbound{RelayRef: cnmsv1alpha1.NameReference{Name: "smarthost"}},
 			}
 		})(ns)).To(Succeed())
+		Expect(printerCell(ns, "mailservers", apiServerName, "Relay")).To(Equal("smarthost"))
+	})
 
-		c := rest.CopyConfig(cfg)
-		c.NegotiatedSerializer = scheme.Codecs.WithoutConversion()
-		restClient, err := rest.UnversionedRESTClientFor(c)
+	It("shows the server of a MailDomain", func() {
+		ns := newAPINamespace()
+		_, err := createDomain(ns, nil)
 		Expect(err).NotTo(HaveOccurred())
-		raw, err := restClient.Get().
-			AbsPath("/apis/cnms.rpp.gmbh/v1alpha1/namespaces/"+ns+"/mailservers/srv").
-			SetHeader("Accept", "application/json;as=Table;g=meta.k8s.io;v=v1").
-			DoRaw(ctx)
-		Expect(err).NotTo(HaveOccurred())
-
-		// Only the parts of the Table the check needs.
-		var table struct {
-			ColumnDefinitions []struct{ Name string }
-			Rows              []struct{ Cells []any }
-		}
-		Expect(json.Unmarshal(raw, &table)).To(Succeed())
-		Expect(table.Rows).To(HaveLen(1))
-		for i, col := range table.ColumnDefinitions {
-			if col.Name == "Relay" {
-				Expect(table.Rows[0].Cells[i]).To(Equal("smarthost"))
-				return
-			}
-		}
-		Fail("no Relay column")
+		Expect(printerCell(ns, "maildomains", apiDomainName, "Server")).To(Equal(apiServerName))
 	})
 })

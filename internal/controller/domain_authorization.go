@@ -44,9 +44,9 @@ const (
 	// referenced domains are authorized: only those are rendered, and
 	// the blocked ones leave the data plane with the next rollout.
 	ReasonPartiallyAuthorized = "PartiallyAuthorized"
-	// ReasonDomainNotFound is set when a referenced MailDomain is
-	// missing.
-	ReasonDomainNotFound = "DomainNotFound"
+	// ReasonNoDomains is set when no MailDomain references the server:
+	// there is nothing to serve.
+	ReasonNoDomains = "NoDomains"
 )
 
 // domainAuthorizationMode selects how MailServer domains are
@@ -78,6 +78,7 @@ type domainClaim struct {
 	name      string // MailDomain object name
 	namespace string
 	domain    string // spec.domain
+	serverRef string // spec.serverRef.name
 }
 
 // grantRef is one MailDomainGrant.
@@ -109,7 +110,17 @@ type authorization struct {
 	// when none is authorized.
 	domains  []string
 	failures []domainFailure
+	// attached has one entry per MailDomain that references the
+	// server, sorted by MailDomain name.
+	attached []attachedDomain
 	mode     domainAuthorizationMode
+}
+
+// attachedDomain is one MailDomain that references the server and its
+// verdict: failure is nil for an authorized one.
+type attachedDomain struct {
+	name, domain string
+	failure      *domainFailure
 }
 
 // domainFailure is one domain that is not authorized.
@@ -126,6 +137,9 @@ func (a authorization) all() bool { return len(a.failures) == 0 }
 // authorized domains left it is PartiallyAuthorized; otherwise it is
 // the reason of the first failure. The message lists every failure.
 func (a authorization) condition() (string, string) {
+	if len(a.attached) == 0 {
+		return ReasonNoDomains, noDomainsMessage
+	}
 	if a.all() {
 		if a.mode == AuthorizationUnrestricted {
 			return ReasonAuthorizationDisabled, "domain authorization is disabled (--domain-authorization=unrestricted)"
@@ -146,26 +160,38 @@ func (a authorization) condition() (string, string) {
 	return reason, msg
 }
 
-// Evaluate checks every domain the server references (ADR 0003).
+// Evaluate checks every MailDomain that references the server (ADR
+// 0003, 0014): those of the server's namespace whose spec.serverRef
+// names it. A domain that stops referencing the server, or is deleted,
+// is no longer in the result, so it is revoked like one whose grant is
+// gone.
 func (e *authorizationEvaluator) Evaluate() authorization {
 	res := authorization{mode: e.mode}
-	fail := func(reason, format string, args ...any) {
-		res.failures = append(res.failures, domainFailure{reason, fmt.Sprintf(format, args...)})
-	}
-	for _, ref := range e.server.Spec.Domains {
-		claim := e.claim(ref.Name)
-		if claim == nil {
-			fail(ReasonDomainNotFound, "MailDomain %q not found in namespace %q", ref.Name, e.server.Namespace)
-			continue
-		}
-		if f := e.authorize(e.server.Namespace, claim.domain); f != nil {
-			res.failures = append(res.failures, *f)
+	for _, claim := range e.attached() {
+		a := attachedDomain{name: claim.name, domain: claim.domain, failure: e.authorize(e.server.Namespace, claim.domain)}
+		res.attached = append(res.attached, a)
+		if a.failure != nil {
+			res.failures = append(res.failures, *a.failure)
 			continue
 		}
 		res.domains = append(res.domains, claim.domain)
 	}
 	slices.Sort(res.domains)
 	return res
+}
+
+// attached returns the claims that reference the server, sorted by
+// name. It filters the list the evaluator was given, which already holds
+// every MailDomain: no extra read is needed.
+func (e *authorizationEvaluator) attached() []domainClaim {
+	var out []domainClaim
+	for _, c := range e.claims {
+		if c.namespace == e.server.Namespace && c.serverRef == e.server.Name {
+			out = append(out, c)
+		}
+	}
+	slices.SortFunc(out, func(a, b domainClaim) int { return strings.Compare(a.name, b.name) })
+	return out
 }
 
 // authorize decides whether a MailDomain of namespace may use domain:
@@ -184,16 +210,6 @@ func (e *authorizationEvaluator) authorize(namespace, domain string) *domainFail
 		return &domainFailure{ReasonDuplicateDomain, fmt.Sprintf(
 			"domain %q is claimed by %d MailDomain objects; every claimant is blocked until the duplicate is resolved",
 			domain, n)}
-	}
-	return nil
-}
-
-// claim looks up the MailDomain object ref in the server's namespace.
-func (e *authorizationEvaluator) claim(name string) *domainClaim {
-	for i := range e.claims {
-		if e.claims[i].name == name && e.claims[i].namespace == e.server.Namespace {
-			return &e.claims[i]
-		}
 	}
 	return nil
 }
@@ -267,6 +283,7 @@ func domainClaims(list *cnmsv1alpha1.MailDomainList) []domainClaim {
 			name:      d.Name,
 			namespace: d.Namespace,
 			domain:    d.Spec.Domain,
+			serverRef: d.Spec.ServerRef.Name,
 		})
 	}
 	return claims

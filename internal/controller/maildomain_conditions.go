@@ -25,6 +25,11 @@ const (
 	// (ADR 0003). It reuses the reasons of DomainsAuthorized and adds
 	// ReasonPublicSuffix.
 	ConditionAuthorized = "Authorized"
+	// ConditionServerFound is false with ReasonServerNotFound while the
+	// MailServer in spec.serverRef does not exist (ADR 0014). The
+	// domain still authorizes, generates keys and reports its records.
+	// It is a warning only: it never feeds into Ready.
+	ConditionServerFound = "ServerFound"
 	// ConditionDKIMKeysValid is true when every DKIM key is present and
 	// parses as RSA of at least 2048 bits or Ed25519.
 	ConditionDKIMKeysValid = "DKIMKeysValid"
@@ -56,6 +61,12 @@ const (
 const (
 	// ReasonPublicSuffix is set when the domain is a public suffix.
 	ReasonPublicSuffix = "PublicSuffix"
+	// ReasonServerFound is set when the MailServer in spec.serverRef
+	// exists.
+	ReasonServerFound = "ServerFound"
+	// ReasonServerNotFound is set when the MailServer in
+	// spec.serverRef does not exist.
+	ReasonServerNotFound = "ServerNotFound"
 	// ReasonAwaitingDNS is set while the record of a pending DKIM key
 	// is not verified.
 	ReasonAwaitingDNS = "AwaitingDNS"
@@ -87,7 +98,9 @@ const (
 	// ReasonSPFGenerated is set when an SPF record can be generated.
 	ReasonSPFGenerated = "SPFGenerated"
 	// ReasonNoMailServer is set when MTA-STS is enabled and no
-	// MailServer lists the domain, so the policy has no mx host.
+	// MailServer in spec.serverRef serves the domain (it does not
+	// exist, or does not authorize the domain), so the policy has no
+	// mx host.
 	ReasonNoMailServer = "NoMailServer"
 	// ReasonPolicyAvailable is set when the MTA-STS policy is in the
 	// status.

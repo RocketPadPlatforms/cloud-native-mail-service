@@ -31,8 +31,8 @@ import (
 // it was read (a spec edit, a label) does not make the write fail.
 var _ = Describe("MailServer status write", func() {
 	It("persists the status although the object changed since it was read", func() {
-		ns, domain := grantFixture()
-		createServerG(ns, testServerName, domain, nil)
+		ns, _ := grantFixture()
+		createServerG(ns, testServerName, nil)
 		key := types.NamespacedName{Name: testServerName, Namespace: ns}
 		stale := &cnmsv1alpha1.MailServer{}
 		Expect(k8sClient.Get(ctx, key, stale)).To(Succeed())

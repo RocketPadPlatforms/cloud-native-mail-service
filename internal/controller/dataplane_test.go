@@ -90,16 +90,16 @@ func (c *staleWorkloadsClient) Get(ctx context.Context, key client.ObjectKey, ob
 }
 
 var _ = Describe("MailServer validation gate", func() {
-	var ns, domain string
+	var ns string
 	var r *MailServerReconciler
 	enableMailboxes := func(s *cnmsv1alpha1.MailServer) {
 		s.Spec.Mailboxes = &cnmsv1alpha1.Mailboxes{Enabled: new(true)}
 	}
 	BeforeEach(func() {
-		ns, domain = grantFixture()
+		ns, _ = grantFixture()
 		r = newReconcilerG(AuthorizationAllowlist, true)
 		createTLSSecretG(ns, "mail-tls")
-		createServerG(ns, "mail", domain, nil)
+		createServerG(ns, "mail", nil)
 	})
 
 	It("creates the Jobs and holds back the workloads until they succeed", func() {

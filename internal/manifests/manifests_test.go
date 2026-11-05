@@ -56,7 +56,6 @@ func testServer(t *testing.T, mutate func(*cnmsv1alpha1.MailServer)) *cnmsv1alph
 	server.Namespace = testNamespace
 	server.Spec.DirectoryRef = &cnmsv1alpha1.NameReference{Name: "dir"}
 	server.Spec.Outbound.Direct = &cnmsv1alpha1.DirectOutbound{}
-	server.Spec.Domains = []cnmsv1alpha1.NameReference{{Name: "dom"}}
 	server.Spec.TLS.IssuerRef = cnmsv1alpha1.IssuerReference{Kind: "Issuer", Name: "selfsigned"}
 	if mutate != nil {
 		mutate(server)

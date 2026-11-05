@@ -50,9 +50,8 @@ var _ = Describe("StatefulSet volume claim template changes", func() {
 		failNew bool
 	)
 	BeforeEach(func() {
-		var domain string
-		ns, domain = grantFixture()
-		createServerG(ns, testServerName, domain, nil)
+		ns, _ = grantFixture()
+		createServerG(ns, testServerName, nil)
 		deployG(newReconcilerG(AuthorizationAllowlist, true), ns, testServerName)
 		server = &cnmsv1alpha1.MailServer{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testServerName, Namespace: ns}, server)).To(Succeed())

@@ -25,9 +25,6 @@ spec:
     name: corp-ldap
   outbound:
     direct: {}
-  domains:
-    - name: example-com
-    - name: example-net
   tls:
     issuerRef:
       kind: Issuer
