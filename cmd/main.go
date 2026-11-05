@@ -226,7 +226,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := controller.IndexMailDomains(mgr); err != nil {
+	if err := controller.IndexFields(mgr); err != nil {
 		setupLog.Error(err, "Failed to index MailDomains")
 		os.Exit(1)
 	}

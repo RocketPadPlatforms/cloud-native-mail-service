@@ -25,9 +25,10 @@ import (
 	cnmsv1alpha1 "github.com/RocketPadPlatforms/cloud-native-mail-service/api/v1alpha1"
 )
 
-// Field indexes of MailDomains. The watch map functions use them; the
-// reconcilers filter the lists they already load (ADR 0014), because a
-// field selector on a List is only valid against the cache.
+// Field indexes of MailDomains and MailServers. The watch map functions
+// use them; the reconcilers filter the lists they already load (ADR
+// 0014), because a field selector on a List is only valid against the
+// cache.
 const (
 	// mailDomainDomainIndex indexes by spec.domain: uniqueness is
 	// evaluated across namespaces, so a claim must find the other
@@ -36,13 +37,18 @@ const (
 	// mailDomainServerIndex indexes by spec.serverRef.name: a MailServer
 	// must find the MailDomains that reference it.
 	mailDomainServerIndex = "spec.serverRef.name"
+	// mailServerHostnameIndex indexes MailServers by spec.hostname: the
+	// hostname is unique across namespaces, so a server must find the
+	// other claimants of its hostname, and a MailDomain apex the
+	// servers presenting it.
+	mailServerHostnameIndex = "spec.hostname"
 )
 
-// IndexMailDomains registers the MailDomain field indexes. Call it
-// exactly once per manager, before the MailServer and MailDomain
-// reconcilers are set up: both need the indexes, and a manager rejects
-// the same index twice.
-func IndexMailDomains(mgr ctrl.Manager) error {
+// IndexFields registers the field indexes of MailDomains and
+// MailServers. Call it exactly once per manager, before the MailServer
+// and MailDomain reconcilers are set up: both need the indexes, and a
+// manager rejects the same index twice.
+func IndexFields(mgr ctrl.Manager) error {
 	idx := mgr.GetFieldIndexer()
 	for field, extract := range map[string]client.IndexerFunc{
 		mailDomainDomainIndex: indexMailDomainByDomain,
@@ -52,7 +58,7 @@ func IndexMailDomains(mgr ctrl.Manager) error {
 			return err
 		}
 	}
-	return nil
+	return idx.IndexField(context.Background(), &cnmsv1alpha1.MailServer{}, mailServerHostnameIndex, indexMailServerByHostname)
 }
 
 // indexMailDomainByDomain is the extractor of mailDomainDomainIndex.
@@ -71,4 +77,13 @@ func indexMailDomainByServer(obj client.Object) []string {
 		return nil
 	}
 	return []string{d.Spec.ServerRef.Name}
+}
+
+// indexMailServerByHostname is the extractor of mailServerHostnameIndex.
+func indexMailServerByHostname(obj client.Object) []string {
+	s, ok := obj.(*cnmsv1alpha1.MailServer)
+	if !ok || s.Spec.Hostname == "" {
+		return nil
+	}
+	return []string{s.Spec.Hostname}
 }

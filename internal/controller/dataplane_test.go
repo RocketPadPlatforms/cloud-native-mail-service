@@ -98,7 +98,7 @@ var _ = Describe("MailServer validation gate", func() {
 	BeforeEach(func() {
 		ns, _ = grantFixture()
 		r = newReconcilerG(AuthorizationAllowlist, true)
-		createTLSSecretG(ns, "mail-tls")
+		createTLSSecretG(ns)
 		createServerG(ns, "mail", nil)
 	})
 

@@ -169,7 +169,7 @@ func startManagerG(setups ...func(ctrl.Manager) error) ctrl.Manager {
 		Controller: config.Controller{SkipNameValidation: new(true)},
 	})
 	Expect(err).ToNot(HaveOccurred())
-	Expect(IndexMailDomains(mgr)).To(Succeed())
+	Expect(IndexFields(mgr)).To(Succeed())
 	for _, setup := range setups {
 		Expect(setup(mgr)).To(Succeed())
 	}

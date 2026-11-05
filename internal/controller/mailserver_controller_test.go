@@ -30,6 +30,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	policyv1 "k8s.io/api/policy/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -155,9 +156,24 @@ func serverHostnameG(ns, name string) string {
 
 // createServerG creates a MailServer; mutate applies spec overrides
 // before creation. The domains it serves are the MailDomains that
-// reference it.
+// reference it. The hostname is granted to the namespace, so the server
+// authorizes in allowlist mode (createUngrantedServerG does not).
 func createServerG(ns, name string, mutate func(*cnmsv1alpha1.MailServer)) {
-	Expect(k8sClient.Create(ctx, newServerG(ns, name, mutate))).To(Succeed())
+	s := newServerG(ns, name, mutate)
+	Expect(k8sClient.Create(ctx, s)).To(Succeed())
+	g := &cnmsv1alpha1.MailDomainGrant{
+		ObjectMeta: metav1.ObjectMeta{Name: s.Spec.Hostname},
+		Spec:       cnmsv1alpha1.MailDomainGrantSpec{Namespace: ns},
+	}
+	if err := k8sClient.Create(ctx, g); !apierrors.IsAlreadyExists(err) {
+		Expect(err).NotTo(HaveOccurred())
+	}
+}
+
+// createUngrantedServerG creates the MailServer testServerName without
+// a grant for its hostname.
+func createUngrantedServerG(ns string, mutate func(*cnmsv1alpha1.MailServer)) {
+	Expect(k8sClient.Create(ctx, newServerG(ns, testServerName, mutate))).To(Succeed())
 }
 
 // newServerG builds the MailServer createServerG creates.

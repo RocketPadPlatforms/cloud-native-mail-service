@@ -88,7 +88,7 @@ func TestAuthorizationEvaluate(t *testing.T) {
 			grants:      []cnmsv1alpha1.MailDomainGrant{grant(testDomain, tenantA, true)},
 			domains:     []cnmsv1alpha1.MailDomain{domain(tenantA, "mail.example.org", "mail.example.org")},
 			mode:        AuthorizationAllowlist,
-			wantDomains: []string{"mail.example.org"},
+			wantDomains: []string{hostMail},
 			wantReason:  ReasonAuthorized,
 		},
 		{
@@ -109,7 +109,7 @@ func TestAuthorizationEvaluate(t *testing.T) {
 			},
 			domains:     []cnmsv1alpha1.MailDomain{domain("tenant-b", "mail.example.org", "mail.example.org")},
 			mode:        AuthorizationAllowlist,
-			wantDomains: []string{"mail.example.org"},
+			wantDomains: []string{hostMail},
 			wantReason:  ReasonAuthorized,
 		},
 		{
