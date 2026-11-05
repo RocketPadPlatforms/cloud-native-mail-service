@@ -4,10 +4,10 @@ Thanks for contributing to Cloud Native Mail Service (CNMS).
 
 ## Development setup
 
-Requirements: Go 1.26+, Node.js 20+ (for the docs site). On NixOS the Go
-toolchain can be obtained with `nix-shell -p go_1_26` (or newer). If your home
-directory does not allow creating new top-level directories, point Go's caches
-at a writable location, e.g.:
+Requirements: the Go version in `go.mod`, Node.js 20+ (for the docs site). On
+NixOS the Go toolchain can be obtained with `nix-shell -p go_1_27` (matching
+the version in `go.mod`). If your home directory does not allow creating new
+top-level directories, point Go's caches at a writable location, e.g.:
 
 ```sh
 export GOPATH="$HOME/.cache/go" GOMODCACHE="$HOME/.cache/go-mod"

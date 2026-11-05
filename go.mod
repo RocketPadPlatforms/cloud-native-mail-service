@@ -1,6 +1,6 @@
 module github.com/RocketPadPlatforms/cloud-native-mail-service
 
-go 1.26.0
+go 1.27.3
 
 require (
 	github.com/emersion/go-msgauth v0.7.0
