@@ -23,6 +23,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 
 	cnmsv1alpha1 "github.com/RocketPadPlatforms/cloud-native-mail-service/api/v1alpha1"
@@ -168,7 +169,8 @@ var _ = Describe("MailServer hostname authorization", func() {
 
 // The hostname is what the server presents: it replaces the domains on
 // the certificate and in HELO, a failing one does not take the domains
-// down, and a revoked one is replaced like a revoked domain (ADR 0014).
+// down, and a revoked one is dropped from the certificate without
+// replacing the running domains (ADR 0014).
 var _ = Describe("MailServer hostname rendering", func() {
 	var ns, domain string
 	var r *MailServerReconciler
@@ -224,10 +226,13 @@ var _ = Describe("MailServer hostname rendering", func() {
 		Expect(status).To(Equal(metav1.ConditionTrue))
 	})
 
-	// finishClosedJobs lets the validation Jobs of the fail-closed render
-	// (which presents hostname) pass and leaves the others running, or
-	// fails them.
-	finishClosedJobs := func(hostname string, rejected bool) {
+	// closedJobsG lists the Postfix validation Jobs that exist for the
+	// fail-closed render (which presents hostname); the other
+	// components render the same configuration either way. The domains
+	// of the server are served by the running pods until such a render
+	// is applied, and applying it takes every domain down: inbound mail
+	// is rejected with a permanent 554.
+	closedJobsG := func(hostname string) []string {
 		server := &cnmsv1alpha1.MailServer{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testServerName, Namespace: ns}, server)).To(Succeed())
 		plane, err := renderDataPlane(server, nil, hostname, nil, nil)
@@ -236,55 +241,139 @@ var _ = Describe("MailServer hostname rendering", func() {
 		for _, v := range plane.Validations {
 			closed[v.Job.Name] = true
 		}
-		jobs := jobsG(ns, testServerName, "")
-		for i := range jobs {
-			switch {
-			case len(jobs[i].Status.Conditions) > 0:
-			case closed[jobs[i].Name]:
-				finishJobG(&jobs[i], true)
-			case rejected:
-				finishJobG(&jobs[i], false)
+		var existing []string
+		for _, j := range jobsG(ns, testServerName, "postfix") {
+			if closed[j.Name] {
+				existing = append(existing, j.Name)
 			}
 		}
+		return existing
+	}
+	// expectDomainsServed checks that the running pods still carry the
+	// domain and the name they presented before.
+	expectDomainsServed := func(presented string) {
+		cf := postfixMainCFG(ns)
+		Expect(cf).To(ContainSubstring("virtual_mailbox_domains = " + domain + "\n"))
+		Expect(cf).To(ContainSubstring("\nmyhostname = " + presented + "\n"))
 	}
 
 	// A hostname that is revoked while the new configuration is still
-	// validating is still presented by the running pods: the fail-closed
-	// render replaces them, as for a revoked domain.
+	// validating (or was rejected) does not take the domains down: the
+	// Certificate no longer lists it and the running pods keep serving
+	// their domains until the new revision is validated and rolled out.
 	for _, rejected := range []bool{false, true} {
-		It(fmt.Sprintf("replaces the running data plane when the hostname is revoked while another change is validating (rejected=%t)", rejected), func() {
+		It(fmt.Sprintf("keeps the domains served when the hostname is revoked while another change is validating (rejected=%t)", rejected), func() {
 			mutateServerG(ns, func(s *cnmsv1alpha1.MailServer) {
 				s.Spec.Submission = &cnmsv1alpha1.Submission{Enabled: new(false)}
 			})
 			reconcileServerG(r, ns, testServerName)
 			revokeHostname(testHostnameG(ns))
 			reconcileServerG(r, ns, testServerName)
-			finishClosedJobs("", rejected)
+			if rejected {
+				finishJobsG(ns, testServerName, false)
+			}
 			reconcileServerG(r, ns, testServerName)
 
-			cf := postfixMainCFG(ns)
-			Expect(cf).ToNot(ContainSubstring("virtual_mailbox_domains"))
-			Expect(cf).To(ContainSubstring("\nmyhostname = " + own() + "\n"))
+			Expect(closedJobsG("")).To(BeEmpty())
+			expectDomainsServed(testHostnameG(ns))
 			Expect(certificateDNSNamesG(ns)).To(ConsistOf(own()))
 		})
 	}
 
-	It("treats a rename as the revocation of the old name", func() {
-		renamed := serverHostnameG(ns, "renamed")
+	// A rename is a revocation of the old name, but only of the name:
+	// there is no window in which the domains are rejected.
+	It("keeps the domains served during a rename and presents the new name once rolled out", func() {
+		old, renamed := testHostnameG(ns), serverHostnameG(ns, "renamed")
 		createGrantG(renamed, ns, false)
 		mutateServerG(ns, withHostname(renamed))
 		reconcileServerG(r, ns, testServerName)
 		// The new configuration is validating while the pods still
-		// present the old name: the fail-closed render replaces them.
-		finishClosedJobs(renamed, false)
+		// present the old name.
+		Expect(closedJobsG(renamed)).To(BeEmpty())
+		expectDomainsServed(old)
+		Expect(certificateDNSNamesG(ns)).To(ConsistOf(renamed))
 		reconcileServerG(r, ns, testServerName)
-		Expect(postfixMainCFG(ns)).ToNot(ContainSubstring("virtual_mailbox_domains"))
+		Expect(closedJobsG(renamed)).To(BeEmpty())
+		expectDomainsServed(old)
 
 		settle()
-		cf := postfixMainCFG(ns)
-		Expect(cf).To(ContainSubstring("\nmyhostname = " + renamed + "\n"))
-		Expect(cf).To(ContainSubstring("virtual_mailbox_domains = " + domain + "\n"))
+		expectDomainsServed(renamed)
 		Expect(certificateDNSNamesG(ns)).To(ConsistOf(renamed))
+	})
+
+	// While the server is blocked for another reason the new render is
+	// not applied, but a hostname change still never takes the domains
+	// down: only the Certificate is re-applied, so it carries just the
+	// authorized name. The running pods keep presenting the old name
+	// until the next validated rollout.
+	deleteDirectory := func() {
+		Expect(k8sClient.Delete(ctx, &cnmsv1alpha1.MailDirectory{
+			ObjectMeta: metav1.ObjectMeta{Name: directoryName, Namespace: ns},
+		})).To(Succeed())
+	}
+
+	It("keeps the domains served and re-applies the Certificate when the hostname is revoked while the directory is missing", func() {
+		cert := &unstructured.Unstructured{}
+		cert.SetGroupVersionKind(certificateGVK)
+		cert.SetName(testServerName)
+		cert.SetNamespace(ns)
+		Expect(k8sClient.Delete(ctx, cert)).To(Succeed())
+		deleteDirectory()
+		revokeHostname(testHostnameG(ns))
+		reconcileServerG(r, ns, testServerName)
+
+		Expect(certificateDNSNamesG(ns)).To(ConsistOf(own()))
+		Expect(closedJobsG("")).To(BeEmpty())
+		expectDomainsServed(testHostnameG(ns))
+		_, reason, _ := serverConditionG(ns, testServerName, conditionReady)
+		Expect(reason).To(Equal(ReasonDirectoryNotFound))
+	})
+
+	It("keeps the domains served and presents the new name on the Certificate when a rename meets a missing directory", func() {
+		renamed := serverHostnameG(ns, "renamed")
+		createGrantG(renamed, ns, false)
+		deleteDirectory()
+		mutateServerG(ns, withHostname(renamed))
+		reconcileServerG(r, ns, testServerName)
+
+		Expect(certificateDNSNamesG(ns)).To(ConsistOf(renamed))
+		Expect(closedJobsG(renamed)).To(BeEmpty())
+		expectDomainsServed(testHostnameG(ns))
+	})
+
+	// After a revoked hostname has rolled out the pods present the
+	// Service name; a later block must not read that as a reason to
+	// fail the domains closed.
+	It("keeps the domains served when the server is blocked after a revoked hostname rolled out", func() {
+		revokeHostname(testHostnameG(ns))
+		settle()
+		convergeWorkloadsG(ns)
+		expectDomainsServed(own())
+
+		deleteDirectory()
+		reconcileServerG(r, ns, testServerName)
+		Expect(closedJobsG("")).To(BeEmpty())
+		expectDomainsServed(own())
+		Expect(certificateDNSNamesG(ns)).To(ConsistOf(own()))
+		_, reason, _ := serverConditionG(ns, testServerName, conditionReady)
+		Expect(reason).To(Equal(ReasonDirectoryNotFound))
+	})
+
+	// A server stored by an older version has the domains on its
+	// Certificate; its first reconcile while blocked replaces them
+	// and does not fail the domains closed.
+	It("replaces the domains an older version put on the Certificate without failing closed while the directory is missing", func() {
+		cert := &unstructured.Unstructured{}
+		cert.SetGroupVersionKind(certificateGVK)
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testServerName, Namespace: ns}, cert)).To(Succeed())
+		Expect(unstructured.SetNestedStringSlice(cert.Object, []string{domain}, "spec", "dnsNames")).To(Succeed())
+		Expect(k8sClient.Update(ctx, cert)).To(Succeed())
+		deleteDirectory()
+		reconcileServerG(r, ns, testServerName)
+
+		Expect(certificateDNSNamesG(ns)).To(ConsistOf(testHostnameG(ns)))
+		Expect(closedJobsG(testHostnameG(ns))).To(BeEmpty())
+		expectDomainsServed(testHostnameG(ns))
 	})
 })
 

@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -75,16 +76,22 @@ func requestKeys(reqs []reconcile.Request) []string {
 func TestMapDomainServersCoversEveryClaimantsServer(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(watchTestScheme(t)).
 		WithIndex(&cnmsv1alpha1.MailDomain{}, mailDomainDomainIndex, indexMailDomainByDomain).
+		WithIndex(&cnmsv1alpha1.MailServer{}, mailServerHostnameIndex, indexMailServerByHostname).
 		WithObjects(
 			domainClaimIn("a", "x", "example.org", "s1"),
 			domainClaimIn("b", "y", "example.org", "s2"),
 			domainClaimIn("c", "z", "other.example", "s3"),
+			// A server of the namespace whose hostname is the domain
+			// reports its SPF record according to the domain; one of
+			// another namespace does not.
+			serverWithHostname("a", "apex", "example.org"),
+			serverWithHostname("b", "apex", "example.org"),
 		).Build()
 	r := &MailServerReconciler{Client: c}
 
 	got := requestKeys(r.mapDomainServers(context.Background(), domainClaimIn("a", "x", "example.org", "s1")))
-	if len(got) != 2 || got[0] != "a/s1" || got[1] != "b/s2" {
-		t.Errorf("mapDomainServers = %v, want [a/s1 b/s2]", got)
+	if want := []string{"a/apex", "a/s1", "b/s2"}; !slices.Equal(got, want) {
+		t.Errorf("mapDomainServers = %v, want %v", got, want)
 	}
 
 	// A deleted claim (not in the cache any more) still reaches the
@@ -308,4 +315,10 @@ func mailServerSetup(mode domainAuthorizationMode) func(ctrl.Manager) error {
 			DomainAuthorization: mode,
 		}).SetupWithManager(m)
 	}
+}
+
+func serverWithHostname(ns, name, hostname string) *cnmsv1alpha1.MailServer {
+	s := serverIn(ns, name)
+	s.Spec.Hostname = hostname
+	return s
 }
