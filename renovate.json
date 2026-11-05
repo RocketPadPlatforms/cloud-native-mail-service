@@ -9,6 +9,7 @@
   "ignorePresets": [":ignoreModulesAndTests"],
   "ignorePaths": ["**/node_modules/**", "**/vendor/**"],
   "prConcurrentLimit": 10,
+  "postUpdateOptions": ["gomodTidy"],
   "packageRules": [
     {
       "description": "Tooling (CI actions, docs tooling): only patch updates may be merged automatically.",
