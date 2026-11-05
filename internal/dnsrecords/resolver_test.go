@@ -19,8 +19,11 @@ package dnsrecords
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
+	"net/netip"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -33,6 +36,10 @@ type answer struct {
 	rcode dnsmessage.RCode
 	// txt holds one entry per TXT record, each a list of character-strings.
 	txt [][]string
+	// a and aaaa hold the addresses of the A and AAAA records.
+	a, aaaa []string
+	// mx holds the MX records as "<preference> <host>".
+	mx []string
 	// drop makes the server stay silent.
 	drop bool
 }
@@ -83,11 +90,30 @@ func respond(query []byte, answers map[string]answer) ([]byte, bool) {
 		Header:    dnsmessage.Header{ID: h.ID, Response: true, Authoritative: true, RCode: rcode},
 		Questions: []dnsmessage.Question{q},
 	}
-	for _, strs := range a.txt {
-		msg.Answers = append(msg.Answers, dnsmessage.Resource{
-			Header: dnsmessage.ResourceHeader{Name: q.Name, Type: dnsmessage.TypeTXT, Class: dnsmessage.ClassINET, TTL: 60},
-			Body:   &dnsmessage.TXTResource{TXT: strs},
-		})
+	hdr := func(t dnsmessage.Type) dnsmessage.ResourceHeader {
+		return dnsmessage.ResourceHeader{Name: q.Name, Type: t, Class: dnsmessage.ClassINET, TTL: 60}
+	}
+	// Only the records of the asked type are answered, as a server does.
+	switch q.Type {
+	case dnsmessage.TypeTXT:
+		for _, strs := range a.txt {
+			msg.Answers = append(msg.Answers, dnsmessage.Resource{Header: hdr(q.Type), Body: &dnsmessage.TXTResource{TXT: strs}})
+		}
+	case dnsmessage.TypeA:
+		for _, s := range a.a {
+			msg.Answers = append(msg.Answers, dnsmessage.Resource{Header: hdr(q.Type), Body: &dnsmessage.AResource{A: netip.MustParseAddr(s).As4()}})
+		}
+	case dnsmessage.TypeAAAA:
+		for _, s := range a.aaaa {
+			msg.Answers = append(msg.Answers, dnsmessage.Resource{Header: hdr(q.Type), Body: &dnsmessage.AAAAResource{AAAA: netip.MustParseAddr(s).As16()}})
+		}
+	case dnsmessage.TypeMX:
+		for _, s := range a.mx {
+			var pref uint16
+			var host string
+			_, _ = fmt.Sscanf(s, "%d %s", &pref, &host)
+			msg.Answers = append(msg.Answers, dnsmessage.Resource{Header: hdr(q.Type), Body: &dnsmessage.MXResource{Pref: pref, MX: dnsmessage.MustNewName(host)}})
+		}
 	}
 	out, err := msg.Pack()
 	return out, err == nil
@@ -96,12 +122,12 @@ func respond(query []byte, answers map[string]answer) ([]byte, bool) {
 func TestNetResolver(t *testing.T) {
 	long := strings.Repeat("x", 255)
 	addr := startDNS(t, map[string]answer{
-		"one.example.org":      {txt: [][]string{{spfNone}}},
-		"split.example.org":    {txt: [][]string{{"v=DKIM1; k=rsa; ", "p=abc", long}}},
-		"two.example.org":      {txt: [][]string{{"first"}, {"second"}}},
-		"nodata.example.org":   {},
-		"servfail.example.org": {rcode: dnsmessage.RCodeServerFailure},
-		"silent.example.org":   {drop: true},
+		"one.example.org":    {txt: [][]string{{spfNone}}},
+		"split.example.org":  {txt: [][]string{{"v=DKIM1; k=rsa; ", "p=abc", long}}},
+		"two.example.org":    {txt: [][]string{{"first"}, {"second"}}},
+		"nodata.example.org": {},
+		nameServfail:         {rcode: dnsmessage.RCodeServerFailure},
+		nameSilent:           {drop: true},
 	})
 	r, err := NewNetResolver(addr, 300*time.Millisecond)
 	if err != nil {
@@ -135,7 +161,7 @@ func TestNetResolver(t *testing.T) {
 	}
 
 	t.Run("servfail is temporary", func(t *testing.T) {
-		_, err := r.LookupTXT(context.Background(), "servfail.example.org")
+		_, err := r.LookupTXT(context.Background(), nameServfail)
 		if err == nil || errors.Is(err, ErrNotFound) {
 			t.Fatalf("got %v, want a temporary error", err)
 		}
@@ -143,7 +169,7 @@ func TestNetResolver(t *testing.T) {
 
 	t.Run("timeout is temporary and bounded", func(t *testing.T) {
 		start := time.Now()
-		_, err := r.LookupTXT(context.Background(), "silent.example.org")
+		_, err := r.LookupTXT(context.Background(), nameSilent)
 		if err == nil || errors.Is(err, ErrNotFound) {
 			t.Fatalf("got %v, want a temporary error", err)
 		}
@@ -157,7 +183,7 @@ func TestNetResolver(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 		defer cancel()
 		start := time.Now()
-		_, err := slow.LookupTXT(ctx, "silent.example.org")
+		_, err := slow.LookupTXT(ctx, nameSilent)
 		if err == nil || errors.Is(err, ErrNotFound) || time.Since(start) > 3*time.Second {
 			t.Fatalf("got %v after %s", err, time.Since(start))
 		}
@@ -168,6 +194,60 @@ func TestNetResolver(t *testing.T) {
 		cancel()
 		if _, err := r.LookupTXT(ctx, "one.example.org"); err == nil || errors.Is(err, ErrNotFound) {
 			t.Fatalf("got %v, want a temporary error", err)
+		}
+	})
+}
+
+func TestNetResolverAddressesAndMX(t *testing.T) {
+	addr := startDNS(t, map[string]answer{
+		"both.example.org":    {a: []string{ip4Host, ip4Other}, aaaa: []string{"2001:db8::9"}},
+		"v4.example.org":      {a: []string{ip4Host}},
+		"mx.example.org":      {mx: []string{"20 backup.example.net.", "10 Mail.example.org."}},
+		"txtonly.example.org": {txt: [][]string{{spfNone}}},
+		nameServfail:          {rcode: dnsmessage.RCodeServerFailure},
+		nameSilent:            {drop: true},
+	})
+	r, err := NewNetResolver(addr, 300*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	t.Run("host returns A and AAAA", func(t *testing.T) {
+		got, err := r.LookupHost(ctx, "Both.Example.org.")
+		slices.Sort(got)
+		if want := []string{"2001:db8::9", ip4Other, ip4Host}; err != nil || !reflect.DeepEqual(got, want) {
+			t.Fatalf("got %q, %v; want %q", got, err, want)
+		}
+	})
+	t.Run("mx returns hosts without the dot and in lower case", func(t *testing.T) {
+		got, err := r.LookupMX(ctx, "mx.example.org")
+		slices.SortFunc(got, func(a, b MX) int { return int(a.Pref) - int(b.Pref) })
+		if want := []MX{{testHostname, 10}, {"backup.example.net", 20}}; err != nil || !reflect.DeepEqual(got, want) {
+			t.Fatalf("got %v, %v; want %v", got, err, want)
+		}
+	})
+	t.Run("not found is definitive", func(t *testing.T) {
+		for _, name := range []string{"missing.example.org", "txtonly.example.org"} {
+			if _, err := r.LookupHost(ctx, name); !errors.Is(err, ErrNotFound) {
+				t.Errorf("host %s: got %v, want ErrNotFound", name, err)
+			}
+			if _, err := r.LookupMX(ctx, name); !errors.Is(err, ErrNotFound) {
+				t.Errorf("mx %s: got %v, want ErrNotFound", name, err)
+			}
+		}
+		if _, err := r.LookupMX(ctx, "v4.example.org"); !errors.Is(err, ErrNotFound) {
+			t.Errorf("a name without MX: got %v, want ErrNotFound", err)
+		}
+	})
+	t.Run("servfail and timeout are temporary", func(t *testing.T) {
+		for _, name := range []string{nameServfail, nameSilent} {
+			if _, err := r.LookupHost(ctx, name); err == nil || errors.Is(err, ErrNotFound) {
+				t.Errorf("host %s: got %v, want a temporary error", name, err)
+			}
+			if _, err := r.LookupMX(ctx, name); err == nil || errors.Is(err, ErrNotFound) {
+				t.Errorf("mx %s: got %v, want a temporary error", name, err)
+			}
 		}
 	})
 }
@@ -212,5 +292,31 @@ func TestFakeResolver(t *testing.T) {
 	f.Delete("a.example.org")
 	if _, err := f.LookupTXT(ctx, "a.example.org"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("got %v", err)
+	}
+
+	f.SetHost("H.example.org.", ip4Host)
+	f.SetMX("h.example.org", MX{testHostname, 10})
+	if got, err := f.LookupHost(ctx, "h.example.org"); err != nil || !reflect.DeepEqual(got, []string{ip4Host}) {
+		t.Fatalf("host: got %q, %v", got, err)
+	}
+	if got, err := f.LookupMX(ctx, "h.example.org"); err != nil || !reflect.DeepEqual(got, []MX{{testHostname, 10}}) {
+		t.Fatalf("mx: got %v, %v", got, err)
+	}
+	if _, err := f.LookupTXT(ctx, "h.example.org"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("kinds are separate: got %v", err)
+	}
+	f.SetError("h.example.org", boom)
+	if _, err := f.LookupHost(ctx, "h.example.org"); !errors.Is(err, boom) {
+		t.Fatalf("host error: got %v", err)
+	}
+	if _, err := f.LookupMX(ctx, "h.example.org"); !errors.Is(err, boom) {
+		t.Fatalf("mx error: got %v", err)
+	}
+	f.Delete("h.example.org")
+	if _, err := f.LookupHost(ctx, "h.example.org"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("host after delete: got %v", err)
+	}
+	if _, err := f.LookupMX(ctx, "h.example.org"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("mx after delete: got %v", err)
 	}
 }

@@ -26,16 +26,29 @@ import (
 )
 
 // ErrNotFound is returned (wrapped) by a Resolver when the name does not
-// exist or has no TXT record: an authoritative "no". Every other error is
-// temporary (timeout, SERVFAIL, cancelled context) and means "unknown"
-// (ADR 0012).
-var ErrNotFound = errors.New("no TXT record found")
+// exist or has no record of the asked kind: an authoritative "no". Every
+// other error is temporary (timeout, SERVFAIL, cancelled context) and
+// means "unknown" (ADR 0012).
+var ErrNotFound = errors.New("no record found")
 
-// Resolver is the DNS lookup the controller needs. Each returned string
-// is one TXT record with its character-strings joined, so several
-// records at one name are several strings.
+// MX is one mail exchanger of a name.
+type MX struct {
+	// Host is the lower-case name without a trailing dot.
+	Host string
+	Pref uint16
+}
+
+// Resolver is the DNS lookup the controller needs.
 type Resolver interface {
+	// LookupTXT returns the TXT records at name. Each returned string
+	// is one record with its character-strings joined, so several
+	// records at one name are several strings.
 	LookupTXT(ctx context.Context, name string) ([]string, error)
+	// LookupHost returns the addresses (A and AAAA records) of name, in
+	// text form.
+	LookupHost(ctx context.Context, name string) ([]string, error)
+	// LookupMX returns the MX records at name.
+	LookupMX(ctx context.Context, name string) ([]MX, error)
 }
 
 // DefaultTimeout bounds one lookup of a NetResolver.
@@ -77,9 +90,45 @@ func (n *NetResolver) LookupTXT(ctx context.Context, name string) ([]string, err
 	ctx, cancel := context.WithTimeout(ctx, n.timeout)
 	defer cancel()
 	txts, err := n.resolver.LookupTXT(ctx, strings.TrimSuffix(name, ".")+".")
+	return txts, notFound(err, "TXT", name)
+}
+
+// LookupHost implements Resolver.
+//
+// shortcut: net.Resolver also reads /etc/hosts (nsswitch "files" first)
+// and has no DNS-only lookup, so a hosts entry of the operator pod can
+// verify an address record that the zone does not hold; replace it with
+// a DNS-only client when that matters (docs/backlog.md).
+func (n *NetResolver) LookupHost(ctx context.Context, name string) ([]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, n.timeout)
+	defer cancel()
+	addrs, err := n.resolver.LookupHost(ctx, strings.TrimSuffix(name, ".")+".")
+	return addrs, notFound(err, "A or AAAA", name)
+}
+
+// LookupMX implements Resolver. Records with an invalid host name are
+// dropped by net.Resolver, which reports that as an error next to the
+// valid ones: the valid ones count.
+func (n *NetResolver) LookupMX(ctx context.Context, name string) ([]MX, error) {
+	ctx, cancel := context.WithTimeout(ctx, n.timeout)
+	defer cancel()
+	records, err := n.resolver.LookupMX(ctx, strings.TrimSuffix(name, ".")+".")
+	out := make([]MX, 0, len(records))
+	for _, r := range records {
+		out = append(out, MX{Host: strings.ToLower(strings.TrimSuffix(r.Host, ".")), Pref: r.Pref})
+	}
+	if len(out) > 0 {
+		return out, nil
+	}
+	return nil, notFound(err, "MX", name)
+}
+
+// notFound turns the authoritative "no such name or record" of the
+// net package into ErrNotFound and leaves other errors alone.
+func notFound(err error, kind, name string) error {
 	var dnsErr *net.DNSError
 	if errors.As(err, &dnsErr) && dnsErr.IsNotFound {
-		return nil, fmt.Errorf("%w at %s", ErrNotFound, name)
+		return fmt.Errorf("%w: no %s record at %s", ErrNotFound, kind, name)
 	}
-	return txts, err
+	return err
 }

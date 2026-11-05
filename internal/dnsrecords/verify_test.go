@@ -173,7 +173,7 @@ func TestEvaluateComposedRecordsVerifyAgainstThemselves(t *testing.T) {
 	res, err := Compose(Input{
 		Domain: testDomain,
 		DKIM:   []DKIMKey{{"a", edKey(t)}, {"b", rsaKey(t)}},
-		SPF:    &SPF{IP4: []string{ip4Host}, IP6: []string{"2001:db8::1"}},
+		SPF:    &SPF{IP4: []string{ip4Host}, IP6: []string{ip6Host}},
 		DMARC:  &DMARC{Policy: policyReject, Testing: true, Rua: "a@example.org", Ruf: "b@example.org"},
 		MTASTS: &MTASTS{MX: []string{mx1}},
 		TLSRPT: &TLSRPT{Rua: "t@example.org"},

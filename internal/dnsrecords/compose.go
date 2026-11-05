@@ -20,6 +20,7 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
+	"net/netip"
 	"slices"
 	"strings"
 
@@ -32,7 +33,9 @@ import (
 // MTASTSMaxAge is the max_age of the reported policy: one week.
 const MTASTSMaxAge = 604800
 
-var purposeRank = map[Purpose]int{PurposeDKIM: 0, PurposeSPF: 1, PurposeDMARC: 2, PurposeMTASTS: 3, PurposeTLSRPT: 4}
+var purposeRank = map[Purpose]int{
+	PurposeDKIM: 0, PurposeSPF: 1, PurposeDMARC: 2, PurposeMTASTS: 3, PurposeTLSRPT: 4, PurposeMX: 5, PurposeAddress: 6,
+}
 
 // Input is what the records are composed from. A nil section means the
 // feature is off. The types are plain on purpose: the controller maps
@@ -46,6 +49,10 @@ type Input struct {
 	DMARC  *DMARC
 	MTASTS *MTASTS
 	TLSRPT *TLSRPT
+	// MXHost is the hostname of the MailServer of the domain, the target
+	// of the MX record. Empty when no server serves the domain with an
+	// authorized hostname: no MX record is required then.
+	MXHost string
 }
 
 // DKIMKey is a published DKIM key.
@@ -177,8 +184,72 @@ func Compose(in Input) (Composed, error) {
 			res.Records = append(res.Records, txt("_smtp._tls."+domain, PurposeTLSRPT, "v=TLSRPTv1; rua=mailto:"+rua))
 		}
 	}
+	if in.MXHost != "" {
+		res.Records = append(res.Records, Record{
+			Name: domain, Type: TypeMX, Purpose: PurposeMX,
+			Values: []string{fmt.Sprintf("%d %s", MXPreference, strings.ToLower(in.MXHost))},
+		})
+	}
 	sortRecords(res.Records)
 	return res, nil
+}
+
+// ServerInput is what the records of a MailServer hostname are composed
+// from (ADR 0014).
+type ServerInput struct {
+	// Hostname is the authorized hostname of the server.
+	Hostname string
+	// Addresses are the IP addresses of the inbound Service, in text form.
+	Addresses []string
+	// SPF lists the sending sources of the server (IP4 and IP6 only).
+	// With none no SPF record is required.
+	SPF *SPF
+	// SkipSPF omits the SPF record: a MailDomain of the same name already
+	// carries one, and a name holds only one.
+	SkipSPF bool
+}
+
+// ComposeServer returns the records of a server hostname: an A or AAAA
+// record for every address, then the SPF record of the hostname. The
+// record of the HELO identity ends in -all: only the server sources send
+// as the hostname. The output is deterministic. It fails on a value that
+// is not an IP address.
+func ComposeServer(in ServerInput) ([]Record, error) {
+	host := strings.ToLower(in.Hostname)
+	if host == "" {
+		return nil, errors.New("hostname is empty")
+	}
+	var v4, v6 []string
+	for _, a := range in.Addresses {
+		addr, err := netip.ParseAddr(a)
+		if err != nil {
+			return nil, fmt.Errorf("%q is not an IP address", a)
+		}
+		if addr = addr.Unmap(); addr.Is4() {
+			v4 = append(v4, addr.String())
+		} else {
+			v6 = append(v6, addr.String())
+		}
+	}
+	var recs []Record
+	for _, l := range []struct {
+		typ  string
+		list []string
+	}{{TypeA, v4}, {TypeAAAA, v6}} {
+		for _, v := range slices.Compact(slices.Sorted(slices.Values(l.list))) {
+			recs = append(recs, Record{Name: host, Type: l.typ, Purpose: PurposeAddress, Values: []string{v}})
+		}
+	}
+	if in.SPF != nil && !in.SkipSPF {
+		src := *in.SPF
+		src.Include, src.Qualifier = nil, "fail"
+		if v, ok, err := spfValue(src); err != nil {
+			return nil, err
+		} else if ok {
+			recs = append(recs, txt(host, PurposeSPF, v))
+		}
+	}
+	return recs, nil
 }
 
 // sortRecords orders records by purpose, then name.
