@@ -26,7 +26,9 @@ the new CRDs reject or prune the old field names.
   `serverRef` and the new CRD prunes `spec.domains`, so neither operator
   version finds a domain for the server. It is then `Ready=False` with
   reason `NoDomains` and its running data plane is re-rendered fail
-  closed (mail is deferred, not lost) until the objects are re-applied.
+  closed (Postfix rejects every recipient with a permanent `554 5.7.1`,
+  so senders get a bounce; submission is off) until the objects are
+  re-applied.
   In commands: `kubectl -n cloud-native-mail-service-system scale
   deployment cloud-native-mail-service-controller-manager --replicas=0`,
   then `make install` (CRDs only), then `kubectl apply` of the edited
@@ -41,6 +43,66 @@ the new CRDs reject or prune the old field names.
   printer column `Server` on `MailDomain`. The reason `DomainNotFound` is
   gone. Deleting a `MailDomain` now takes it off its server with the
   next validated rollout.
+- **`MailServer.spec.hostname` is required** ([ADR
+  0014](../decisions/0014-domain-server-binding-and-hostname.md), part B).
+  It is the name the server presents: Postfix `myhostname` and HELO, the
+  name of the certificate, the target of the MX records of its domains
+  and the `mx` host of their MTA-STS policies. Before, that name was the
+  first domain the server served, in sorted order. Same order of steps as
+  above (operator to 0, CRDs, re-apply, start the operator); a stored
+  `MailServer` without `hostname` is rejected on its next spec write.
+  Per server: choose the hostname
+  (for example `mail.<your domain>`), have the platform admin grant it
+  with a `MailDomainGrant` of its own (or `includeSubdomains` on the
+  grant of the parent domain), create its `A` and `AAAA` records at the
+  inbound address (`status.records` lists them), and point the `MX`
+  records of the domains at it (`status.records` of each `MailDomain`
+  lists them). The hostname must be unique among the servers
+  that compete for it, and a name below `cluster.local` is refused. What
+  changes on a running server:
+  - the certificate lists the hostname only, no longer the domains:
+    submission, IMAP and LMTP clients must connect to the hostname (or
+    verify it), not to the domain. The Certificate is reissued at once
+    and the pods pick the new one up by reload, so there is a short
+    window of the old names on a rolled-out revision;
+  - the HELO name and the origin of bounces are the hostname, and its
+    SPF record (`status.records`) should be published;
+  - the `mx` host of an MTA-STS policy is the hostname: publish the new
+    policy and `_mta-sts` record before the old server name stops
+    answering;
+  - an ACME issuer cannot validate the hostname with HTTP-01, because the
+    mail load balancer does not serve HTTP; use DNS-01 or a private CA
+    ([how-to](../how-to/dkim-keys-and-dns-records.mdx));
+  - a hostname that is not authorized does not take the server down: it
+    presents the in-cluster name of its Postfix Service, keeps serving
+    its domains and is `Ready=False` with reason `HostnameNotAuthorized`
+    or `DuplicateHostname`. The same holds for a rename: the domains stay
+    served while the new revision rolls out, and the pods present the old
+    name until then. A hostname change never fails the domains closed,
+    also not while the server is blocked for another reason (for
+    example a missing `MailDirectory`): only the Certificate is
+    re-applied, and the pods keep the old name until the next validated
+    rollout;
+  - a server stored by an earlier snapshot of `main` has the domains on
+    its Certificate and no hostname in its spec. If it is blocked at the
+    time of the upgrade (directory, users Secret or issuer missing), its
+    first reconcile does not fail closed: the domains stay served, the
+    Certificate is re-applied with the authorized hostname (or the
+    in-cluster Service name until `spec.hostname` is granted), and the
+    pods change with the next validated rollout.
+  New: `MailServer.status.records`, the conditions `HostnameAuthorized`,
+  `AddressRecords` and `RecordsVerified` on the `MailServer`, the reason
+  `HostnameNotAuthorized` of `MTASTSReady`, the `MX` record in
+  `MailDomain.status.records` and the printer column `Hostname`. The
+  `MailServer` controller now verifies DNS records too, so
+  `--dns-resolver` applies to it as well.
+- **`MailServer.spec.spf` lists the sending sources of the server**
+  (`ip4`, `ip6`), and `MailDomain.spec.spf` is additive to it: the SPF
+  record of a domain lists the sources of its server and its own `ip4`,
+  `ip6` and `include`. The sources every domain of a server shares move
+  to the server; a `MailDomain` that keeps them lists the same address
+  twice in the object, but once in the record. The server's sources do
+  not apply to a domain it does not serve.
 - **`MailDomain.spec.dkim.selector` is now `selectorPrefix`.** The
   selector of a key is `<prefix>-<yyyymmdd>`; the selectors in use are
   in `status.dkim`. Rename the field in your manifests. The CRD no
@@ -83,11 +145,10 @@ the new CRDs reject or prune the old field names.
   `MailDomain` is deleted) and the annotation `cnms.rpp.gmbh/rotation`.
   Tell your GitOps tool to ignore that annotation. An unauthorized
   domain gets neither. Its status lists the required DNS records.
-- **The MTA-STS policy lists the host of the `MailServer`** in
-  `spec.serverRef` when it serves the domain (the primary domain of the
-  server). Without such a server
-  `MTASTSReady` is `False` with reason `NoMailServer` and there is no
-  policy. The `MailDomain` controller needs `get`, `list` and `watch` on
+- **The MTA-STS policy lists the hostname of the `MailServer`** in
+  `spec.serverRef` when it serves the domain and the hostname is
+  authorized. Without such a server `MTASTSReady` is `False` with reason
+  `NoMailServer` (or `HostnameNotAuthorized`) and there is no policy. The `MailDomain` controller needs `get`, `list` and `watch` on
   `mailservers` (the operator role has them already).
 - **New operator flag `--dns-resolver=host:port`** (default: the system
   resolver of the pod) for the verification of the records.
