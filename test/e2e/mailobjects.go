@@ -135,6 +135,8 @@ metadata:
   namespace: cnms-e2e
 spec:
   domain: e2e.example.org
+  serverRef:
+    name: mail
 ---
 apiVersion: cnms.rpp.gmbh/v1alpha1
 kind: MailServer
@@ -146,8 +148,6 @@ spec:
     name: sql-e2e
   outbound:
     direct: {}
-  domains:
-    - name: e2eexampleorg
   tls:
     issuerRef:
       kind: Issuer

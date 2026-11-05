@@ -35,8 +35,16 @@ import (
 
 // The MailDomains of the DKIM specs. They are served by the fixture
 // MailServer next to e2e.example.org; their names sort after it, so the
-// server's host name (the first sorted domain, ADR 0003) does not change.
+// server's host name (the first sorted domain, ADR 0014) does not change.
 const (
+	// dkimDetached is a MailServer that does not exist: the domains start
+	// there, so their keys and records exist before the fixture server
+	// serves them. The setup attaches them with one patch each, so the
+	// server may roll out once per patch; awaitKeysServed waits for both.
+	dkimDetached = "dkim-detached"
+	// e2eServer is the fixture MailServer.
+	e2eServer = "mail"
+
 	dkimGenName   = "dkim-generated"
 	dkimGenDomain = "gen.e2e.example.org"
 	dkimOwnName   = "dkim-own"
@@ -90,7 +98,7 @@ func registerDKIMSpecs() {
 			Expect(err).NotTo(HaveOccurred())
 			applyOwnKeySecret(ownKeyPEM)
 
-			By("granting and creating the two MailDomains")
+			By("granting and creating the two MailDomains, not yet served")
 			kubectlApplyYAML(dkimDomainsYAML())
 
 			By("waiting for the keys and the required records")
@@ -113,10 +121,11 @@ func registerDKIMSpecs() {
 			publishZone(slices.Concat(gen.Status.Records, own.Status.Records))
 
 			By("serving both domains from the MailServer")
-			out, err = kubectl("patch", "mailserver", "mail", "-n", e2eNamespace, "--type", "json", "-p",
-				fmt.Sprintf(`[{"op":"add","path":"/spec/domains/-","value":{"name":%q}},`+
-					`{"op":"add","path":"/spec/domains/-","value":{"name":%q}}]`, dkimGenName, dkimOwnName))
-			Expect(err).NotTo(HaveOccurred(), "patch output: %s", out)
+			for _, name := range []string{dkimGenName, dkimOwnName} {
+				out, err = kubectl("patch", "maildomain", name, "-n", e2eNamespace, "--type", "merge", "-p",
+					fmt.Sprintf(`{"spec":{"serverRef":{"name":%q}}}`, e2eServer))
+				Expect(err).NotTo(HaveOccurred(), "patch output: %s", out)
+			}
 		})
 
 		AfterAll(func() {
@@ -344,9 +353,10 @@ func registerDKIMSpecs() {
 	})
 }
 
-// dkimDomainsYAML is the grants and the two MailDomains of the specs. The
-// generated domain signs with RSA and Ed25519; the other uses the key of
-// the Secret the specs create.
+// dkimDomainsYAML is the grants and the two MailDomains of the specs,
+// which reference a server that does not exist (dkimDetached) until the
+// setup moves them to the fixture server. The generated domain signs with
+// RSA and Ed25519; the other uses the key of the Secret the specs create.
 func dkimDomainsYAML() string {
 	return fmt.Sprintf(`
 apiVersion: cnms.rpp.gmbh/v1alpha1
@@ -370,6 +380,8 @@ metadata:
   namespace: %[1]s
 spec:
   domain: %[2]s
+  serverRef:
+    name: %[9]s
   dkim:
     ed25519: true
 ---
@@ -380,6 +392,8 @@ metadata:
   namespace: %[1]s
 spec:
   domain: %[4]s
+  serverRef:
+    name: %[9]s
   dkim:
     keys:
       - selector: %[6]s
@@ -387,11 +401,11 @@ spec:
           name: %[7]s
           key: %[8]s
 `, e2eNamespace, dkimGenDomain, dkimGenName, dkimOwnDomain, dkimOwnName,
-		dkimOwnSelector, dkimOwnSecret, dkimOwnDataKey)
+		dkimOwnSelector, dkimOwnSecret, dkimOwnDataKey, dkimDetached)
 }
 
 // awaitKeysServed waits until the Rspamd pods mount the keys of both
-// domains and the MailServer has rolled out. The domains are added to the
+// domains and the MailServer has rolled out. The domains are moved to the
 // MailServer in the setup; the new configuration is validated first and
 // rolled out one workload at a time.
 func awaitKeysServed() {
