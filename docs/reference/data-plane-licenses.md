@@ -1,23 +1,25 @@
 # Data-plane images
 
-The [Go dependency report](third-party-licenses.md) covers the operator
-binary only. The data-plane software runs as separate programs in
-container images and is not linked into the operator. Licences were
-checked against the upstream licence files of the pinned versions
-(`internal/images/images.go`); this page is maintained by hand and
+The [Go dependency report](third-party-licenses.md) covers the Go
+packages of the operator and its tests. The data-plane software runs as
+separate programs in container images and is not linked into the
+operator. Licences were
+checked against the upstream licence files of the pinned versions. The
+versions are in `internal/images/images.go` and are not repeated here,
+so version bumps do not change this page. It is maintained by hand and
 re-checked when an image major version changes (project plan, section 9).
 
-| Component | Version | Licence | Image |
-|---|---|---|---|
-| Postfix | 3.11.7 | EPL-2.0 or IPL-1.0 (dual, recipient's choice) | Built by CNMS from the upstream source tarball (`images/postfix`) |
-| Rspamd | 4.2.3 | Apache-2.0 | Upstream `rspamd/rspamd` |
-| Dovecot | 2.4.5 | MIT (`src/lib`, `src/auth`, `src/lib-sql`), LGPL-2.1 (the rest) | Upstream `dovecot/dovecot` |
-| Valkey | 9.1.2 | BSD-3-Clause (Valkey contributors, plus BSD-3-Clause code from Redis) | Upstream `valkey/valkey` |
-| redis_exporter | v1.96.0 | MIT | Upstream `oliver006/redis_exporter` |
-| Mailpit (e2e sink only) | v1.32.0 | MIT | Upstream `axllent/mailpit` |
-| CoreDNS (e2e test DNS server only) | 1.15.0 | Apache-2.0 | Upstream `coredns/coredns` |
-| BusyBox | 1.37.0 (Debian 1:1.37.0-6) | GPL-2.0-only | Installed in the CNMS Postfix image (queue-metrics and Rspamd metrics sidecars) |
-| Debian base packages | trixie | Mixed, including GPL and LGPL | Base of the CNMS Postfix image and of the upstream Rspamd, Dovecot (`debian:13-slim`) and Valkey images |
+| Component | Licence | Image |
+|---|---|---|
+| Postfix | EPL-2.0 or IPL-1.0 (dual, recipient's choice) | Built by CNMS from the upstream source tarball (`images/postfix`) |
+| Rspamd | Apache-2.0 | Upstream `rspamd/rspamd` |
+| Dovecot | MIT (`src/lib`, `src/auth`, `src/lib-sql`), LGPL-2.1 (the rest) | Upstream `dovecot/dovecot` |
+| Valkey | BSD-3-Clause (Valkey contributors, plus BSD-3-Clause code from Redis) | Upstream `valkey/valkey` |
+| redis_exporter | MIT | Upstream `oliver006/redis_exporter` |
+| Mailpit (e2e sink only) | MIT | Upstream `axllent/mailpit` |
+| CoreDNS (e2e test DNS server only) | Apache-2.0 | Upstream `coredns/coredns` |
+| BusyBox | GPL-2.0-only | Installed in the CNMS Postfix image (queue-metrics and Rspamd metrics sidecars) |
+| Debian base packages | Mixed, including GPL and LGPL | Base of the CNMS Postfix image and of the upstream Rspamd, Dovecot and Valkey images |
 
 ## Copyleft components
 

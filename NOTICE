@@ -12,5 +12,5 @@ docs/decisions/ for the Go dependency report and version decisions).
 The data-plane images also contain BusyBox (GPL-2.0-only) and Debian
 base packages, some of them under the GPL. They run unmodified as
 separate programs and are not linked into the operator. See
-docs/reference/data-plane-licenses.md for the components, versions and
-licenses.
+docs/reference/data-plane-licenses.md for the components and licenses;
+the versions are in internal/images/images.go.
