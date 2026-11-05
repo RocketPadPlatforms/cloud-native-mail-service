@@ -15,8 +15,9 @@ reason and message.
 | Condition | Status | Reason | Meaning |
 |---|---|---|---|
 | `Ready` | `True` | `Ready` | All of the conditions below that feed into it are `True` |
-| `Ready` | `False` or `Unknown` | the reason of the first failing condition (order: `CertificateReady`, `ConfigValidated`, `WorkloadsReady`, `DomainsAuthorized`, `Observability`) | The rollup; see the rows below for those reasons |
+| `Ready` | `False` or `Unknown` | the reason of the first failing condition (order: `CertificateReady`, `ConfigValidated`, `WorkloadsReady`, `DomainsAuthorized`, `HostnameAuthorized`, `Observability`) | The rollup; see the rows below for those reasons |
 | `Ready` | `False` | `DirectoryNotFound` | `spec.directoryRef` names a `MailDirectory` that does not exist in the namespace |
+| `Ready` | `False` | `HostnameNotAuthorized`, `DuplicateHostname` | the hostname is not authorized (see `HostnameAuthorized`); the server runs with the name of its Postfix Service and serves its domains, but is not ready for what its spec asks for |
 | `Ready` | `False` | `NoDomains` | no `MailDomain` of the namespace references the server in `spec.serverRef`; nothing is deployed, and a running data plane is re-rendered fail closed ([ADR 0014](../decisions/0014-domain-server-binding-and-hostname.md)) |
 | `Ready` | `False` | `NoUserSource` | no `spec.directoryRef` and no other user source |
 | `Ready` | `False` | `InsecureStaticUsersDisabled` | `spec.submission.insecureStaticUsers` is set but the operator runs without `--enable-insecure-test-features` |
@@ -33,6 +34,10 @@ reason and message.
 | `DomainsAuthorized` | `False` | `DuplicateDomain` | several `MailDomain` objects claim the domain among the competing claimants; all are blocked |
 | `DomainsAuthorized` | `False` | `PublicSuffix` | a referenced domain is a public suffix such as `co.uk` |
 | `DomainsAuthorized` | `False` | `PartiallyAuthorized` | some, not all, domains are authorized; only those are rendered and the message names the blocked ones |
+| `HostnameAuthorized` | `True` | `Authorized` | a `MailDomainGrant` covers `spec.hostname` for the namespace and no other `MailServer` among the competing ones uses it |
+| `HostnameAuthorized` | `True` | `AuthorizationDisabled` | the operator runs with `--domain-authorization=unrestricted` (the hostname must still be unique and not a public suffix) |
+| `HostnameAuthorized` | `False` | `HostnameNotAuthorized` | no grant covers the hostname for the namespace, or it is a public suffix such as `co.uk`; the message says which. The server presents the in-cluster name of its Postfix Service as HELO and certificate name, never lists the hostname in MX records or an MTA-STS policy, and keeps serving its authorized domains ([ADR 0014](../decisions/0014-domain-server-binding-and-hostname.md)) |
+| `HostnameAuthorized` | `False` | `DuplicateHostname` | several `MailServer` objects use the hostname among the competing ones (the owner namespace in allowlist mode, every namespace in unrestricted mode); all are blocked from it, with the same effect as `HostnameNotAuthorized` |
 | `CertificateReady` | `True` | `Issued` | the TLS Secret carries `tls.crt` and `tls.key` |
 | `CertificateReady` | `False` | `SecretNotFound` | the TLS Secret does not exist yet |
 | `CertificateReady` | `False` | `SecretIncomplete` | the TLS Secret lacks `tls.crt` or `tls.key` |
@@ -50,6 +55,13 @@ reason and message.
 | `Observability` | `False` | `CRDCheckFailed`, `ListFailed`, `DeleteFailed`, `ApplyFailed`, `OwnershipConflict` | the integration could not be checked or applied; the message has the error |
 | `DomainsListed` | `True` | `AllListed` | `status.domains` lists every `MailDomain` that references the server |
 | `DomainsListed` | `False` | `Truncated` | more than 128 `MailDomain`s reference the server; `status.domains` lists 128 of them, those not served first, then by name |
+| `AddressRecords` | `True` | `AddressesListed` | `status.records` lists an `A` or `AAAA` record for every ingress address of the inbound `LoadBalancer` Service |
+| `AddressRecords` | `False` | `NoExternalAddress` | the inbound Service is of type `ClusterIP`: it has no address outside the cluster, so no `A` or `AAAA` record is required |
+| `AddressRecords` | `False` | `LoadBalancerHostname` | the load balancer reports a DNS name instead of an address, so no `A` or `AAAA` record is listed; point the hostname at that name with a `CNAME` or an alias record |
+| `AddressRecords` | `False` | `AddressPending` | the Service does not exist yet, or the load balancer has no address yet |
+| `RecordsVerified` | `True` | `AllVerified`, `NoRecords` | every record of `status.records` was found, or none is required |
+| `RecordsVerified` | `False` | `RecordsNotVerified` | a record is missing or different; the message names the first three with the reason |
+| `RecordsVerified` | `Unknown` | `Checking`, `LookupFailing` | a record has not been looked up successfully yet, or three lookup rounds in a row failed with a temporary error; a failing lookup is never `False` |
 | `ClientIPPreserved` | `True` | `Preserved` | client addresses reach Postfix unchanged |
 | `ClientIPPreserved` | `False` | `ClusterTrafficPolicy` | `externalTrafficPolicy: Cluster` on a LoadBalancer source-NATs clients, so the per-client rate limits count all senders together |
 | `DedicatedSendingAddress` | `True` | `Dedicated` | outbound mail has its own address or goes through a relay |
@@ -60,8 +72,17 @@ reason and message.
 | `DKIMKeysAvailable` | `False` | `KeysMissing` | a served domain has no active key yet, or a key Secret is missing, has no such key, or does not parse; the message lists each domain and key. Outbound mail of those domains is deferred (451 4.7.1), inbound mail is not affected, and the rollout does not wait. Looked up again every minute ([ADR 0011](../decisions/0011-dkim-keys-and-rotation.md), [ADR 0013](../decisions/0013-never-unsigned-guard.md)) |
 
 `ClientIPPreserved`, `DedicatedSendingAddress`, `NodeDrainable`,
-`DomainsListed` and `DKIMKeysAvailable` are warnings: they never feed into
-`Ready`.
+`DomainsListed`, `DKIMKeysAvailable`, `AddressRecords` and `RecordsVerified`
+are warnings: they never feed into `Ready`. `HostnameAuthorized` does: a
+server with a hostname it is not allowed to present is not ready, although
+its data plane runs.
+
+`RecordsVerified` and `AddressRecords` exist only while the hostname is
+authorized; the status lists no record without it. `status.records` holds
+the `A` and `AAAA` records of the hostname for the addresses of the inbound
+Service, and the `SPF` `TXT` record of the hostname built from
+`spec.spf` (left out while a `MailDomain` of the hostname itself carries
+it). The records are reported and verified, not published.
 
 `status.domains` has one entry per `MailDomain` that references the server
 (`name`, `domain`, `served`, `reason`). `served` is true when the domain is
@@ -115,12 +136,20 @@ only `Authorized` and `Ready` (and `DNSPublished` while its
 | `DNSPublished` | `False` | `OwnershipConflict` | a `DNSEndpoint` of that name exists and is not controlled by the `MailDomain` |
 | `DNSPublished` | `False` | `ApplyFailed`, `CRDCheckFailed` | applying the `DNSEndpoint` or looking up the CRD failed; the message has the error |
 | `DNSPublished` | `False` | `AuthorizationRevoked` | the domain lost its authorization; the `DNSEndpoint` is removed 15 minutes after the `Authorized` transition |
-| `SPFReady` | `True` | `SPFGenerated` | an SPF record is generated from `spec.spf` |
-| `SPFReady` | `False` | `NoSendingSources` | no source is known, so no SPF record is generated |
+| `SPFReady` | `True` | `SPFGenerated` | an SPF record is generated from `spec.spf` and the sources of the `MailServer` (`MailServer.spec.spf`) that serves the domain |
+| `SPFReady` | `False` | `NoSendingSources` | no source is known, in the domain or in its server, so no SPF record is generated |
 | `MTASTSReady` | `True` | `PolicyAvailable` | MTA-STS is enabled and the policy is in `status.mtaSts` |
 | `MTASTSReady` | `False` | `NoMailServer` | MTA-STS is enabled and the `MailServer` in `spec.serverRef` does not exist or does not serve the domain, so there is no `mx` host and no policy |
+| `MTASTSReady` | `False` | `HostnameNotAuthorized` | MTA-STS is enabled and the `MailServer` serves the domain, but its hostname is not authorized (not granted, or used by several servers): there is no `mx` host and no policy, and the in-cluster name of the Service is never published |
 | `ReportAuthorization` | `True` | `NotRequired` | every DMARC report address is in the organizational domain of the policy |
 | `ReportAuthorization` | `False` | `ReceiverRecordRequired` | a report address is in another organizational domain; its owner has to publish the record named in the message |
+
+`status.records` of a `MailDomain` also holds the `MX` record of the domain,
+pointing at the hostname of the `MailServer` that serves it (`10 <hostname>`),
+while that hostname is authorized. Backup exchangers at the name are not
+compared: the record is verified when one `MX` record points at the hostname.
+The `MX` record is reported and verified, never published by the
+`DNSEndpoint`.
 
 `DNSPublished` exists only in `externalDNS` mode, `MTASTSReady` only
 with `spec.mtaSts.enabled`, and `ReportAuthorization` only with

@@ -65,8 +65,9 @@ at will, and removes its containers and temporary files on exit.
 The e2e suite (`test/e2e`) creates an isolated kind cluster and
 deploys the operator (with
 `--enable-insecure-test-features`), a cert-manager
-self-signed `Issuer`, and one `MailServer` with a `MailDomainGrant`,
-a `MailDomain`, a `MailDirectory` (referenced only for existence in
+self-signed `Issuer`, and one `MailServer` with the hostname
+`mail.e2e.example.org` (its own `MailDomainGrant`, apart from the one
+of the domain), a `MailDomain`, a `MailDirectory` (referenced only for existence in
 Phase 2; users come from the static test Secret), and the Phase 2
 static test users. The Mailpit sink (ADR 0004, decision 7) runs in
 the same namespace as a plain Pod with a Service; its cluster FQDN
@@ -91,6 +92,12 @@ Assertions (Phase 2):
   LMTP;
 - authenticated submission over STARTTLS is accepted (SASL backend
   is Dovecot with the static test users);
+- the hostname is authorized (`HostnameAuthorized=True`), the certificate
+  on port 587 has it as common name and only SAN (no apex, no domain of the
+  DKIM specs, no Service name), the greeting is `220 mail.e2e.example.org
+  ESMTP` and the `Received` header of a delivered message names it; the
+  inbound Service is `ClusterIP`, so `AddressRecords` says
+  `NoExternalAddress`;
 - authenticated mail for the sink domain is delivered to Mailpit
   (verified through the Mailpit API);
 - unauthenticated mail for a foreign domain is rejected with
@@ -129,12 +136,14 @@ generated keys and `ed25519: true`, one with a bring-your-own RSA key whose
 Secret the test creates. The test copies `status.records` of both into the
 zone ConfigMap, restarts the DNS pod to load it, and only then moves the
 domains to the `MailServer` (they start with a `serverRef` to a server
-that does not exist), so the data plane rolls out once. The specs
-check:
+that does not exist), so the data plane rolls out once. Once the server
+serves the domains their status lists an `MX` record at the hostname; the
+test publishes it with the other records (the zone serves TXT and MX
+records, and an address for the hostname). The specs check:
 
-- the DKIM records the controller requires are found by the lookups
-  (`RecordsVerified=True`, `Ready=True`), and the names and selectors match
-  `status.dkim`;
+- the DKIM and MX records the controller requires are found by the lookups
+  (`RecordsVerified=True`, `Ready=True`), the names and selectors match
+  `status.dkim`, and the MX record is `10 mail.e2e.example.org`;
 - an authenticated message from the generated-key domain reaches the
   sink with two `DKIM-Signature` headers (`rsa-sha256` and
   `ed25519-sha256`, `d=` the domain, `s=` the active selectors), which also
@@ -178,6 +187,13 @@ both selectors published, the retirement and the deletion of the Secret,
 the `AwaitingDNS` stall) is covered by the state-machine tests of
 `internal/dkim` and the `MailDomain` envtest specs, which use a fake clock
 and a fake DNS resolver.
+
+**Also not covered end to end:** the `A` and `AAAA` records of the
+hostname. The fixture server is of type `ClusterIP` (kind has no load
+balancer), which has no address to list. The envtest specs of the
+`MailServer` records set the load-balancer status of the inbound Service
+and verify the records through a fake resolver; `internal/dnsrecords` tests
+the address and MX lookups against an in-process DNS server.
 
 ## Running the tests
 
