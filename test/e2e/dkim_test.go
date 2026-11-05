@@ -34,8 +34,8 @@ import (
 )
 
 // The MailDomains of the DKIM specs. They are served by the fixture
-// MailServer next to e2e.example.org; their names sort after it, so the
-// server's host name (the first sorted domain, ADR 0014) does not change.
+// MailServer next to e2e.example.org. The server presents its hostname
+// whatever domains it serves (ADR 0014), so their names need no order.
 const (
 	// dkimDetached is a MailServer that does not exist: the domains start
 	// there, so their keys and records exist before the fixture server
@@ -126,6 +126,17 @@ func registerDKIMSpecs() {
 					fmt.Sprintf(`{"spec":{"serverRef":{"name":%q}}}`, e2eServer))
 				Expect(err).NotTo(HaveOccurred(), "patch output: %s", out)
 			}
+
+			By("publishing the MX records the server adds to the domains")
+			Eventually(func(g Gomega) {
+				gen, err = getMailDomainObject(dkimGenName)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(gen.Status.Records).To(HaveLen(3), "the MX record is not listed yet")
+				own, err = getMailDomainObject(dkimOwnName)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(own.Status.Records).To(HaveLen(2), "the MX record is not listed yet")
+			}, 3*time.Minute, 3*time.Second).Should(Succeed())
+			publishZone(slices.Concat(gen.Status.Records, own.Status.Records))
 		})
 
 		AfterAll(func() {
@@ -183,13 +194,15 @@ func registerDKIMSpecs() {
 			Expect(active).To(HaveKey("ed25519"))
 			names := make([]string, 0, len(gen.Status.Records))
 			for _, rec := range gen.Status.Records {
-				names = append(names, rec.Name)
+				names = append(names, rec.Type+" "+rec.Name+" "+rec.Value)
 				Expect(rec.Verified).NotTo(BeNil())
 				Expect(*rec.Verified).To(BeTrue(), rec.Name)
 			}
-			Expect(names).To(ConsistOf(
-				active["rsa"]+"._domainkey."+dkimGenDomain,
-				active["ed25519"]+"._domainkey."+dkimGenDomain))
+			// The two keys and the MX record at the hostname of the server.
+			Expect(names).To(HaveLen(3))
+			Expect(names).To(ContainElement("MX " + dkimGenDomain + " 10 " + e2eHostname))
+			Expect(names).To(ContainElement(HavePrefix("TXT " + active["rsa"] + "._domainkey." + dkimGenDomain + " ")))
+			Expect(names).To(ContainElement(HavePrefix("TXT " + active["ed25519"] + "._domainkey." + dkimGenDomain + " ")))
 		})
 
 		It("signs authenticated mail with an RSA and an Ed25519 signature", func() {

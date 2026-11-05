@@ -40,6 +40,11 @@ const e2eNamespace = "cnms-e2e"
 // e2eDomain is the mail domain of the MailDomainGrant and MailDomain.
 const e2eDomain = "e2e.example.org"
 
+// e2eHostname is the hostname of the MailServer under test: the name it
+// presents (HELO, certificate), authorized by a grant of its own, so the
+// grant of e2eDomain does not cover subdomains (ADR 0014).
+const e2eHostname = "mail.e2e.example.org"
+
 // e2eMailDomainName is the object name of the MailDomain (DNS-1123
 // label form; the domain string lives in spec.domain).
 const e2eMailDomainName = "e2eexampleorg"
@@ -63,8 +68,9 @@ const e2ePostfixSVC = "mail-postfix." + e2eNamespace + ".svc.cluster.local"
 
 // e2eFixturesYAMLTemplate is the full fixture set applied to the
 // cluster: namespace, the cert-manager Issuer, the credential and
-// static-user Secrets, the MailDirectory, the MailDomainGrant
-// (cluster-scoped), the MailDomain, the MailServer under test, the
+// static-user Secrets, the MailDirectory, the MailDomainGrants of the
+// domain and of the hostname (cluster-scoped, one each), the MailDomain,
+// the MailServer under test, the
 // Mailpit sink (Pod + Service) and the e2e client Pod (swaks,
 // openssl, curl). The two %s are the Mailpit and the e2e client
 // images (pinned in internal/images, ADR 0004).
@@ -129,6 +135,13 @@ spec:
   namespace: cnms-e2e
 ---
 apiVersion: cnms.rpp.gmbh/v1alpha1
+kind: MailDomainGrant
+metadata:
+  name: mail.e2e.example.org
+spec:
+  namespace: cnms-e2e
+---
+apiVersion: cnms.rpp.gmbh/v1alpha1
 kind: MailDomain
 metadata:
   name: e2eexampleorg
@@ -144,6 +157,7 @@ metadata:
   name: mail
   namespace: cnms-e2e
 spec:
+  hostname: mail.e2e.example.org
   directoryRef:
     name: sql-e2e
   outbound:
@@ -307,6 +321,15 @@ func servedCertFingerprint() (string, error) {
 	out, err := e2eClientExec("sh", "-c",
 		"timeout 30 openssl s_client -starttls smtp -connect "+e2ePostfixSVC+":587 </dev/null 2>/dev/null"+
 			" | openssl x509 -noout -fingerprint -sha256")
+	return strings.TrimSpace(out), err
+}
+
+// servedCertNames returns the subject and the subject alternative names
+// of the certificate Postfix presents on the submission port (STARTTLS).
+func servedCertNames() (string, error) {
+	out, err := e2eClientExec("sh", "-c",
+		"timeout 30 openssl s_client -starttls smtp -connect "+e2ePostfixSVC+":587 </dev/null 2>/dev/null"+
+			" | openssl x509 -noout -subject -ext subjectAltName")
 	return strings.TrimSpace(out), err
 }
 
