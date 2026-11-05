@@ -135,8 +135,10 @@ carries an RSA and an Ed25519 signature.
 ## DNS records
 
 `status.records` lists every record the domain needs (DKIM of each
-published key, SPF, DMARC, MTA-STS, TLS-RPT) with its value and whether a
-lookup found it:
+published key, SPF, DMARC, MTA-STS, TLS-RPT, and the MX record that points
+at the hostname of its server) with its value and whether a lookup found
+it. The records of the hostname itself are in the status of the
+`MailServer` ([below](#dns-records-you-must-create)):
 
 ```console
 kubectl get maildomain example-org -o jsonpath='{range .status.records[*]}{.name}{"\t"}{.verified}{"\n"}{end}'
@@ -144,23 +146,31 @@ kubectl get maildomain example-org -o jsonpath='{range .status.records[*]}{.name
 
 <CodeBlock language="yaml" title="config/samples/cnms_v1alpha1_maildomain.yaml">{MailDomainSample}</CodeBlock>
 
-- **SPF** is generated from `spec.spf`; with no source no record is
-  published and `SPFReady` says `NoSendingSources`. Addresses of IP pool
-  claims and relays are added in later phases.
+- **SPF** lists the sending sources of the domain (`spec.spf`) and the ones
+  of its server (`MailServer.spec.spf`): the record of a domain is the
+  union of the two, the sources every domain of a server shares belong on
+  the server. With no source at all no record is published and `SPFReady`
+  says `NoSendingSources`. Addresses of IP pool claims and relays are
+  added in later phases.
+- **MX** points at the hostname of the server, `10 <hostname>`, while the
+  server serves the domain and its hostname is authorized. It is verified
+  when one MX record at the domain points at the hostname (a backup
+  exchanger is not compared). CNMS reports and verifies it; you create it.
 - **DMARC** follows RFC 9989: `t=y` for `testing`, no `pct`. The Rspamd
   of the data plane ignores `t`, `np` and `psd` on inbound mail. A report
   address in another organizational domain needs a record at its
   receiver; `ReportAuthorization` names it.
 - **MTA-STS** is report-only: the status holds the policy text and its
   id, you serve it at `https://mta-sts.<domain>/.well-known/mta-sts.txt`.
-  The `mx` host is the host name of the `MailServer` in `spec.serverRef`
-  when it serves the domain: the first sorted domain it serves (the name
-  in its certificate and HELO), so the MX record of your domain has to
-  point at that name. While the server does not exist or does not serve
-  the domain there is no policy and `MTASTSReady` is `False` with reason
-  `NoMailServer`; a server that starts or stops serving the domain, or
-  another domain that changes its first sorted domain, updates the policy
-  and its id.
+  The `mx` host is the hostname of the `MailServer` in `spec.serverRef`
+  when it serves the domain (the name in its certificate and HELO), so the
+  MX record of your domain has to point at that name. While the server
+  does not exist or does not serve the domain there is no policy and
+  `MTASTSReady` is `False` with reason `NoMailServer`; while its
+  hostname is not authorized the reason is `HostnameNotAuthorized`, and
+  the in-cluster name of the Service is never published. A server that
+  starts or stops serving the domain, or a renamed hostname, updates the
+  policy and its id.
 - **The server need not exist yet.** A `MailDomain` whose `serverRef`
   names a missing `MailServer` still authorizes, generates its keys and
   lists its records, so you can prepare DNS first. `ServerFound` is
@@ -180,7 +190,10 @@ Create the records from `status.records` in your zone yourself.
 
 With `spec.dnsMode: externalDNS` and the external-dns `DNSEndpoint` CRD
 installed, the operator creates a `DNSEndpoint` `<maildomain>-dns` in the
-namespace of the `MailDomain`, one TXT endpoint per record. Without the
+namespace of the `MailDomain`, one TXT endpoint per TXT record. The MX
+record of the domain is not part of it: it is reported and verified, and
+you create it (publishing MX, A and AAAA through external-dns is in the
+[backlog](../backlog.md)). Without the
 CRD `DNSPublished` is `False` with reason `ExternalDNSNotInstalled`, the
 records stay in the status, and the CRD is looked up again every five
 minutes. An object of that name that the `MailDomain` does not control
@@ -203,6 +216,88 @@ If the apex already has a different SPF record, the verification reports
 the value it found; external-dns does not take over records it does not
 own.
 
+## DNS records you must create
+
+Besides the records of the domains, the hostname of the server needs
+records. CNMS lists them in the status and verifies them; it does not
+publish them, in `manual` and in `externalDNS` mode alike
+([ADR 0014](../decisions/0014-domain-server-binding-and-hostname.md)).
+
+| Record | Name | Value | Where it is listed |
+|---|---|---|---|
+| `MX` | each domain | `10 <hostname>` | `status.records` of the `MailDomain` |
+| `A` / `AAAA` | the hostname | every address of the inbound Service | `status.records` of the `MailServer` |
+| `TXT` (SPF) | the hostname | `v=spf1 <server sources> -all` | `status.records` of the `MailServer` |
+| `PTR` | each sending address | the hostname | later, with the IP pools (manual rDNS, Phase 7) |
+
+```console
+kubectl get mailserver mail -o jsonpath='{range .status.records[*]}{.type}{"\t"}{.name}{"\t"}{.value}{"\t"}{.verified}{"\n"}{end}'
+```
+
+- **The addresses come from the inbound Service.** A `LoadBalancer`
+  Service gets an `A` or `AAAA` record for every ingress address. The
+  condition `AddressRecords` says why none is listed: `ClusterIP`
+  Services have no address outside the cluster (`NoExternalAddress`), a
+  load balancer that reports a DNS name instead of an address
+  (`LoadBalancerHostname`) needs a `CNAME` or alias record from you, and
+  `AddressPending` means the Service has no address yet.
+- **The SPF record of the hostname** is the HELO identity: receivers check
+  it for bounces and for servers that identify themselves by name. It ends
+  in `-all`, because only the sources in `MailServer.spec.spf` send as the
+  hostname. It is left out when a `MailDomain` of the same name is served
+  by this server, because a name holds one SPF record; that domain lists
+  the sources of its server. A `MailDomain` of that name on another server
+  does not take it over.
+- **Nothing here feeds into `Ready`.** `RecordsVerified` and
+  `AddressRecords` on the `MailServer` are warnings, and `Ready` of a
+  `MailDomain` waits for its own records, the MX record included.
+- **Without an authorized hostname nothing is required** and the status
+  lists no record: fix `HostnameAuthorized` first.
+
+### The certificate and the hostname
+
+The certificate of the server carries the hostname as its only name. The
+domains are not on it, so submission and IMAP clients connect to the
+hostname (not to `mail.<domain>`, unless that is the hostname) or verify
+it. Applications in the cluster connect to the Service and verify the
+hostname; the credential Secret of a `MailServiceAccount` will carry it as
+`tlsServerName` (ADR 0008, Phase 3).
+
+A public CA cannot validate the hostname with the HTTP-01 challenge: the
+mail load balancer serves no HTTP. Use an issuer with the **DNS-01
+challenge**, or a private CA. The in-cluster name of the Postfix Service
+(`<server>-postfix.<namespace>.svc.cluster.local`) is only the fallback
+name while the hostname is not authorized; a public ACME issuer rejects
+it, so a server on the fallback has no certificate from such an issuer
+until the hostname is authorized. A name below `cluster.local` is never
+accepted as hostname (`HostnameNotAuthorized`).
+
+### Rename the hostname
+
+A rename is a revocation of the old name: the Certificate is re-applied
+for the new name at once. The domains keep being served: the running pods
+still present the old name, which the Certificate no longer requests,
+until the new configuration is validated and rolled out, so TLS clients
+that verify the name may fail in that window. A hostname change never
+applies the fail-closed configuration (every recipient rejected with a
+permanent `554 5.7.1 Relay access denied`), not even while the server is
+blocked for another reason, such as a missing directory; then the pods keep
+the old name until the blocking input is fixed. Create the `A`/`AAAA`
+records and the grant of the new name first, then repoint the MX records of
+the domains.
+
+The same window applies when the grant of the hostname is revoked and
+the server falls back to the Service name: HELO is self-asserted, and the
+mounted certificate Secret is replaced only when the issuer can issue the
+new name. A public ACME issuer cannot issue the Service name, so the
+Secret with the old name stays mounted until it expires. Fix the grant,
+or restore the hostname, to end the window sooner.
+
+`HostnameNotAuthorized` also rejects `cluster.local` and everything below
+it. A name such as `foo.default.svc` is not rejected by that rule (it does
+not end in `.cluster.local`); in allowlist mode only a name a
+`MailDomainGrant` covers for the namespace passes.
+
 ## Revoked domains
 
 When the grant goes away the domain stops signing and its status lists no
@@ -217,7 +312,7 @@ to another `MailServer` of the namespace
 ([ADR 0014](../decisions/0014-domain-server-binding-and-hostname.md)).
 The old server is re-rendered without the domain, like a revoked one: it
 stops signing and accepting submission for it with its next validated
-rollout, and the certificate loses the name. The new server picks the
+rollout. The new server picks the
 domain up and signs with the same key Secrets, so the selectors do not
 change, and the `DNSEndpoint` stays.
 
@@ -228,7 +323,7 @@ What does not move, and what to check:
   the old server has mailboxes.
 - **MX and MTA-STS.** Point the MX record at the new server before the
   old one stops answering. Receivers cache an MTA-STS policy for a week
-  (`max_age`); an enabled policy lists the host of the new server once
+  (`max_age`); an enabled policy lists the hostname of the new server once
   the domain moved, so publish it and keep the old host reachable for
   that time.
 - **Both servers may serve the domain for a short time:** the old one
