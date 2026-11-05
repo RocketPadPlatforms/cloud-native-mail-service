@@ -165,6 +165,12 @@ When a grant is deleted or no longer covers a domain:
 - **kept**: the DKIM `Secret`, so a domain that is granted again does not
   rotate its key.
 
+Amended by ADR 0014: a `MailServer` evaluates the `MailDomain`s that
+reference it in `spec.serverRef` (a filter of the claim list), so a domain
+that moves to another server, or whose `MailDomain` is deleted, is
+revoked by the path below like one whose grant is gone; part B of that
+ADR adds the server hostname to the authorization and the derived names.
+
 For a `MailServer` (Phase 2) the evaluation returns the authorized subset
 plus one failure per other domain, and the controller renders only the
 subset, so a revoked domain leaves the rendered Postfix configuration and

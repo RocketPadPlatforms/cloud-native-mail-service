@@ -19,7 +19,9 @@ or removed before `v1beta1`.
    No `namespace` fields; no cross-namespace RBAC. (Amended by ADR 0008:
    `MailServiceAccount.spec.serverRef.namespace` is the one cross-namespace
    reference, and it only takes effect when the server's namespace allows
-   it.)
+   it. Amended by ADR 0014: `MailServer.spec.domains` is gone; the
+   domain-to-server relation is `MailDomain.spec.serverRef`, also
+   same-namespace.)
 2. **Outbound is exactly one of `direct` or `relay`** (CEL `has()` XOR).
    `direct.ipPoolClaimRef` is optional: without a claim, mail leaves via the
    pods' source addresses. Claims arrive with the IP management phase (7); the
@@ -56,10 +58,10 @@ or removed before `v1beta1`.
   `has(self.field)`. Scalar fields compared against `null` additionally need
   `+nullable`; object fields are natively nullable. All CEL rules in this API
   follow that.
-- **`spec.domains` is a plain atomic list** with a CEL uniqueness rule, not a
+- **`spec.domains` was a plain atomic list** with a CEL uniqueness rule, not a
   set list: set lists of object items require explicit atomic map types and a
   plain list plus `self.all(x, self.filter(y, y == x).size() == 1)` is
-  simpler.
+  simpler. (ADR 0014 replaced the field with `MailDomain.spec.serverRef`.)
 - **`DirectoryType`** is a named string type with constants
   (`DirectoryTypeLDAP`, `DirectoryTypeSQL`); the `oidc` type is added with its
   phase.

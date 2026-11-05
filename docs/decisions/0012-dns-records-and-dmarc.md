@@ -1,6 +1,6 @@
 # ADR 0012: DNS records, DMARC and DNS verification
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-03
 
 ## Context
@@ -109,7 +109,7 @@ TLS-RPT address in another domain gets no warning.
 ```
 version: STSv1\r\n
 mode: testing\r\n
-mx: <hostname>\r\n          (one per MailServer that serves the domain)
+mx: <hostname>\r\n          (the MailServer of spec.serverRef, when it serves the domain)
 max_age: 604800\r\n
 ```
 
@@ -117,7 +117,7 @@ max_age: 604800\r\n
 implemented in `internal/mtasts`). `mode` becomes an additive field `spec.mtaSts.mode`
 (`testing` default, `enforce`, `none`). The `mx` hosts are the server
 hostnames (`RenderRequest.ServerHostname`) of the `MailServer`s in the
-namespace that list the domain; none yet means no policy and a condition.
+namespace that the domain references; none yet means no policy and a condition.
 The record is required only when a policy exists.
 
 **TLS-RPT** needs an address (RFC 8460 requires `rua`): `spec.tlsRpt.rua`,
@@ -171,7 +171,7 @@ CNMS generates the record from the sending sources of the domain:
    and `qualifier` (`softfail` default `~all`, `fail` `-all`, `neutral`
    `?all`). This is the only source in Phase 5.
 2. **Direct mode** (Phase 7): the addresses of the bound
-   `MailIPPoolClaim` of each `MailServer` that lists the domain
+   `MailIPPoolClaim` of the `MailServer` the domain references
    (`ip4:`/`ip6:`, merged and sorted). Placeholder until then: none.
 3. **Relay mode** (Phase 6): `include:` of the `MailRelay`'s SPF include
    name. Placeholder until then: none.
@@ -185,7 +185,9 @@ with reason `NoSendingSources` says so. Not checked: the RFC 7208
 people's records; documented). The apex SPF record also serves as the
 SPF identity of the HELO name, because the HELO name is the primary
 domain of the `MailServer`; with empty-sender mail (bounces) that is the
-identity receivers check.
+identity receivers check. (Amended by ADR 0014: after the server hostname
+exists, the HELO identity is the hostname, not the primary domain, and its
+SPF record is reported at the hostname.)
 
 ### 4. Verification
 
@@ -255,14 +257,15 @@ receiver in another organizational domain has to publish). `SPFReady`,
 `MTASTSReady` and `ReportAuthorization` never feed into `Ready`. The
 `Ready` order is `Authorized`, `DKIMKeysValid`, `DNSPublished`,
 `RecordsVerified`. The mx hosts of the MTA-STS policy come from the
-`MailServer`s of the namespace that list the domain and serve it
-(authorized, ADR 0003): each contributes its `ServerHostname`, which is the
-first sorted domain it serves, so a server of several domains gives the
-same host for each of them. Several servers give several hosts, sorted
-without duplicates, so the policy does not depend on the order of the
-objects. While no server serves the domain an enabled MTA-STS has no
-policy and `MTASTSReady` is `False` with reason `NoMailServer`. The
-`MailDomain` controller watches `MailServer` spec changes for this. The
+`MailServer` in the domain's `spec.serverRef` when it serves the domain
+(authorized, ADR 0003; amended by ADR 0014, which replaced the list in the
+server's spec by this reference): it contributes its `ServerHostname`,
+which is the first sorted domain it serves, so a server of several
+domains gives the same host for each of them. While the server does not
+exist or does not serve the domain an enabled MTA-STS has no policy and
+`MTASTSReady` is `False` with reason `NoMailServer`. The `MailDomain`
+controller watches `MailServer` spec changes and the domains that share
+the server for this. The
 name is the one in the certificate and the HELO; the MX record of the
 domain has to point at it, which CNMS does not publish (section 1).
 
