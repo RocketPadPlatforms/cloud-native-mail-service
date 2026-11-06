@@ -1,7 +1,7 @@
 # ADR 0008: Operator-managed users and service accounts
 
 - **Status:** Accepted, amended 2026-11-03 (tenant isolation, see
-  "Amendment" below)
+  "Amendment" below), partially amended by ADR 0015
 - **Date:** 2026-10-25
 
 ## Context
@@ -30,18 +30,31 @@ is required today, so a directory-less server cannot be Ready at all.
    accounts in environments without a directory service.
    - `metadata.name` is the login name (DNS-label pattern), so per-namespace
      uniqueness is free; `spec.serverRef` references a `MailServer` in the
-     same namespace.
+     same namespace. (Amended by ADR 0015: the pattern is a DNS-1123
+     subdomain, so a login can hold a dot, and `spec.domainRef` and
+     `spec.aliases` give the addresses.)
    - The password is operator-generated (high entropy, `crypto/rand`,
      stored only in a per-user Secret owned by the `MailUser`) or
      user-provided via a Secret reference; optional `displayName`,
-     `status` (active/disabled) and a per-user `quota` override.
+     `status` (active/disabled) and a per-user `quota` override. (Amended
+     by ADR 0015: the status is a `disabled` flag that keeps inbound
+     delivery, the quota arrives with Phase 4, and the password is hashed
+     with Argon2id.)
    - The operator renders all `MailUser`s of a server into the same static
      passdb and allowed-sender maps that the `insecureStaticUsers` mechanism
-     already produces; rendering reuses that path.
+     already produces; rendering reuses that path. (Amended by ADR 0015:
+     the Dovecot passdb and userdb files are keys of a stable-named, mutable
+     Secret outside the content hash, an exception to ADR 0009, so a user
+     change needs no Dovecot restart; the Postfix maps stay immutable
+     revisions.)
    - `MailServer.spec.directoryRef` becomes optional. Exactly one user
      source must resolve — a directory **or** at least one `MailUser` —
      enforced as a `Ready` condition (CEL cannot count across objects),
-     mirroring the existing `DirectoryNotFound` reason.
+     mirroring the existing `DirectoryNotFound` reason. (Amended by ADR
+     0015: a directory together with `MailUser`s, or
+     `insecureStaticUsers` together with either, is `UserSourceConflict`;
+     service accounts add to either source, and a server with only service
+     accounts is a send-only server, not `NoUserSource`.)
    - `insecureStaticUsers` stays a documented test-only mechanism.
    - This is a deliberate, documented exception to core principle 2: the
      operator manages the accounts only when the operator is explicitly
@@ -70,7 +83,10 @@ is required today, so a directory-less server cannot be Ready at all.
    - The credential is rendered into the same passdb as a mailbox-less
      (auth-only) user, so it works with or without `mailboxes.enabled`.
      The allowed-sender map binds the credential to `spec.sender`, so the
-     application cannot spoof arbitrary `From` addresses.
+     application cannot spoof arbitrary `From` addresses. (Amended by ADR
+     0015: this is one case of a strict sender binding for every account,
+     the envelope in Postfix and the header `From` in Rspamd, and the
+     account name is a reserved form that cannot collide with a user.)
    - When the referenced `MailServer` is deleted, the account reports
      `NotReady` with a clear reason; no finalizer is needed (cross-namespace
      owner references do not garbage-collect).
@@ -80,7 +96,9 @@ is required today, so a directory-less server cannot be Ready at all.
 3. **Fold both into Phase 3**, renamed to "user sources and service
    accounts": `MailDirectory` (LDAP and SQL) plus `MailUser` and
    `MailServiceAccount`, sharing one passdb/Postfix-map rendering seam and
-   one e2e fixture set.
+   one e2e fixture set. (Amended by ADR 0015: delivered as three pull
+   requests, `MailDirectory`, then `MailUser` with sender binding, then
+   `MailServiceAccount`.)
 
 ## Amendment: cross-namespace use needs the server's consent
 
@@ -104,7 +122,10 @@ yet, so this amends the design before Phase 3:
    revokes its accounts on the next reconcile (the credential Secret is
    deleted and the account is dropped from the passdb), like a revoked
    `MailDomainGrant`. The field is added in Phase 3 and is not implemented
-   now.
+   now. (Amended by ADR 0015: the list holds objects with a `name` and
+   optional `senderDomains`, so that a namespace can be limited to some
+   of the server's domains and the field can grow without a breaking
+   change.)
 2. **The sender must belong to an authorized domain.** `spec.sender` must
    be an address in a domain of the referenced server that passes the
    domain authorization of ADR 0003 (the server's authorized subset, not
@@ -140,9 +161,11 @@ yet, so this amends the design before Phase 3:
   of done.
 - Exposing the CA chain lets applications verify submission TLS against
   cluster-issued certificates; the key is documented as optional.
-- Security floor: service-account sender binding prevents `From` spoofing;
-  generated passwords live only in Secrets (never in the CR or logs); the
-  per-user and per-account Secrets are garbage-collected with their CR.
+- Security floor: service-account sender binding prevents `From` spoofing
+  (amended by ADR 0015: for every account, and the header `From` of
+  authenticated mail must be in a served domain); generated passwords live
+  only in Secrets (never in the CR or logs); the per-user and per-account
+  Secrets are garbage-collected with their CR.
 - How we know it worked: e2e shows a `MailUser` logging in via swaks, an
   application pod in a second namespace sending with the operator-provided
   credential Secret, and the account going `NotReady` when the `MailServer`

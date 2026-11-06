@@ -24,11 +24,11 @@ See [TEMPLATE.md](TEMPLATE.md).
 | [0001](0001-engine-versions-and-licenses.md) | Engine versions, licenses, and image strategy | Accepted |
 | [0002](0002-v1alpha1-api-design.md) | v1alpha1 API design for `MailServer`, `MailDomain`, `MailDirectory` | Accepted (partially superseded by 0003, amended by 0014) |
 | [0003](0003-security-defaults-and-domain-ownership.md) | Security defaults and domain ownership (`MailDomainGrant`) | Accepted |
-| [0004](0004-data-plane-images-and-build-strategy.md) | Data-plane images and build strategy | Accepted |
+| [0004](0004-data-plane-images-and-build-strategy.md) | Data-plane images and build strategy | Accepted (partially amended by 0015) |
 | [0005](0005-component-metrics-sources.md) | Component metrics sources | Accepted |
 | [0006](0006-network-policy-and-security-floor.md) | NetworkPolicy floor and security floor | Accepted |
 | [0007](0007-deployment-annotation-merge.md) | Merging operator-owned annotations and skipping no-op writes | Accepted |
-| [0008](0008-user-sources-and-service-accounts.md) | Operator-managed users and service accounts | Accepted |
+| [0008](0008-user-sources-and-service-accounts.md) | Operator-managed users and service accounts | Accepted (partially amended by 0015) |
 | [0009](0009-config-validation-gate.md) | Config validation gate with immutable configuration | Accepted |
 | [0010](0010-storage-immutability-and-scale-down.md) | Immutable storage sizes and no Postfix scale-down yet | Accepted |
 | [0011](0011-dkim-keys-and-rotation.md) | DKIM keys, signing configuration and rotation | Accepted |
