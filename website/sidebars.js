@@ -64,6 +64,7 @@ module.exports = {
         'decisions/dns-records-and-dmarc',
         'decisions/never-unsigned-guard',
         'decisions/domain-server-binding-and-hostname',
+        'decisions/user-sources-directory-users-and-aliases',
       ],
     },
     { type: 'doc', id: 'roadmap' },
