@@ -15,9 +15,9 @@ Scoped in [ADR 0015](decisions/0015-user-sources-directory-users-and-aliases.md)
   address.
 - Bind the header From to the login: sender-login maps check only
   `MAIL FROM`, so an authenticated user can still put any served domain in
-  the header From and get it signed (ADR 0013, section 3). The Rspamd check
-  that the From of authenticated mail is in a served domain is PR 3a; the
-  check that the address is owned by the login is PR 3b.
+  the header From and get it signed (ADR 0013, section 3). The check that
+  the From address is owned by the login is PR 3b (ADR 0015, section 4.4,
+  check 2); the served-domain check (check 1) is done.
 - `MailDirectory` has no controller yet: the empty scaffold was removed so
   the operator holds no write access to it. PR 3a re-scaffolds it with
   `kubebuilder create api --group cnms --version v1alpha1 --kind MailDirectory

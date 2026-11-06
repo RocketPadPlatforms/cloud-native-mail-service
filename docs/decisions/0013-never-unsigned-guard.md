@@ -139,9 +139,21 @@ local function check(task)
         return task:set_pre_result('reject', 'multiple From addresses cannot be DKIM signed', 'cnms_dkim_guard')
       end
     end
-    return
   end
-  if not (hfrom and hfrom[1] and hfrom[1].domain) then return end  -- no From: Rspamd does not sign either
+
+  -- A login may send only with From addresses in a served domain. A domain
+  -- that is missing or empty ('' is truthy in Lua) is not in the table.
+  if task:get_user() then
+    local ok = hfrom and hfrom[1]
+    for _, a in ipairs(hfrom or {}) do
+      if not (a.domain and required[a.domain:lower()]) then ok = false end
+    end
+    if not ok then
+      return task:set_pre_result('reject', 'From must be an address in a served domain', 'cnms_dkim_guard')
+    end
+  end
+  if hfrom and hfrom[2] then return end                   -- loopback, several From addresses, none served
+  if not (hfrom and hfrom[1] and hfrom[1].domain) then return end  -- loopback without a From: Rspamd does not sign either
   local want = required[hfrom[1].domain:lower()]
   if not want then return end                             -- not a served domain
 
@@ -188,11 +200,12 @@ selectors per domain:
 | `127.0.0.1`, no login, key missing | `soft reject` |
 | `127.0.0.1`, empty sender, key missing | `no action`, unsigned (exempt) |
 | unauthenticated from an Internet or pod address | untouched, unsigned |
-| authenticated, From domain not served | untouched, unsigned |
-| authenticated, From subdomain not in the table (`use_esld=false`) | untouched, unsigned |
+| authenticated, From domain not served | `reject` (554 5.7.1), amended by ADR 0015 |
+| authenticated, From subdomain not in the table (`use_esld=false`) | `reject` (554 5.7.1), amended by ADR 0015 |
+| authenticated, From without a domain, with an empty domain, or no From header | `reject` (554 5.7.1), amended by ADR 0015 |
 | several From addresses, one of them served (authenticated, or loopback with a sender) | `reject` (554 5.7.1) |
-| several From addresses, none served | untouched, unsigned |
-| no From header | untouched, unsigned |
+| several From addresses, none served | authenticated: `reject`, amended by ADR 0015; loopback: untouched, unsigned |
+| loopback with a sender, no From header or none served | untouched, unsigned |
 | error inside the guard, loopback with a sender | `soft reject` |
 | error inside the guard, loopback with an empty sender | untouched |
 | the guard cannot determine the source | authenticated mail `soft reject`, everything else untouched |
@@ -211,16 +224,15 @@ selectors per domain:
   guard rejects it rather than defers it, because no retry can ever be
   signed. Postfix bounces locally submitted mail that is rejected this way
   back to its sender; the SMTP client gets a 554 5.7.1 on submission.
-- **Known gap**, deliberately not closed here: an authenticated message
-  whose From domain the server does not serve is not guarded, and an
-  authenticated user can put any served domain in the header From and get
-  it signed (`allow_hdrfrom_mismatch` is true). Deferring it in the signer
-  would only retry a message that can never be signed. The sender-login
-  binding of Phase 3 (ADR 0008 backlog) does not close this gap:
-  `reject_sender_login_mismatch` checks only the envelope sender. A check
-  of the header From against the login is a separate backlog item, on the
-  Rspamd or milter side. A held (`quarantine`) message is guarded like any
-  other.
+- **Known gap**, deliberately not closed here (amended by ADR 0015,
+  section 4.4: the first half is closed, the guard now rejects an
+  authenticated message whose From is missing, has no domain or is not in
+  a served domain): an authenticated user can put any served domain in the
+  header From and get it signed (`allow_hdrfrom_mismatch` is true). The
+  sender-login binding of Phase 3 (ADR 0008 backlog) does not close this
+  gap: `reject_sender_login_mismatch` checks only the envelope sender. A
+  check of the header From against the login is ADR 0015's check 2. A held
+  (`quarantine`) message is guarded like any other.
 
 ### 4. Failure semantics
 
@@ -229,6 +241,7 @@ selectors per domain:
 | key missing, unreadable, or does not parse | 451 4.7.1 to the SMTP client at the end of DATA; nothing leaves; the client keeps the mail |
 | Rspamd down or slow | unchanged: `milter_default_action = tempfail` with the configured timeouts |
 | several From addresses with a served one | 554 5.7.1 to the SMTP client; non-SMTP mail bounces to the sender; a permanent property of the message, so a deferral would only retry until the queue lifetime ends |
+| authenticated, From missing, without a domain or not in a served domain (ADR 0015) | 554 5.7.1 to the SMTP client; a permanent property of the message |
 | guard code error | logged; authenticated and loopback mail with a sender is deferred (a deferral is retried; Postfix's own bounces never reach the milter, section 5); if the source itself cannot be determined only authenticated mail is deferred; Internet mail is never touched |
 | Valkey down | no effect: keys come from mounted Secrets |
 | `rspamd.local.lua` does not load | caught by the validation Job (exit 1), the old revision keeps running |

@@ -514,15 +514,17 @@ same reasoning as ADR 0013's several-`From` rule):
    `From` without a domain (`From: bob`), an unserved domain and a
    subdomain of a served domain (only exact served domains count) are
    refused. An **empty-string domain counts as missing**: in Lua `''` is
-   truthy, and the guard today tests only for `nil`
-   (`internal/render/rspamd/guard.lua`, line 31), so the check must compare
-   against `''` as well. This closes the unserved-`From` gap for every
-   user source and changes the expectations of the guard matrix: the matrix of
-   `hack/test-rspamd-guard.sh` today expects four authenticated cases to
-   pass untouched (domain not served, subdomain of a served domain,
-   several From addresses none of them served, no From header); they become
-   rejects, and the cases `From` without a domain and an empty `From` are
-   added. Unauthenticated and loopback cases stay untouched.
+   truthy, and the guard tested only for `nil`, so the check compares
+   against `''` as well (`internal/render/rspamd/guard.lua`, `check`: a
+   domain that is missing or empty is not in the `required` table). This
+   closes the unserved-`From` gap for every user source and changed the
+   expectations of the guard matrix: before check 1 the matrix of
+   `hack/test-rspamd-guard.sh` expected four authenticated cases to pass
+   untouched (domain not served, subdomain of a served domain, several From
+   addresses none of them served, no From header, via the early returns
+   quoted above); they are now rejects, and the cases `From` without a
+   domain and an empty `From` are added. Unauthenticated and loopback cases
+   stay untouched.
 2. **Check 2, in 3b (the last commit, separable): every header `From`
    address is owned by the login** (the whole address is lower-cased before
    the lookup, not only the domain, as Postfix does for `sender_login`),
@@ -536,9 +538,12 @@ same reasoning as ADR 0013's several-`From` rule):
    still applies.
 
 Both checks use the guard's existing view (`task:get_user()`,
-`task:get_from('mime')`, the served-domain table). They are **not verified
-here**: no Rspamd run was done for this ADR; the matrix run is the done
-criterion of 3a and of 3b.
+`task:get_from('mime')`, the served-domain table). Check 1 is implemented
+and verified (row 19 of Verification; the reply is `554 5.7.1`, message
+`From must be an address in a served domain`); check 2 is **not verified
+here**: the matrix run is the done criterion of 3b. Check 1 also refuses
+several From addresses none of which is served (authenticated mail only);
+a served one keeps the several-From message of ADR 0013.
 
 **DKIM and aliases.** Each alias domain signs with the key of **its own
 domain** (ADR 0011: keys are per domain, selected by the header `From`
@@ -1429,6 +1434,13 @@ written down from its result, so anyone can repeat it.
 | 17 | `unionmap` | `postmap -q` with `unionmap:{texthash:..., ldap:...}` and one member failing | Returns the union; an error in either member fails the lookup. |
 | 18 | Test images | `docker image inspect`, `apk info -a` in the images; upstream pages | `osixia/openldap:2.6.15-rc@sha256:caf6a875d6cab9543e415ac5623f1cefd20795b220a3aa896438be7eaaab02e0`: 51 MB, OpenLDAP 2.6.15, Alpine 3.24.3, licences from `apk info` (`OLDAP-2.8`) and upstream; `postgres:18-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395`: PostgreSQL 18.6, licence `PostgreSQL` from `apk info`. Upstream licences: osixia MIT, go-ldap MIT, pgx MIT, x/crypto BSD-3-Clause (the URLs in section 9; the osixia licence and the tags on Docker Hub were re-read when this ADR was finished). |
 
+Row 19 was added when check 1 landed and was run on 2026-11-06 against the
+Rspamd image pinned in `internal/images/images.go`.
+
+| # | Question | How | Result |
+|---|---|---|---|
+| 19 | Rspamd check 1 (4.4) | `make test-rspamd-guard`: rendered configuration, `rspamc --user alice` with the header `From` variants below; a throw-away guard that printed what `task:get_from('mime')` returns | `From: Bob <bob@>` and `From: bob` both give one address with the **empty string** as `domain` (not `nil`), and no `From` header gives `nil`: the empty-domain case is real. Authenticated mail is rejected (`554 5.7.1`) with a From in an unserved domain, in a subdomain of a served domain, without a domain, with an empty domain, without a From header and with several From addresses none of them served. A served domain with a key is signed, one without a key is still deferred, unauthenticated mail stays untouched (loopback mail with a sender stays untouched for the From check only; the guard's other rules apply to it). The throw-away probe guard used for this row is not committed, so the row is only partly repeatable: the matrix cases are, the probe output is not. |
+
 **Read from upstream documentation, not run** (the 2.4.5 pages exist on
 `doc.dovecot.org` and were read on 2026-11-06; the full addresses are in
 sections 3 and 4.7): the `service_process_limit` setting and the
@@ -1439,7 +1451,7 @@ extra field and `passdb_use_worker` (passdb page,
 `https://doc.dovecot.org/2.4.5/core/config/auth/passdb.html`); the OWASP
 Argon2id profiles (Password Storage Cheat Sheet, section 3, point 4).
 
-**Not verified:** the Rspamd header-`From` checks (no Rspamd run); the
+**Not verified:** the Rspamd header-`From` check 2 (check 1 is row 19); the
 throughput and memory of Argon2id with `passdb_use_worker = yes` and a
 worker limit, and that the passwd-file passdb uses workers at all; the
 spelling of the `auth-worker` process limit inside the 2.4.5 service block

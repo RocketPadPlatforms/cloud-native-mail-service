@@ -177,16 +177,23 @@ the new CRDs reject or prune the old field names.
   the active keys of the `MailDomain`s a server serves, and a guard defers
   such mail (`451 4.7.1`) when a signature is missing. Before, nothing was
   signed and everything left unsigned. After the upgrade, a served domain
-  that has no usable key (a `MailDomain` that is not authorized or not
-  reconciled yet, your own key Secret missing or invalid) sends nothing
-  until it has one; `DKIMKeysAvailable` on the `MailServer` names it. Check
+  that has no usable key (a `MailDomain` that is not reconciled yet, your
+  own key Secret missing or invalid) sends nothing until it has one;
+  `DKIMKeysAvailable` on the `MailServer` names it. A `MailDomain` that is
+  not authorized is not a served domain: see the `554 5.7.1` rule below. Check
   that every `MailDomain` of a server is `Authorized` and has its key
   before the upgrade rolls Rspamd. Mail from a signed sender with several
   `From` addresses, one of them in a served domain, is rejected with
   `554 5.7.1` (locally submitted mail of that kind bounces to its
   sender); it can never be signed. An error in the guard defers the mail
-  of authenticated senders and loopback mail with a sender. Unauthenticated
-  mail from other pods and the bounces Postfix generates are not signed.
+  of authenticated senders and loopback mail with a sender. Authenticated
+  mail whose header `From` is missing, has no domain or is not in a
+  domain the server serves (a subdomain of a served domain counts as
+  unserved) is now rejected with `554 5.7.1` instead of leaving
+  unsigned; check that your applications send with a served `From`
+  address before the Rspamd pods roll
+  ([ADR 0015](../decisions/0015-user-sources-directory-users-and-aliases.md)).
+  Unauthenticated mail from other pods and the bounces Postfix generates are not signed.
   The Rspamd pods roll once (a new `dkim_signing.conf` and
   `rspamd.local.lua`, validated by a Job first), and mount the keys in a
   read-only volume at `/etc/rspamd/dkim`.

@@ -66,8 +66,9 @@ Postfix itself, from a served domain carries the signature of every
 active key of the domain. If one is missing, Rspamd answers soft reject,
 Postfix replies `451 4.7.1` at the end of DATA, and the sending client
 keeps the mail and retries. Unauthenticated mail (including mail from
-other pods), mail of domains the server does not serve, and mail
-that is rejected anyway are not touched. A message with several `From`
+other pods) and mail that is rejected anyway are not touched. A message
+of an authenticated sender whose `From` header is missing, has no domain
+or is not in a served domain, and a message with several `From`
 addresses, one of them in a served domain, can never be signed and is
 rejected with `554 5.7.1`. A guard that fails with an error logs it and
 defers the mail of authenticated senders and Postfix's own `sendmail(1)`
