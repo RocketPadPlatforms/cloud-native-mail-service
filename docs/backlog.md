@@ -6,18 +6,75 @@ committed.
 
 ## Phase 3: users and service accounts
 
+Scoped in [ADR 0015](decisions/0015-user-sources-directory-users-and-aliases.md)
+(three pull requests, see the roadmap):
+
 - Bind the submission login to the sender address (`smtpd_sender_login_maps`
-  plus `reject_sender_login_mismatch` on port 587; ADR 0008 amendment). Not
-  rendered today, so any authenticated user can use any sender address.
+  plus `reject_sender_login_mismatch` on port 587, and the null sender): PR
+  3b. Not rendered today, so any authenticated user can use any sender
+  address.
 - Bind the header From to the login: sender-login maps check only
   `MAIL FROM`, so an authenticated user can still put any served domain in
-  the header From and get it signed; this needs an Rspamd or milter-side
-  check (ADR 0013, section 3).
+  the header From and get it signed (ADR 0013, section 3). The Rspamd check
+  that the From of authenticated mail is in a served domain is PR 3a; the
+  check that the address is owned by the login is PR 3b.
 - `MailDirectory` has no controller yet: the empty scaffold was removed so
-  the operator holds no write access to it. Phase 3 re-scaffolds it with
+  the operator holds no write access to it. PR 3a re-scaffolds it with
   `kubebuilder create api --group cnms --version v1alpha1 --kind MailDirectory
   --controller --resource=false` and adds the RBAC it actually uses.
+- Directory lookup timeouts: a lookup against an unreachable LDAP server
+  blocks a Postfix process for 8 to 10 s (libldap's network timeout). PR 3a
+  tests `NETWORK_TIMEOUT` in `ldap.conf` (not verified) and relies on the
+  per-client limits of ADR 0006 otherwise.
+
+Not scoped (ADR 0015, "Limits" and section 4.7):
+
 - OIDC directory backend for `MailDirectory` (after LDAP/SQL).
+- MySQL/MariaDB for the `sql` directory type (PostgreSQL only for now).
+- An address shared by several users, distribution lists, catch-all and
+  wildcard addresses, forwarding to external addresses, per-alias
+  send-only, plus-addressing (`recipient_delimiter`).
+- Aliases as login identifiers (only the account name and the primary
+  address log in).
+- `postmaster@` for every served domain: RFC 5321 expects the mailbox, and
+  nothing maps it automatically (a `MailUser` or alias can claim it).
+- Header From check for directory users: the owned addresses are not in the
+  cluster, so a directory user can put any served address in the header
+  From. Options: a directory lookup from Rspamd, or a policy service.
+- Per-namespace sender allowlist for `MailServiceAccount`s beyond
+  `senderDomains`: the local parts a consented namespace may use inside a
+  granted domain, so it cannot claim an unowned address such as `ceo@`, and
+  two consented namespaces that share a domain cannot make each other lose
+  the same sender (ADR 0015, sections 4.2 and 4.9; until then every
+  namespace gets its own `senderDomains`).
+- A `ValidatingAdmissionPolicy` that lets the operator update only Secrets
+  that carry the CNMS managed-by label, to narrow the `update` verb on
+  Secrets (ADR 0015, section 4.7).
+- A restart-based rollout of user changes (a new immutable users Secret and
+  a Dovecot restart per change) as the option for clusters that cannot grant
+  the operator `update` on Secrets; the live users Secret is the decision
+  (ADR 0015, section 4.7).
+- Keep the userdb line of a removed user until the Postfix revision without
+  it has rolled out, so mail accepted in between is delivered. PR 3b covers
+  the disabled, suspended and revoked cases (their userdb line stays) and
+  makes the remaining window a deferral with `soft_bounce` on the `lmtp`
+  service; this item is the fix if that setting does not work per service
+  (ADR 0015, section 4.7).
+- End the open IMAP sessions of a revoked account automatically, with
+  `doveadm kick` from a sidecar: a change of the live Dovecot files does not
+  end them. PR 3b documents the manual procedure (`doveadm kick` in the
+  Dovecot pod, or a restart of its StatefulSet).
+- Split the Postfix address tables into one object each. A modest gain, not
+  a fix: `valias` is 638 of the 1,022 worst-case bytes per alias, so the
+  ceiling moves from about 978 to about 1,567 aliases, and at the caps the
+  worst case still exceeds 1 MiB per table; the byte guard stays the limit
+  (ADR 0015, section 4.7).
+- Mailbox retention when a `MailUser` is deleted: the data stays on the
+  volume and a new user of the same name would inherit it. Phase 4 adds an
+  explicit purge; nothing is deleted automatically.
+- A path for mail with a null sender that Dovecot generates (message
+  disposition notifications, Sieve vacation replies): port 587 refuses it
+  (ADR 0015, section 4.4); Phase 4 decides the route.
 
 ## Phase 5: `MailDomain` and domain authorization
 

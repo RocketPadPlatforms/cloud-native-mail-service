@@ -4,14 +4,14 @@ The project is built in phases (see the phase plan in `AGENTS.md`, section 5).
 At the end of every phase: tests green, docs updated, summary with assumptions
 and open risks, review before the next phase starts.
 
-Status as of 2026-11-04:
+Status as of 2026-11-06:
 
 | Phase | Scope | Status |
 |---|---|---|
 | 0 | Scaffold: repo, kubebuilder init, CI, lint, license check, docs site, ADRs | Done |
 | 1 | API (core subset): `MailServer`, `MailDomain`, `MailDirectory` CRDs with defaults, CEL validation, generated CRDs and API reference, samples | Done |
 | 2 | `MailServer` core: Postfix + Rspamd + Valkey rendering, workloads, config validation, golden-file tests, metrics, swaks e2e; plus domain-authorization gating of the domains a server serves (`MailDomainGrant`, `--domain-authorization` flag), default-deny NetworkPolicy floor, security floor (AUTH only over TLS, TLS >= 1.2, rate limits, `reject_unauth_destination`) with an open-relay e2e test | Done |
-| 3 | User sources and service accounts: `MailDirectory` (LDAP and SQL maps for Postfix and Dovecot auth), operator-managed `MailUser` accounts for environments without a directory service, `MailServiceAccount` application credentials (cross-namespace reference, operator-provided SMTP credential Secret, sender binding, including sender login maps on submission) — ADR 0008 | Planned |
+| 3 | User sources and service accounts, in three pull requests ([ADR 0008](decisions/0008-user-sources-and-service-accounts.md), [ADR 0015](decisions/0015-user-sources-directory-users-and-aliases.md)): **3a** `MailDirectory` (LDAP and PostgreSQL maps for Postfix with alias-aware recipient validation, Dovecot auth against the directory, the controller, the header From check for authenticated mail); **3b** `MailUser` with aliases across the domains of one server, address uniqueness, live Dovecot passdb and userdb files, strict sender binding (envelope, and header From for operator-managed accounts) for every user source; **3c** `MailServiceAccount` application credentials (cross-namespace reference, operator-provided SMTP credential Secret, NetworkPolicy) | Planned |
 | 4 | Mailboxes (Dovecot): IMAP, LMTP delivery, mail storage, quota, backup hooks | Planned |
 | 5 | `MailDomain`: DKIM keys and rotation, SPF/DMARC/MTA-STS/TLS-RPT records, DNS verification; plus domain uniqueness and derived-name conflicts, public-suffix rejection, revocation semantics (grace period, kept DKIM keys), apex TXT conflict detection, dedicated external-dns wiring; the never-unsigned Rspamd guard ([ADR 0013](decisions/0013-never-unsigned-guard.md)) | Done |
 | 6 | Relay mode: `MailRelay`, per-domain routing, fallback relay | Planned |
