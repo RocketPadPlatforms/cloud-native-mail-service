@@ -125,14 +125,15 @@ Namespaced (tenant):
 - `MailRelay`: smarthost, port, TLS, auth Secret, fallback relay.
 - `MailDirectory`: `ldap` | `sql` (later `oidc`), credentials via Secret refs.
 - `MailUser`: operator-managed account for environments without a directory
-  service (login name, operator-generated or provided password, status,
-  quota); the same `MailServer` has either a directory or these users, not
-  both (ADR 0008).
+  service (login name, primary address in `domainRef`, aliases in other
+  domains of the same server, operator-generated or provided password,
+  disabled flag; quota with Phase 4); the same `MailServer` has either a
+  directory or these users, not both (ADR 0008, 0015).
 - `MailServiceAccount`: application sending credential bound to a
   `MailServer`; lives in the application's namespace and may reference the
   server cross-namespace. The operator creates the SMTP credential Secret
-  (and a submission-egress NetworkPolicy) in the account's namespace
-  (ADR 0008).
+  (and a submission-egress NetworkPolicy) in the account's namespace; it
+  may send only as its `sender` address (ADR 0008, 0015).
 - `MailPolicy`: rate limits, TLS enforcement per destination, auto-suspend
   thresholds (bounce rate; complaint rate only once a data source exists, see
   open question 2).

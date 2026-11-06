@@ -1,6 +1,6 @@
 # ADR 0004: Data-plane images and build strategy
 
-- **Status:** Accepted
+- **Status:** Accepted, partially amended by ADR 0015
 - **Date:** 2026-10-25
 
 ## Context
@@ -108,7 +108,10 @@ container image with a known user, writable paths, and a log path
    the constants in step; the checksum of the tarball is updated by
    hand in the same PR). The constants carry the version tag only:
    the e2e suite rebuilds both images locally, and the digest pin
-   follows once published images exist (backlog).
+   follows once published images exist (backlog). (Amended by ADR 0015:
+   from Phase 3a the tags are `<POSTFIX_VERSION>-<revision>`, for the
+   Postfix and the e2e client image, so that a change of an image's
+   content under the same Postfix version gets a new tag.)
 7. **E2E-only images:** a swaks client image
    (`debian:trixie-slim` + `swaks` + `openssl` + `curl`, apt swaks
    `20201014.0` upstream), `axllent/mailpit:v1.32.0` (MIT; the
