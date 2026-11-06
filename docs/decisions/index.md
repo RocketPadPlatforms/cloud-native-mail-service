@@ -35,4 +35,5 @@ See [TEMPLATE.md](TEMPLATE.md).
 | [0012](0012-dns-records-and-dmarc.md) | DNS records, DMARC and DNS verification | Accepted (partially amended by 0014) |
 | [0013](0013-never-unsigned-guard.md) | Never-unsigned guard | Accepted (partially amended by 0014) |
 | [0014](0014-domain-server-binding-and-hostname.md) | Domain-to-server binding and server hostname | Accepted |
+| [0015](0015-user-sources-directory-users-and-aliases.md) | User sources, directory users and addresses | Accepted |
 
