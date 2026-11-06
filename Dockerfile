@@ -1,6 +1,6 @@
 # Build the manager binary
 # Override BASE_IMAGE to build from another registry, e.g. docker.io/library/golang:1.26
-ARG BASE_IMAGE=golang:1.26@sha256:c1bc3620b0460d97001977fadbe8d0e94d7be5cbb064f4f6b268d95375c3ac71
+ARG BASE_IMAGE=golang:1.27@sha256:e519d3b0a5b285e5aa53ab9eef02bc6bbb9cb04608389b743a136a9ce75f0d1e
 # The builder runs on the build platform and cross-compiles for TARGETARCH, so
 # multi-arch builds need no emulation.
 FROM --platform=$BUILDPLATFORM ${BASE_IMAGE} AS builder
