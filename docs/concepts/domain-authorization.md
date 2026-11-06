@@ -167,8 +167,10 @@ For a `MailServer` this means:
   login that still exists can use a revoked domain as sender address until
   the Phase 3 binding lands. The data plane no longer signs for the revoked
   domain (its keys are removed from the Rspamd configuration and the key
-  Secrets are kept), so such mail leaves unsigned: the guard covers served
-  domains only ([ADR 0013](../decisions/0013-never-unsigned-guard.md)).
+  Secrets are kept), and the guard rejects authenticated mail with a
+  header `From` in that domain with `554 5.7.1`, because the domain is no
+  longer served ([ADR 0013](../decisions/0013-never-unsigned-guard.md),
+  [ADR 0015](../decisions/0015-user-sources-directory-users-and-aliases.md)).
 
 ## Wiring-level bypasses
 

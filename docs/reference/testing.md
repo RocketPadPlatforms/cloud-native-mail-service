@@ -42,15 +42,18 @@ engine. It needs `docker`, `go` and `jq`:
 The matrix covers: authenticated mail signed with every active key; a
 missing, unreadable or absent key, and a served domain without keys,
 answered with a soft reject (`DKIM signing unavailable, try again
-later`); unauthenticated mail from Internet and pod addresses, mail of an
-unserved domain and of a subdomain left untouched and never deferred;
+later`); unauthenticated mail from Internet and pod addresses, with an
+unserved or no `From`, left untouched and never deferred; authenticated mail
+whose `From` header is missing, has no domain or an empty domain, or is
+in an unserved domain or a subdomain of a served one, rejected
+(`From must be an address in a served domain`, [ADR 0015](../decisions/0015-user-sources-directory-users-and-aliases.md));
 loopback mail (Postfix's own non-SMTP mail) signed, deferred without a
 key, and exempt when the envelope sender is empty; a message that is
 rejected anyway stays a reject; a message with several `From` addresses,
 one of them in a served domain (in one header or in two), is rejected
 (`multiple From addresses cannot be DKIM signed`), also from loopback,
-and left alone when no address is served, when there is no login, and
-when there is no `From` header; an error inside the guard defers
+and left alone when there is no login, and from loopback when no address
+is served or there is no `From` header; an error inside the guard defers
 authenticated mail and loopback mail with a sender, leaves everything
 else alone and is logged; an error in the source detection defers
 authenticated mail only. `rspamadm configtest` is run for the good

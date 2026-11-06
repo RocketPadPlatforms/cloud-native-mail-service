@@ -118,6 +118,9 @@ mkhdr twofrom 'From: Bob <bob@dual.example>' 'From: Eve <eve@other.example>'
 mkhdr multiother 'From: Bob <bob@other.example>, Eve <eve@sub.dual.example>'
 # No From header at all.
 mkhdr nofrom 'X-Test: no from'
+# A From without a domain, and an address with an empty domain.
+mkhdr nodomain 'From: bob'
+mkhdr emptydomain 'From: Bob <bob@>'
 
 # --- containers ---
 
@@ -163,6 +166,9 @@ DEFERRED="soft reject|$DEFER_MSG|*"
 # A message with several From addresses of a served domain can never be
 # signed: it is rejected, not deferred.
 MULTI="reject|multiple From addresses cannot be DKIM signed|*"
+# An authenticated message whose From is missing, has no domain or is not
+# in a served domain can never be sent: it is rejected, not deferred.
+UNSERVED="reject|From must be an address in a served domain|*"
 # The guard did not act: no message of its own and no signature. The action
 # is not pinned, because Rspamd may score such a message (MULTIPLE_FROM,
 # MISSING_FROM).
@@ -239,8 +245,17 @@ check "$G" "authenticated, empty sender is not exempt" missing "$DEFERRED" --ip 
 check "$G" "unauthenticated, Internet address" dual "$NONE" --ip $IP --from bob@dual.example
 check "$G" "unauthenticated, pod address (not signed)" dual "$NONE" --ip 10.1.2.3 --from bob@dual.example
 check "$G" "unauthenticated, key missing (not deferred)" missing "$NONE" --ip $IP --from bob@missing.example
-check "$G" "authenticated, domain not served" other "$NONE" --ip $IP --user alice --from bob@other.example
-check "$G" "authenticated, subdomain of a served domain" sub "$NONE" --ip $IP --user alice --from bob@sub.dual.example
+check "$G" "unauthenticated, domain not served" other "$NONE" --ip $IP --from bob@other.example
+check "$G" "unauthenticated, no From header" nofrom "$UNTOUCHED" --ip $IP --from bob@dual.example
+
+# Authenticated mail needs a From address in a served domain (ADR 0015,
+# section 4.4, check 1): anything else is rejected, not deferred. A served
+# domain without a key is still deferred, above.
+check "$G" "authenticated, domain not served" other "$UNSERVED" --ip $IP --user alice --from bob@other.example
+check "$G" "authenticated, subdomain of a served domain" sub "$UNSERVED" --ip $IP --user alice --from bob@sub.dual.example
+check "$G" "authenticated, From without a domain" nodomain "$UNSERVED" --ip $IP --user alice --from bob@dual.example
+check "$G" "authenticated, From with an empty domain" emptydomain "$UNSERVED" --ip $IP --user alice --from bob@dual.example
+check "$G" "authenticated, no From header" nofrom "$UNSERVED" --ip $IP --user alice --from bob@dual.example
 
 # Postfix's own non-SMTP mail comes from loopback without a login.
 check "$G" "loopback IPv4, signed" dual "no action||$DUAL|$BOTH" --ip 127.0.0.1 --from bob@dual.example
@@ -255,11 +270,13 @@ check "$G" "authenticated, rejected, key missing" gtube "reject|*" --ip $IP --us
 check "$G" "authenticated, several addresses in one From" multi "$MULTI" --ip $IP --user alice --from bob@dual.example
 check "$G" "authenticated, two From headers" twofrom "$MULTI" --ip $IP --user alice --from bob@dual.example
 check "$G" "loopback with a sender, several From addresses" multi "$MULTI" --ip 127.0.0.1 --from bob@dual.example
-# Without a served address, without a login or without a From header the
-# guard does not act.
-check "$G" "authenticated, several From addresses, none served" multiother "$UNTOUCHED" --ip $IP --user alice --from bob@other.example
+# Several From addresses, none served, are refused for a login (check 1).
+# Without a login the From header is not checked, and loopback mail with no
+# served From address is left alone.
+check "$G" "authenticated, several From addresses, none served" multiother "$UNSERVED" --ip $IP --user alice --from bob@other.example
 check "$G" "unauthenticated, several From addresses" multi "$UNTOUCHED" --ip $IP --from bob@dual.example
-check "$G" "authenticated, no From header" nofrom "$UNTOUCHED" --ip $IP --user alice --from bob@dual.example
+check "$G" "loopback with a sender, no From header" nofrom "$UNTOUCHED" --ip 127.0.0.1 --from bob@dual.example
+check "$G" "loopback with a sender, From without a domain" nodomain "$UNTOUCHED" --ip 127.0.0.1 --from bob@dual.example
 
 # An error in the guard defers authenticated mail and loopback mail with a
 # sender, and nothing else, and is logged.

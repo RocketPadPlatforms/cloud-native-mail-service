@@ -26,9 +26,21 @@ local function check(task)
         return task:set_pre_result('reject', 'multiple From addresses cannot be DKIM signed', 'cnms_dkim_guard')
       end
     end
-    return
   end
-  if not (hfrom and hfrom[1] and hfrom[1].domain) then return end  -- no From: Rspamd does not sign either
+
+  -- A login may send only with From addresses in a served domain. A domain
+  -- that is missing or empty ('' is truthy in Lua) is not in the table.
+  if task:get_user() then
+    local ok = hfrom and hfrom[1]
+    for _, a in ipairs(hfrom or {}) do
+      if not (a.domain and required[a.domain:lower()]) then ok = false end
+    end
+    if not ok then
+      return task:set_pre_result('reject', 'From must be an address in a served domain', 'cnms_dkim_guard')
+    end
+  end
+  if hfrom and hfrom[2] then return end                   -- loopback, several From addresses, none served
+  if not (hfrom and hfrom[1] and hfrom[1].domain) then return end  -- loopback without a From: Rspamd does not sign either
   local want = required[hfrom[1].domain:lower()]
   if not want then return end                             -- not a served domain
 
