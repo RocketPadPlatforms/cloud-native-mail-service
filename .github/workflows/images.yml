@@ -57,7 +57,8 @@ jobs:
           if grep -qE "^images/postfix/|$workflow" <<<"$files"; then
             matrix=$(jq -c '. + [{image: "cnms-postfix", context: "images/postfix", "postfix-tag": true}]' <<<"$matrix")
           fi
-          if grep -qE "^images/e2e-client/|$workflow" <<<"$files"; then
+          # the e2e client carries the tag of the Postfix Dockerfile (ADR 0004)
+          if grep -qE "^images/e2e-client/|^images/postfix/Dockerfile$|$workflow" <<<"$files"; then
             matrix=$(jq -c '. + [{image: "cnms-e2e-client", context: "images/e2e-client", "postfix-tag": true}]' <<<"$matrix")
           fi
           echo "matrix={\"include\":$matrix}" >> "$GITHUB_OUTPUT"

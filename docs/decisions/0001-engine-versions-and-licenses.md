@@ -17,6 +17,8 @@ Pinned engine and toolchain versions (latest stable at verification time):
 | Component | Version | License | Source / image strategy |
 |---|---|---|---|
 | Postfix | 3.11.7 | IPL-1.0 / EPL-2.0 (dual) | No official upstream image: built by CNMS from the upstream source tarball (amd64 and arm64 in CI; the master runs as root and drops to the `postfix` user, read-only root FS; see ADR 0004). |
+| libpq | Debian `libpq5` (trixie) | PostgreSQL License ([licence](https://www.postgresql.org/about/licence/)) | Linked dynamically into the CNMS Postfix image for the `pgsql` map type (ADR 0015, section 9); not a pinned engine. |
+| ca-certificates | Debian `ca-certificates` (trixie) | MPL-2.0 (Mozilla root list), GPL-2+ (Debian scripts); [licence](https://www.mozilla.org/MPL/2.0/) | Installed in the CNMS Postfix image for the system roots of the directory tables (ADR 0015, section 4.8); not a pinned engine. |
 | Rspamd | 4.2.3 | Apache-2.0 | Start from the official `rspamd/rspamd` image; non-root and read-only suitability verified in Phase 2. |
 | Dovecot | 2.4.5 (incl. Pigeonhole) | Core LGPL-2.1, MIT parts | Prefer the official Dovecot image; verified in Phase 4. |
 | Valkey | 9.1.2 | BSD-3-Clause | Official `valkey/valkey` image. |
@@ -48,8 +50,8 @@ Policy:
 - The third-party Go dependency report is generated with
   `make license-report` into `docs/reference/third-party-licenses.md`.
 - Container images are pinned by version and digest (the CNMS-built
-  images by version tag only, see ADR 0004); Renovate keeps both current,
-  including the operator's build base (`golang:*`).
+  images by `<version>-<revision>` tag only, see ADR 0004); Renovate
+  keeps both current, including the operator's build base (`golang:*`).
 - Renovate: only patch updates of tooling (GitHub Actions, docs tooling) may
   automerge. Engine and Go module updates always open a PR and must pass the
   golden-file tests and rendered-config validation. Major engine updates are

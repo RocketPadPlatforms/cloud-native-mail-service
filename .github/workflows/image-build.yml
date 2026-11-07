@@ -18,7 +18,7 @@ on:
         type: boolean
         required: true
       postfix-tag:
-        description: Also tag the image with the Postfix version
+        description: Also tag the image with the Postfix version and image revision
         type: boolean
         default: false
 
@@ -34,9 +34,11 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Read the Postfix version
+      # The tag of the Postfix and e2e client images is <version>-<revision>
+      # (ADR 0004, item 6): both are read from the Postfix Dockerfile.
+      - name: Read the Postfix version and image revision
         id: postfix
-        run: echo "version=$(sed -n 's/^ARG POSTFIX_VERSION=//p' images/postfix/Dockerfile)" >> "$GITHUB_OUTPUT"
+        run: echo "tag=$(sed -n 's/^ARG POSTFIX_VERSION=//p' images/postfix/Dockerfile)-$(sed -n 's/^ARG IMAGE_REVISION=//p' images/postfix/Dockerfile)" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
@@ -61,7 +63,7 @@ jobs:
             type=edge
             type=semver,pattern={{version}}
             type=sha
-            type=raw,value=${{ steps.postfix.outputs.version }},enable=${{ inputs.postfix-tag }}
+            type=raw,value=${{ steps.postfix.outputs.tag }},enable=${{ inputs.postfix-tag }}
 
       # sbom and provenance attach an SBOM and a build attestation to the
       # published image index.

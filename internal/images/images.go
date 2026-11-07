@@ -21,7 +21,8 @@ limitations under the License.
 // Upstream images are pinned by version tag AND digest and are
 // updated by the Renovate custom managers in renovate.json.
 // CNMS-built images (Postfix, E2EClient) are fully qualified
-// ghcr.io/rocketpadplatforms references pinned by version tag only:
+// ghcr.io/rocketpadplatforms references pinned by a
+// <POSTFIX_VERSION>-<revision> tag only:
 // their digest changes with every local build, and e2e always
 // rebuilds them from images/ (make docker-build-data-plane); their
 // tags are synced with the Dockerfiles in the same PR (ADR 0004
@@ -54,8 +55,8 @@ const (
 const (
 	// Postfix is the SMTP engine built from the upstream source
 	// tarball (images/postfix).
-	Postfix = "ghcr.io/rocketpadplatforms/cnms-postfix:3.11.7"
+	Postfix = "ghcr.io/rocketpadplatforms/cnms-postfix:3.11.7-1"
 	// E2EClient is the e2e SMTP client (swaks, openssl, curl;
 	// images/e2e-client).
-	E2EClient = "ghcr.io/rocketpadplatforms/cnms-e2e-client:3.11.7"
+	E2EClient = "ghcr.io/rocketpadplatforms/cnms-e2e-client:3.11.7-1"
 )

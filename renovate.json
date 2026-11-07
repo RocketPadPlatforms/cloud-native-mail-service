@@ -60,7 +60,7 @@
       "description": "The Postfix tarball is verified by checksum and signature, which Renovate cannot update.",
       "matchPackageNames": ["vdukhovni/postfix"],
       "prBodyNotes": [
-        "Also update POSTFIX_SHA512 in images/postfix/Dockerfile and check the signing key (images/postfix/keys)."
+        "Also update POSTFIX_SHA512 in images/postfix/Dockerfile and check the signing key (images/postfix/keys), and reset IMAGE_REVISION to 1."
       ]
     },
     {

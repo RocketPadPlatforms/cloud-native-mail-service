@@ -12,6 +12,8 @@ re-checked when an image major version changes (project plan, section 9).
 | Component | Licence | Image |
 |---|---|---|
 | Postfix | EPL-2.0 or IPL-1.0 (dual, recipient's choice) | Built by CNMS from the upstream source tarball (`images/postfix`) |
+| libpq (PostgreSQL client library) | PostgreSQL License ([licence](https://www.postgresql.org/about/licence/)) | Linked dynamically by the Postfix `pgsql` map type in the CNMS Postfix image (Debian `libpq5`) |
+| ca-certificates (system root bundle) | MPL-2.0 for the Mozilla root list ([licence](https://www.mozilla.org/MPL/2.0/)), GPL-2+ for the Debian scripts; the licence text is `/usr/share/doc/ca-certificates/copyright` in the image | Debian package in the CNMS Postfix image, so libldap and libpq verify a directory with no `caSecretRef` against public roots (the Dovecot image has it already) |
 | Rspamd | Apache-2.0 | Upstream `rspamd/rspamd` |
 | Dovecot | MIT (`src/lib`, `src/auth`, `src/lib-sql`), LGPL-2.1 (the rest) | Upstream `dovecot/dovecot` |
 | Valkey | BSD-3-Clause (Valkey contributors, plus BSD-3-Clause code from Redis) | Upstream `valkey/valkey` |

@@ -144,8 +144,8 @@ docker-build: ## Build docker image with the manager.
 
 # Data-plane and e2e client images (ADR 0004); built for the local
 # architecture, loaded into the e2e Kind cluster by the test suite.
-POSTFIX_IMAGE ?= ghcr.io/rocketpadplatforms/cnms-postfix:3.11.7
-E2E_CLIENT_IMAGE ?= ghcr.io/rocketpadplatforms/cnms-e2e-client:3.11.7
+POSTFIX_IMAGE ?= ghcr.io/rocketpadplatforms/cnms-postfix:3.11.7-1
+E2E_CLIENT_IMAGE ?= ghcr.io/rocketpadplatforms/cnms-e2e-client:3.11.7-1
 
 .PHONY: docker-build-data-plane
 docker-build-data-plane: ## Build the Postfix data-plane and the e2e client images.
