@@ -35,12 +35,12 @@ func renderUsers(req *render.RenderRequest) string {
 	fmt.Fprintf(&b, "# Source: MailServer %s/%s (ADR 0004)\n\n",
 		req.Server.Namespace, req.Server.Name)
 	b.WriteString("# Format: user:password:uid:gid::home:\n")
-	for _, u := range req.StaticUsers {
-		home := mailRoot + "/" + u.Username
+	for _, u := range req.Accounts {
+		home := mailRoot + "/" + u.Name
 		fmt.Fprintf(&b, "%s:%s:%d:%d::%s:\n",
-			u.Mailbox, u.PasswordHash, vmailUID, vmailGID, home)
+			u.Address, u.PasswordHash, vmailUID, vmailGID, home)
 		fmt.Fprintf(&b, "%s:%s:%d:%d::%s:\n",
-			u.Username, u.PasswordHash, vmailUID, vmailGID, home)
+			u.Name, u.PasswordHash, vmailUID, vmailGID, home)
 	}
 	return b.String()
 }

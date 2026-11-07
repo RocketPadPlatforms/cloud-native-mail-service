@@ -34,10 +34,24 @@ import (
 // The login guard keeps out logins that are not a safe path component
 // and the reserved form of service accounts.
 const (
-	usersProbe = "SELECT 1 FROM %s WHERE login ~ '^[a-z0-9][a-z0-9._-]{0,63}$' AND login !~ '^sa\\.' " +
+	loginPattern    = "'^[a-z0-9][a-z0-9._-]{0,63}$'"
+	reservedPattern = "'^sa\\.'"
+
+	// SQLLoginGuard is the condition on the login column that every
+	// lookup of the renderers and the probe share (the SQL twin of the
+	// guards of ProbeFilter).
+	SQLLoginGuard = "login ~ " + loginPattern + " AND login !~ " + reservedPattern
+
+	usersProbe = "SELECT 1 FROM %s WHERE " + SQLLoginGuard + " " +
 		"AND mail IS NOT NULL AND password IS NOT NULL LIMIT 1"
 	aliasesProbe = "SELECT 1 FROM %s WHERE alias IS NOT NULL AND target IS NOT NULL LIMIT 1"
 )
+
+// SQLLoginGuardOn is SQLLoginGuard for a qualified login column, for a
+// query that joins the users relation (for example "u.login").
+func SQLLoginGuardOn(column string) string {
+	return column + " ~ " + loginPattern + " AND " + column + " !~ " + reservedPattern
+}
 
 // connConfig builds the connection from the fields of the target, never
 // from a connection string that holds the password. The TLS mode is the
@@ -138,7 +152,12 @@ func (NetProber) ProbeSQL(ctx context.Context, t SQLTarget) Outcome {
 
 // sqlText puts the quoted relation into the probe text.
 func sqlText(format string, r Relation) string {
-	return strings.Replace(format, "%s", pgx.Identifier{r.Schema, r.Name}.Sanitize(), 1)
+	return strings.Replace(format, "%s", r.Quoted(), 1)
+}
+
+// Quoted is the relation as a quoted SQL identifier ("schema"."name").
+func (r Relation) Quoted() string {
+	return pgx.Identifier{r.Schema, r.Name}.Sanitize()
 }
 
 // sqlOutcome classifies a failure to connect or to query. A server error

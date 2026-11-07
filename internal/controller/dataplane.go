@@ -76,14 +76,20 @@ type gate struct {
 	plane *manifests.DataPlane
 }
 
+// hashKeyFunc returns the key of the secret-file digests. renderDataPlane
+// calls it only when a render holds secret content, so a render without
+// (the fail-closed one) needs and creates no key.
+type hashKeyFunc func() ([]byte, error)
+
 // renderDataPlane renders every component and builds the staged
 // object set.
-func renderDataPlane(server *cnmsv1alpha1.MailServer, authorized []string, hostname string, users []render.StaticUser, keys []render.DomainKeys) (*manifests.DataPlane, error) {
+func renderDataPlane(server *cnmsv1alpha1.MailServer, authorized []string, hostname string, src userSource, keys []render.DomainKeys, hashKey hashKeyFunc) (*manifests.DataPlane, error) {
 	req := &render.RenderRequest{
 		Server:            server,
 		AuthorizedDomains: authorized,
 		Hostname:          hostname,
-		StaticUsers:       users,
+		Accounts:          src.accounts,
+		Directory:         src.directory,
 		DKIMKeys:          keys,
 	}
 	renders := make(map[render.Component]*render.RenderResult, len(render.AllComponents()))
@@ -96,6 +102,16 @@ func renderDataPlane(server *cnmsv1alpha1.MailServer, authorized []string, hostn
 		}
 		renders[renderer.Component()] = result
 	}
+	for _, result := range renders {
+		if manifests.HasSecretContent(result) {
+			key, err := hashKey()
+			if err != nil {
+				return nil, err
+			}
+			req.HashKey = key
+			break
+		}
+	}
 	return manifests.Build(req, renders)
 }
 
@@ -104,8 +120,10 @@ func renderDataPlane(server *cnmsv1alpha1.MailServer, authorized []string, hostn
 // workloads only when every validation Job for a changed
 // configuration succeeded. A rejected or running validation leaves
 // the existing workloads untouched (fail closed, ADR 0009).
-func (r *MailServerReconciler) applyDataPlane(ctx context.Context, server *cnmsv1alpha1.MailServer, authorized []string, hostname string, users []render.StaticUser, keys []render.DomainKeys, certCRDs bool) (*gate, error) {
-	plane, err := renderDataPlane(server, authorized, hostname, users, keys)
+func (r *MailServerReconciler) applyDataPlane(ctx context.Context, server *cnmsv1alpha1.MailServer, authorized []string, hostname string, src userSource, keys []render.DomainKeys, certCRDs bool) (*gate, error) {
+	plane, err := renderDataPlane(server, authorized, hostname, src, keys, func() ([]byte, error) {
+		return r.hashKey(ctx, server)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +223,7 @@ func (r *MailServerReconciler) ensureJob(ctx context.Context, server *cnmsv1alph
 		// A Job of someone else (a tenant could pre-create one that
 		// "passed") must never count as the validation result.
 		if !metav1.IsControlledBy(existing, server) {
-			return nil, &ownershipConflictError{kind: kindName(job), name: job.Name, owner: "MailServer"}
+			return nil, &ownershipConflictError{kind: kindName(job), name: job.Name, owner: ownerMailServer}
 		}
 		return existing, nil
 	}
@@ -264,7 +282,7 @@ func createOwned(ctx context.Context, c client.Client, reader client.Reader, sch
 		return client.IgnoreNotFound(err)
 	}
 	if !metav1.IsControlledBy(existing, owner) {
-		return &ownershipConflictError{kind: kindName(obj), name: obj.GetName(), owner: "MailServer"}
+		return &ownershipConflictError{kind: kindName(obj), name: obj.GetName(), owner: ownerMailServer}
 	}
 	return nil
 }
@@ -285,6 +303,7 @@ func (r *MailServerReconciler) cleanupStale(ctx context.Context, server *cnmsv1a
 	for _, v := range plane.Validations {
 		keep[v.Job.Name] = true
 	}
+	keep[manifests.HashKeySecretName(server)] = true
 	for _, c := range render.AllComponents() {
 		name := render.ServiceName(server.Name, c)
 		key := types.NamespacedName{Name: name, Namespace: server.Namespace}

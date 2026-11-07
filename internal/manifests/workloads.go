@@ -79,7 +79,7 @@ func postfixStatefulSet(server *cnmsv1alpha1.MailServer, r *render.RenderResult)
 						SeccompProfile: podSeccomp(),
 					},
 					TopologySpreadConstraints: topologySpreadConstraints(server, render.ComponentPostfix),
-					Volumes: []corev1.Volume{
+					Volumes: append([]corev1.Volume{
 						configVolume(configMapName(server, render.ComponentPostfix, r)),
 						tlsVolume(TLSSecretName(server)),
 						{
@@ -88,18 +88,21 @@ func postfixStatefulSet(server *cnmsv1alpha1.MailServer, r *render.RenderResult)
 						},
 						emptyDirVolume(postfixDataVolume),
 						emptyDirVolume(tmpVolumeName),
-					},
+					}, postfixSecretVolumes(server, r)...),
 					Containers: []corev1.Container{{
 						Name:  postfixContainerName,
 						Image: images.Postfix, // default CMD: the entrypoint
 						Ports: append([]corev1.ContainerPort{{Name: "smtp", ContainerPort: render.PortPostfixInbound}}, submissionPorts...),
-						VolumeMounts: append(configSubPathMounts(),
+						// The libpq settings of the pgsql tables.
+						Env: envVars(r.Env),
+						VolumeMounts: append(append(configSubPathMounts(),
 							// smtpd loads the certificate from this
 							// path (the sidecar's mount is a
 							// different filesystem).
 							tlsMount(),
 							queueMount(),
 							corev1.VolumeMount{Name: postfixDataVolume, MountPath: postfixDataDir}),
+							postfixSecretMounts(r)...),
 						// Root with the capabilities of postfixMainCaps
 						// (security.go): the master binds, chowns,
 						// drops privileges and signals its daemons. The
@@ -247,14 +250,13 @@ func dovecotStatefulSet(server *cnmsv1alpha1.MailServer, r *render.RenderResult)
 						SeccompProfile: podSeccomp(),
 					},
 					TopologySpreadConstraints: topologySpreadConstraints(server, render.ComponentDovecot),
-					Volumes: []corev1.Volume{
+					Volumes: append([]corev1.Volume{
 						configVolume(configMapName(server, render.ComponentDovecot, r)),
-						usersVolume(secretName(server, render.ComponentDovecot, r)),
 						tlsVolume(TLSSecretName(server)),
 						emptyDirVolume(runVolumeName),
 						// doveconf writes its binary configuration here.
 						emptyDirVolume(tmpVolumeName),
-					},
+					}, dovecotSecretVolumes(server, r)...),
 					// The pinned Dovecot 2.4 image cannot start without the
 					// certificate files (fatal at startup, whatever ssl says), and
 					// it cannot serve without TLS anyway (ssl =
@@ -273,7 +275,7 @@ func dovecotStatefulSet(server *cnmsv1alpha1.MailServer, r *render.RenderResult)
 						Name:            dovecotContainerName,
 						Image:           images.Dovecot, // default CMD: tini + dovecot -F
 						Ports:           ports,
-						VolumeMounts:    dovecotMounts(mailboxes),
+						VolumeMounts:    dovecotMounts(mailboxes, len(r.SecretData) > 0),
 						SecurityContext: dovecotSecurity(mailboxes),
 						Resources:       dovecotMainResources,
 						ReadinessProbe:  portProbe(probePort),
@@ -520,16 +522,57 @@ func objectMeta(server *cnmsv1alpha1.MailServer, name string, c render.Component
 	}
 }
 
-// usersVolume is the Secret volume of the Dovecot users file (password
-// hashes). Mode 0440: the owner is root, and the pod fsGroup
-// (dovecotVmailID, the vmail group) grants the read.
-func usersVolume(secretName string) corev1.Volume {
+// secretFilesVolume is the volume of a rendered Secret of a component
+// (password hashes, directory passwords). Mode 0440: the owner is root,
+// and the pod fsGroup (the group of the engine user) grants the read.
+func secretFilesVolume(name, secretName string) corev1.Volume {
 	return corev1.Volume{
-		Name: usersVolumeName,
+		Name: name,
 		VolumeSource: corev1.VolumeSource{
 			Secret: &corev1.SecretVolumeSource{SecretName: secretName, DefaultMode: new(int32(0o440))},
 		},
 	}
+}
+
+// dovecotSecretVolumes is the users volume: the users file or the
+// directory password and CA. A directory without a bind password and CA
+// renders no Secret, so there is nothing to mount.
+func dovecotSecretVolumes(server *cnmsv1alpha1.MailServer, r *render.RenderResult) []corev1.Volume {
+	if len(r.SecretData) == 0 {
+		return nil
+	}
+	return []corev1.Volume{secretFilesVolume(usersVolumeName, secretName(server, render.ComponentDovecot, r))}
+}
+
+// postfixSecretVolumes is the volume of the directory tables (they carry
+// the bind password), present when the render has a directory.
+func postfixSecretVolumes(server *cnmsv1alpha1.MailServer, r *render.RenderResult) []corev1.Volume {
+	if len(r.SecretData) == 0 {
+		return nil
+	}
+	return []corev1.Volume{secretFilesVolume(directoryVolumeName, secretName(server, render.ComponentPostfix, r))}
+}
+
+// postfixSecretMounts mounts the directory tables, read-only, where the
+// rendered main.cf looks for them.
+func postfixSecretMounts(r *render.RenderResult) []corev1.VolumeMount {
+	if len(r.SecretData) == 0 {
+		return nil
+	}
+	return []corev1.VolumeMount{{Name: directoryVolumeName, MountPath: render.PostfixSecretDir, ReadOnly: true}}
+}
+
+// envVars turns the environment of a render into container variables in
+// a stable order.
+func envVars(env map[string]string) []corev1.EnvVar {
+	if len(env) == 0 {
+		return nil
+	}
+	out := make([]corev1.EnvVar, 0, len(env))
+	for _, k := range slices.Sorted(maps.Keys(env)) {
+		out = append(out, corev1.EnvVar{Name: k, Value: env[k]})
+	}
+	return out
 }
 
 // configVolume is the volume of the immutable, hash-named ConfigMap
@@ -655,14 +698,15 @@ func tlsMount() corev1.VolumeMount {
 // configuration (shadowing the image tree), the certificate, the
 // shared runtime directory, and the mail volume when storage is
 // enabled.
-func dovecotMounts(withMailVolume bool) []corev1.VolumeMount {
-	mounts := []corev1.VolumeMount{
-		{Name: configVolumeName, MountPath: "/etc/dovecot", ReadOnly: true},
-		{Name: usersVolumeName, MountPath: render.DovecotUsersDir, ReadOnly: true},
-		{Name: tlsVolumeName, MountPath: dovecotSSLDir(), ReadOnly: true},
-		{Name: runVolumeName, MountPath: dovecotRunDir},
-		tmpMount(),
+func dovecotMounts(withMailVolume, withSecret bool) []corev1.VolumeMount {
+	mounts := []corev1.VolumeMount{{Name: configVolumeName, MountPath: "/etc/dovecot", ReadOnly: true}}
+	if withSecret {
+		mounts = append(mounts, corev1.VolumeMount{Name: usersVolumeName, MountPath: render.DovecotUsersDir, ReadOnly: true})
 	}
+	mounts = append(mounts,
+		corev1.VolumeMount{Name: tlsVolumeName, MountPath: dovecotSSLDir(), ReadOnly: true},
+		corev1.VolumeMount{Name: runVolumeName, MountPath: dovecotRunDir},
+		tmpMount())
 	if withMailVolume {
 		mounts = append(mounts, corev1.VolumeMount{Name: dovecotMailVolume, MountPath: "/srv/mail"})
 	}

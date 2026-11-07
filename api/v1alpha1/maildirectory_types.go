@@ -149,7 +149,10 @@ type LDAPTLS struct {
 	// Mode of the connection: "StartTLS" upgrades an existing
 	// connection (default), "LDAPS" connects directly over TLS, "None"
 	// disables transport security. With "None", bindDN and caSecretRef
-	// must not be set.
+	// must not be set, and a MailServer cannot use the directory
+	// (DirectoryInvalid): Dovecot checks a password by binding to the
+	// directory as the user, which would send the password of every
+	// login in clear text.
 	// +optional
 	// +kubebuilder:validation:Enum=StartTLS;LDAPS;None
 	// +kubebuilder:default=StartTLS

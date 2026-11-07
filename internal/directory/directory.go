@@ -149,9 +149,9 @@ func ValidActiveFilter(active string) error {
 
 // ProbeFilter is the one builder of the composed LDAP lookup filter
 // `(&<active>(<login>=*)(<mail>=*)(!(<login>=.*))(!(<login>=*/*))(!(<login>=sa.*)))`:
-// the probe uses it, and the Postfix and Dovecot renderers must build on
-// it (a key clause in place of the two presence tests) and not compose
-// the restriction and the guards a second time. It matches every account that passes the active restriction, has a login
+// the probe uses it, and the Postfix and Dovecot renderers build on the
+// same composition through LookupFilter (a key clause added) and do not
+// compose the restriction and the guards a second time. It matches every account that passes the active restriction, has a login
 // and a primary address and is not excluded by the guards of ADR 0015,
 // section 4.8, point 2. The
 // login becomes a path component of the mailbox, so a login with a
@@ -161,6 +161,62 @@ func ValidActiveFilter(active string) error {
 // substring matching matches nothing, and that shows up as
 // NoMatchingEntries instead of as a silent 550.
 func ProbeFilter(a Attributes, active string) (string, error) {
+	return compose(a, active, "")
+}
+
+// Lookup says which attribute a lookup filter matches the key against.
+type Lookup int
+
+// The lookups of the engines (ADR 0015, section 4.8).
+const (
+	// ByMail finds an account by its canonical address (the Postfix
+	// mailbox table).
+	ByMail Lookup = iota
+	// ByAlias finds an account by one of its further addresses (the
+	// Postfix alias table). The attributes must name an alias attribute.
+	ByAlias
+	// ByLogin finds an account by its login name or its canonical
+	// address, never by an alias (the Dovecot passdb and userdb).
+	ByLogin
+)
+
+// The key placeholders of the engines. Only these two are accepted, so
+// no free text reaches the filter: the engine puts the looked-up value
+// in place of the placeholder and quotes it itself.
+const (
+	KeyPostfix = "%s"
+	KeyDovecot = "%{user}"
+)
+
+// LookupFilter is ProbeFilter with a key clause in place of nothing: the
+// filter of one lookup, built from the same restriction and the same
+// guards, so a lookup finds exactly the accounts the probe counts. The
+// key is one of KeyPostfix and KeyDovecot.
+func LookupFilter(a Attributes, active string, by Lookup, key string) (string, error) {
+	if key != KeyPostfix && key != KeyDovecot {
+		return "", fmt.Errorf("the key placeholder is not valid")
+	}
+	var clause string
+	switch by {
+	case ByMail:
+		clause = fmt.Sprintf("(%s=%s)", a.Mail, key)
+	case ByAlias:
+		if a.Aliases == "" {
+			return "", fmt.Errorf("the directory has no alias attribute")
+		}
+		clause = fmt.Sprintf("(%s=%s)", a.Aliases, key)
+	case ByLogin:
+		clause = fmt.Sprintf("(|(%[1]s=%[3]s)(%[2]s=%[3]s))", a.Login, a.Mail, key)
+	default:
+		return "", fmt.Errorf("the lookup is not valid")
+	}
+	return compose(a, active, clause)
+}
+
+// compose builds `(&<active><clause>(<login>=*)(<mail>=*)<guards>)`. The
+// attribute names are checked again (they come from the API, and the
+// pattern is the only thing that keeps a filter fragment out of them).
+func compose(a Attributes, active, clause string) (string, error) {
 	if !attributeRe.MatchString(a.Login) || !attributeRe.MatchString(a.Mail) ||
 		(a.Aliases != "" && !attributeRe.MatchString(a.Aliases)) {
 		return "", fmt.Errorf("an attribute name is not valid")
@@ -171,6 +227,7 @@ func ProbeFilter(a Attributes, active string) (string, error) {
 	var b strings.Builder
 	b.WriteString("(&")
 	b.WriteString(active)
+	b.WriteString(clause)
 	fmt.Fprintf(&b, "(%[1]s=*)(%[2]s=*)(!(%[1]s=.*))(!(%[1]s=*/*))(!(%[1]s=sa.*))", a.Login, a.Mail)
 	b.WriteString(")")
 	filter := b.String()

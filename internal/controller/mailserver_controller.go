@@ -107,6 +107,10 @@ const (
 	// ReasonDirectoryNotFound is set when the referenced MailDirectory
 	// does not exist.
 	ReasonDirectoryNotFound = "DirectoryNotFound"
+	// ReasonDirectoryInvalid is set when the referenced MailDirectory
+	// cannot be rendered: a Secret is missing or incomplete, or the
+	// filter is not valid. The previous revision keeps running.
+	ReasonDirectoryInvalid = "DirectoryInvalid"
 	// ReasonNoUserSource is set when the server has neither a
 	// directoryRef nor static test users.
 	ReasonNoUserSource = "NoUserSource"
@@ -289,7 +293,7 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	// revoked domain, so it gets the fail-closed render instead (no
 	// domains, no users; fixed content that depends on no tenant
 	// input beyond the server itself).
-	blocked, users, err := r.preflight(ctx, server, len(auth.domains) > 0)
+	blocked, src, err := r.preflight(ctx, server, len(auth.domains) > 0)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -297,7 +301,7 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		blocked = &blockedBy{authReason, authMessage}
 	}
 	setDomainsStatus(server, auth, blocked)
-	renderDomains, renderUsers := auth.domains, users
+	renderDomains, renderSrc := auth.domains, src
 	failClosed := false
 	if blocked != nil {
 		need, exists, err := r.needsFailClosed(ctx, server, auth.domains)
@@ -317,7 +321,7 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			}
 			return block(blocked.reason, blocked.message)
 		}
-		failClosed, renderDomains, renderUsers = true, nil, nil
+		failClosed, renderDomains, renderSrc = true, nil, userSource{}
 	}
 
 	// The signing keys of the domains that are rendered (ADR 0011). A
@@ -343,7 +347,7 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 	prevValidated := meta.FindStatusCondition(*conds, ConditionConfigValidated)
 	prevValidated = prevValidated.DeepCopy()
-	g, rolloutWant, err := r.applyGuarded(ctx, server, renderDomains, auth.hostname, renderUsers, keys.keys, certCRDs, failClosed)
+	g, rolloutWant, err := r.applyGuarded(ctx, server, renderDomains, auth.hostname, renderSrc, keys.keys, certCRDs, failClosed)
 	if err != nil {
 		return block(r.reportApplyFailure(ctx, server, prevReady, err), err.Error())
 	}
@@ -464,8 +468,8 @@ func (r *MailServerReconciler) setAuxiliaryConditions(ctx context.Context, serve
 // was rejected) while they serve a domain that is no longer
 // authorized, it applies the fail-closed render instead of waiting.
 // The returned map holds the revision the rollout check waits for.
-func (r *MailServerReconciler) applyGuarded(ctx context.Context, server *cnmsv1alpha1.MailServer, domains []string, hostname string, users []render.StaticUser, keys []render.DomainKeys, certCRDs, failClosed bool) (*gate, map[string]string, error) {
-	g, err := r.applyDataPlane(ctx, server, domains, hostname, users, keys, certCRDs)
+func (r *MailServerReconciler) applyGuarded(ctx context.Context, server *cnmsv1alpha1.MailServer, domains []string, hostname string, src userSource, keys []render.DomainKeys, certCRDs, failClosed bool) (*gate, map[string]string, error) {
+	g, err := r.applyDataPlane(ctx, server, domains, hostname, src, keys, certCRDs)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -476,7 +480,7 @@ func (r *MailServerReconciler) applyGuarded(ctx context.Context, server *cnmsv1a
 	if err != nil || !need {
 		return g, nil, err
 	}
-	closed, err := r.applyDataPlane(ctx, server, nil, hostname, nil, nil, certCRDs)
+	closed, err := r.applyDataPlane(ctx, server, nil, hostname, userSource{}, nil, certCRDs)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -490,48 +494,73 @@ type blockedBy struct{ reason, message string }
 // non-nil blockedBy means the normal render must not be applied. The
 // static users are only loaded when needed (a fail-closed render has
 // none).
-func (r *MailServerReconciler) preflight(ctx context.Context, server *cnmsv1alpha1.MailServer, needUsers bool) (*blockedBy, []render.StaticUser, error) {
+func (r *MailServerReconciler) preflight(ctx context.Context, server *cnmsv1alpha1.MailServer, needUsers bool) (*blockedBy, userSource, error) {
+	var src userSource
+	staticUsers := server.Spec.Submission != nil && server.Spec.Submission.InsecureStaticUsers != nil
 	// Fail closed when no user source is configured, or the
-	// referenced MailDirectory is missing (recipient validation and
-	// auth are backed by it).
+	// referenced MailDirectory is missing or invalid (recipient
+	// validation and auth are backed by it).
 	if ref := server.Spec.DirectoryRef; ref != nil {
-		err := r.Get(ctx, types.NamespacedName{Name: ref.Name, Namespace: server.Namespace},
-			&cnmsv1alpha1.MailDirectory{})
+		dir := &cnmsv1alpha1.MailDirectory{}
+		err := r.Get(ctx, types.NamespacedName{Name: ref.Name, Namespace: server.Namespace}, dir)
 		if errors.IsNotFound(err) {
 			return &blockedBy{ReasonDirectoryNotFound, fmt.Sprintf(
-				"MailDirectory %q not found in namespace %q", ref.Name, server.Namespace)}, nil, nil
+				"MailDirectory %q not found in namespace %q", ref.Name, server.Namespace)}, src, nil
 		}
 		if err != nil {
-			return nil, nil, err
+			return nil, src, err
 		}
-	} else if sub := server.Spec.Submission; sub == nil || sub.InsecureStaticUsers == nil {
+		// The directory is read with its Secrets (uncached) only for a
+		// normal render. shortcut: static test users win over a
+		// directory until UserSourceConflict makes the combination an
+		// error (ADR 0015, commit 5).
+		if needUsers && !staticUsers {
+			target, bad, err := directoryResolver{r.APIReader}.resolve(ctx, dir)
+			if err != nil {
+				return nil, src, err
+			}
+			if bad != nil {
+				return &blockedBy{ReasonDirectoryInvalid, fmt.Sprintf(
+					"MailDirectory %q is not valid: %s", ref.Name, bad.message)}, src, nil
+			}
+			src.directory = &render.DirectorySource{LDAP: target.ldap, SQL: target.sql}
+		}
+	} else if !staticUsers {
 		// shortcut: MailUser is not counted as a user source, add it
 		// together with the MailUser controller (ADR 0008).
 		return &blockedBy{ReasonNoUserSource,
-			"spec.directoryRef is not set and no other user source exists; set directoryRef"}, nil, nil
+			"spec.directoryRef is not set and no other user source exists; set directoryRef"}, src, nil
 	}
 	// Outbound modes not implemented yet (fail closed).
 	switch {
 	case server.Spec.Outbound.Relay != nil:
-		return &blockedBy{ReasonRelayNotAvailable, "relay outbound arrives in Phase 6"}, nil, nil
+		return &blockedBy{ReasonRelayNotAvailable, "relay outbound arrives in Phase 6"}, src, nil
 	case server.Spec.Outbound.Direct != nil && server.Spec.Outbound.Direct.IPPoolClaimRef != nil:
-		return &blockedBy{ReasonIpPoolClaimNotAvailable, "ipPoolClaimRef arrives in Phase 7"}, nil, nil
+		return &blockedBy{ReasonIpPoolClaimNotAvailable, "ipPoolClaimRef arrives in Phase 7"}, src, nil
 	}
 	// A shared ClusterIssuer needs the operator's opt-in (ADR 0003).
 	if r.clusterIssuerRefused(server) {
 		return &blockedBy{ReasonClusterIssuerNotAllowed, fmt.Sprintf(
 			"tls.issuerRef %q is a ClusterIssuer, which the operator does not allow (start it with --allow-cluster-issuers, or use a namespaced Issuer)",
-			server.Spec.TLS.IssuerRef.Name)}, nil, nil
+			server.Spec.TLS.IssuerRef.Name)}, src, nil
 	}
 	if !needUsers {
-		return nil, nil, nil
+		return nil, src, nil
 	}
 	// Static test users (fail closed: invalid users must not render).
 	users, reason, message, ok := r.staticUsers(ctx, server)
 	if !ok {
-		return &blockedBy{reason, message}, nil, nil
+		return &blockedBy{reason, message}, userSource{}, nil
 	}
-	return nil, users, nil
+	src.accounts = users
+	return nil, src, nil
+}
+
+// userSource is where the accounts of a render come from: the static
+// test users, a directory, or neither (the fail-closed render).
+type userSource struct {
+	accounts  []render.Account
+	directory *render.DirectorySource
 }
 
 // needsFailClosed reports whether the running data plane must be
@@ -804,7 +833,7 @@ func listAuthorizationInput(ctx context.Context, c client.Reader) (*cnmsv1alpha1
 // staticUsers loads and validates the Phase 2 test users from
 // spec.submission.insecureStaticUsers. It returns ok=false with a
 // Ready-condition reason when the gate must block rendering.
-func (r *MailServerReconciler) staticUsers(ctx context.Context, server *cnmsv1alpha1.MailServer) ([]render.StaticUser, string, string, bool) {
+func (r *MailServerReconciler) staticUsers(ctx context.Context, server *cnmsv1alpha1.MailServer) ([]render.Account, string, string, bool) {
 	ref := server.Spec.Submission
 	if ref == nil || ref.InsecureStaticUsers == nil {
 		return nil, "", "", true

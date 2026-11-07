@@ -17,6 +17,7 @@ reason and message.
 | `Ready` | `True` | `Ready` | All of the conditions below that feed into it are `True` |
 | `Ready` | `False` or `Unknown` | the reason of the first failing condition (order: `CertificateReady`, `ConfigValidated`, `WorkloadsReady`, `DomainsAuthorized`, `HostnameAuthorized`, `Observability`) | The rollup; see the rows below for those reasons |
 | `Ready` | `False` | `DirectoryNotFound` | `spec.directoryRef` names a `MailDirectory` that does not exist in the namespace |
+| `Ready` | `False` | `DirectoryInvalid` | the `MailDirectory` cannot be rendered: a Secret it names is missing or incomplete (or a password holds a control character), or the active filter does not compile, or the engines refuse a setting (`InvalidSettings` of the `MailDirectory`); the message says which. The running revision keeps running |
 | `Ready` | `False` | `HostnameNotAuthorized`, `DuplicateHostname` | the hostname is not authorized (see `HostnameAuthorized`); the server runs with the name of its Postfix Service and serves its domains, but is not ready for what its spec asks for |
 | `Ready` | `False` | `NoDomains` | no `MailDomain` of the namespace references the server in `spec.serverRef`; nothing is deployed, and a running data plane is re-rendered fail closed ([ADR 0014](../decisions/0014-domain-server-binding-and-hostname.md)) |
 | `Ready` | `False` | `NoUserSource` | no `spec.directoryRef` and no other user source |
@@ -168,6 +169,7 @@ section 5). It changes no data plane: nothing reads these conditions yet.
 | `Ready` | `False` | `SecretNotFound` | A Secret named in the spec does not exist (read again every minute) |
 | `Ready` | `False` | `SecretIncomplete` | A Secret lacks the key that is read from it, or `ca.crt` holds no certificate |
 | `Ready` | `False` | `InvalidFilter` | `ldap.activeFilter` is not one complete LDAP filter, or the filter the operator composes from it does not compile |
+| `Ready` | `False` | `InvalidSettings` | The engines refuse a setting the probe would accept: LDAP `tls.mode: None` (Dovecot checks a password by binding as the user, so every login would send it in clear text), `%{` in the base DN or the bind DN (Dovecot would expand it), or a base DN, bind DN or password with a blank at either end or a control character. A `MailServer` that references the directory is `DirectoryInvalid` and keeps its running revision |
 | `Reachable` | `True` | `Reachable` | The probe connected, bound and found at least one account with the composed filter (LDAP), or read a row of the users relation (SQL) |
 | `Reachable` | `False` | `Unreachable` | The directory did not answer |
 | `Reachable` | `False` | `BindFailed` | The directory rejected the credentials (LDAP bind, PostgreSQL login), or the user may not read the relation |

@@ -36,9 +36,9 @@ const probeTimeout = 10 * time.Second
 // NetProber is the Prober that talks to the real directories.
 type NetProber struct{}
 
-// ldapPort is the port of the target: the API leaves it unset for the
+// LDAPPort is the port of the target: the API leaves it unset for the
 // default of the TLS mode.
-func ldapPort(t LDAPTarget) int {
+func LDAPPort(t LDAPTarget) int {
 	if t.Port != 0 {
 		return t.Port
 	}
@@ -89,7 +89,7 @@ func (NetProber) ProbeLDAP(ctx context.Context, t LDAPTarget) Outcome {
 	if !ok {
 		return TLSFailed
 	}
-	addr := net.JoinHostPort(t.Host, strconv.Itoa(ldapPort(t)))
+	addr := net.JoinHostPort(t.Host, strconv.Itoa(LDAPPort(t)))
 	dialer := &net.Dialer{Timeout: probeTimeout}
 	var conn *ldap.Conn
 	if t.TLSMode == LDAPS {

@@ -39,7 +39,7 @@ func dkimKey(secret, key, selector string, available bool) render.DKIMKey {
 // their signing keys.
 func buildWithKeys(t *testing.T, domains []string, keys ...render.DomainKeys) *DataPlane {
 	t.Helper()
-	req := &render.RenderRequest{Server: testServer(t, nil), AuthorizedDomains: domains, DKIMKeys: keys}
+	req := &render.RenderRequest{Server: testServer(t, nil), AuthorizedDomains: domains, DKIMKeys: keys, HashKey: testHashKey}
 	renders := map[render.Component]*render.RenderResult{}
 	for _, r := range []render.EngineRenderer{postfix.New(), rspamd.New(), dovecot.New(), valkey.New()} {
 		res, err := r.Render(req)

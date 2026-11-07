@@ -220,6 +220,22 @@ var _ = Describe("MailDirectory Controller", func() {
 			Expect(prober.ldap).To(BeEmpty())
 		})
 
+		DescribeTable("is not Ready with a password the engines would read differently",
+			func(password string) {
+				secret(dirBindSecret, map[string][]byte{dirKeyPassword: []byte(password)})
+				key := create(ldapSpec(func(l *cnmsv1alpha1.LDAP) {
+					l.BindDN, l.BindSecretRef = new(bindDN), &cnmsv1alpha1.SecretReference{Name: dirBindSecret}
+				}))
+				_, dir := reconcile(key)
+				Expect(cond(dir, "Ready")).To(SatisfyAll(HaveField("Status", metav1.ConditionFalse), HaveField("Reason", "SecretIncomplete")))
+				Expect(cond(dir, "Ready").Message).NotTo(ContainSubstring("secret"))
+				Expect(prober.ldap).To(BeEmpty())
+			},
+			Entry("a trailing newline", "secret\n"),
+			Entry("a newline inside", "secret\nbind_dn = x"),
+			Entry("leading blanks", " secret"),
+		)
+
 		It("is not Ready with a CA bundle that holds no certificate", func() {
 			secret("ca", map[string][]byte{dirKeyCA: []byte("not a certificate")})
 			key := create(ldapSpec(func(l *cnmsv1alpha1.LDAP) {
@@ -243,6 +259,24 @@ var _ = Describe("MailDirectory Controller", func() {
 			Entry("unbalanced", "(mailEnabled=TRUE"),
 			Entry("a second filter appended through a closed first", "(a=b))(|(c=d)"),
 		)
+
+		It("is not Ready with a setting the engines refuse, and does not probe", func() {
+			// tls.mode None: Dovecot binds as the user to check a password,
+			// which would send it in clear text on every login.
+			none := create(ldapSpec(func(l *cnmsv1alpha1.LDAP) { l.TLS = &cnmsv1alpha1.LDAPTLS{Mode: new("None")} }))
+			_, dir := reconcile(none)
+			Expect(cond(dir, "Ready")).To(HaveField("Status", metav1.ConditionFalse))
+			Expect(cond(dir, "Ready")).To(HaveField("Reason", "InvalidSettings"))
+			Expect(cond(dir, "Ready")).To(HaveField("Message", ContainSubstring("clear text")))
+			Expect(prober.ldap).To(BeEmpty())
+		})
+
+		It("is not Ready with a variable in the base DN", func() {
+			key := create(ldapSpec(func(l *cnmsv1alpha1.LDAP) { l.BaseDN = "ou=%{user},dc=example,dc=org" }))
+			_, dir := reconcile(key)
+			Expect(cond(dir, "Ready")).To(HaveField("Reason", "InvalidSettings"))
+			Expect(prober.ldap).To(BeEmpty())
+		})
 
 		It("keeps Ready when the directory is down, and says why in Reachable", func() {
 			key := create(ldapSpec(func(*cnmsv1alpha1.LDAP) {}))

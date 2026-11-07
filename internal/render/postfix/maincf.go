@@ -29,7 +29,7 @@ const tlsMountPath = "/etc/postfix/tls"
 
 // renderMainCF renders main.cf. The order of blocks is fixed so that
 // the output (and its content hash) is deterministic.
-func renderMainCF(req *render.RenderRequest) string {
+func renderMainCF(req *render.RenderRequest, dir *directoryMaps) string {
 	var b strings.Builder
 	b.WriteString(header(req))
 
@@ -72,7 +72,25 @@ func renderMainCF(req *render.RenderRequest) string {
 		b.WriteString("# for a forged sender; an empty table rejects everything.\n")
 		b.WriteString("mydestination =\n")
 		fmt.Fprintf(&b, "virtual_mailbox_domains = %s\n", strings.Join(domains, ", "))
-		fmt.Fprintf(&b, "virtual_mailbox_maps = texthash:/etc/postfix/%s\n", vmailboxFile)
+		if dir != nil {
+			// The directory tables (ADR 0015, section 4.3). A lookup
+			// error (directory down, bind or TLS failure) is a 451,
+			// a missing entry the only 550. The default of
+			// virtual_alias_domains is $virtual_alias_maps, which
+			// would look every domain up in the alias table.
+			b.WriteString("virtual_alias_domains =\n")
+			if dir.alias != "" {
+				fmt.Fprintf(&b, "virtual_alias_maps = %s\n", dir.alias)
+			}
+			fmt.Fprintf(&b, "virtual_mailbox_maps = %s\n", dir.mailbox)
+			if dir.env != nil {
+				b.WriteString("# libpq reads the TLS settings of the pgsql tables from the\n")
+				b.WriteString("# environment of the master (PGSSLMODE, PGSSLROOTCERT).\n")
+				fmt.Fprintf(&b, "import_environment = %s\n", importEnvironment)
+			}
+		} else {
+			fmt.Fprintf(&b, "virtual_mailbox_maps = texthash:/etc/postfix/%s\n", vmailboxFile)
+		}
 		fmt.Fprintf(&b, "virtual_transport = lmtp:%s:%d\n\n",
 			render.ServiceFQDN(req.Server.Name, req.Server.Namespace, render.ComponentDovecot),
 			render.PortDovecotLMTP)

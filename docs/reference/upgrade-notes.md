@@ -188,6 +188,28 @@ the new CRDs reject or prune the old field names.
 
 ### Data plane
 
+- **A `MailServer` with a `directoryRef` now uses the directory** ([ADR
+  0015](../decisions/0015-user-sources-directory-users-and-aliases.md),
+  [how-to](../how-to/directories.md)). Before, the `MailDirectory` was
+  only checked for existence: Postfix rendered an empty recipient table
+  (every recipient refused with `550 5.1.1`) and Dovecot had no users. Now
+  Postfix looks recipients up in the directory (`ldap:` or `pgsql:`
+  tables, `virtual_alias_domains` is set to empty) and Dovecot
+  authenticates and finds the mailbox there. What you notice on a running
+  server: the Postfix and Dovecot pods roll once, they mount a Secret
+  with the directory password and CA (`/etc/postfix-secret`,
+  `/etc/dovecot-users`), and the Postfix container gets `PGSSLMODE` (and
+  `PGSSLROOTCERT`) for a PostgreSQL directory. The `MailDirectory` Secrets
+  must exist and be valid, or the server is `Ready=False` with the new
+  reason `DirectoryInvalid` and keeps its running revision; a password with
+  a trailing newline is now refused there and in the `MailDirectory`
+  (`SecretIncomplete`). The Postfix image must be
+  `cnms-postfix:3.11.7-1` or later (the `pgsql` map type). A server that
+  sets both `directoryRef` and `submission.insecureStaticUsers` keeps
+  using the static users.
+- **The Postfix validation Job mounts the directory Secret** and checks the
+  recipient table with `postmap -s`; a line Postfix ignores fails the
+  gate.
 - **Outbound mail now fails closed without a DKIM key.** Rspamd signs
   the mail of authenticated senders and Postfix's own non-SMTP mail with
   the active keys of the `MailDomain`s a server serves, and a guard defers

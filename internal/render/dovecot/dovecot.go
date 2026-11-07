@@ -45,14 +45,21 @@ func (r *Renderer) Render(req *render.RenderRequest) (*render.RenderResult, erro
 	if req == nil || req.Server == nil {
 		return nil, errors.New("render request without MailServer")
 	}
+	conf, secret, err := renderDovecotConf(req)
+	if err != nil {
+		return nil, err
+	}
+	if req.Directory == nil {
+		secret = map[string]string{"users": renderUsers(req)}
+	}
 	return &render.RenderResult{
 		ConfigData: map[string]string{
-			"dovecot.conf": renderDovecotConf(req),
+			"dovecot.conf": conf,
 		},
-		// The password hashes go to a Secret, not a ConfigMap.
-		SecretData: map[string]string{
-			"users": renderUsers(req),
-		},
+		// The password hashes (the users file) or the directory
+		// password and CA go to a Secret, not a ConfigMap. A directory
+		// without a bind password and CA has none.
+		SecretData: secret,
 		// `doveconf -n` validates the rendered configuration before
 		// rollout (D4: a bad config must never replace a working
 		// one). Verified against the running 2.4.5 image: unknown

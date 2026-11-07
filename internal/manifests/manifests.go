@@ -26,6 +26,7 @@ limitations under the License.
 package manifests
 
 import (
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -124,6 +125,7 @@ const (
 	tmpVolumeName             = "tmp"
 	configVolumeName          = "config"
 	usersVolumeName           = "users"
+	directoryVolumeName       = "directory"
 	dkimVolumeName            = "dkim"
 	tlsVolumeName             = "tls"
 	stateVolumeName           = "state"
@@ -212,6 +214,15 @@ func Build(req *render.RenderRequest, renders map[render.Component]*render.Rende
 	}
 	if len(missing) > 0 {
 		return nil, fmt.Errorf("missing render results: %v", missing)
+	}
+
+	// The secret files are named and hashed under the key of the server,
+	// never by a plain hash of their content.
+	for c, r := range renders {
+		if HasSecretContent(r) && len(req.HashKey) == 0 {
+			return nil, fmt.Errorf("the %s secret files need a hash key", c)
+		}
+		r.SecretDigest = secretDigest(req.HashKey, r.SecretData)
 	}
 
 	dp := &DataPlane{}
@@ -383,6 +394,12 @@ func componentSelector(server *cnmsv1alpha1.MailServer, c render.Component) *met
 // dataHash is the deterministic SHA-256 of rendered files (canonical
 // key order).
 func dataHash(data map[string]string) string {
+	sum := sha256.Sum256(canonical(data))
+	return hex.EncodeToString(sum[:])
+}
+
+// canonical is the files in key order, the encoding both hashes cover.
+func canonical(data map[string]string) []byte {
 	var b strings.Builder
 	for _, k := range slices.Sorted(maps.Keys(data)) {
 		b.WriteString(k)
@@ -390,8 +407,49 @@ func dataHash(data map[string]string) string {
 		b.WriteString(data[k])
 		b.WriteByte(0)
 	}
-	sum := sha256.Sum256([]byte(b.String()))
-	return hex.EncodeToString(sum[:])
+	return []byte(b.String())
+}
+
+// secretDigest is the digest of the secret files of a render: HMAC-SHA256
+// under key, so the digest is useless for guessing a password offline.
+// Without secret content (no files, or files of comments only, such as the
+// users file of a server without accounts) there is nothing to protect and
+// it is the plain hash, as before.
+func secretDigest(key []byte, data map[string]string) string {
+	if !hasContent(data) {
+		return dataHash(data)
+	}
+	mac := hmac.New(sha256.New, key)
+	mac.Write(canonical(data))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// hasContent reports whether a file holds anything but comments and blank
+// lines: the users file of a server without accounts is only a header.
+func hasContent(data map[string]string) bool {
+	for _, v := range data {
+		for line := range strings.Lines(v) {
+			if l := strings.TrimSpace(line); l != "" && !strings.HasPrefix(l, "#") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// HasSecretContent reports whether the secret files of a render hold
+// anything, that is whether Build needs the hash key for it.
+func HasSecretContent(r *render.RenderResult) bool {
+	return hasContent(r.SecretData)
+}
+
+// digestOf is the digest Build recorded; a result that did not pass
+// through Build has no secret files worth keying (the tests of the hash).
+func digestOf(r *render.RenderResult) string {
+	if r.SecretDigest != "" {
+		return r.SecretDigest
+	}
+	return dataHash(r.SecretData)
 }
 
 // configHash is the hash of a whole rendered component: its engine
@@ -400,8 +458,13 @@ func dataHash(data map[string]string) string {
 // bump is validated again with the new image. The certificate is not
 // part of the render, so renewals do not change the hash (D5).
 func configHash(c render.Component, r *render.RenderResult) string {
-	sum := sha256.Sum256([]byte(componentImage(c) + "\x00" +
-		dataHash(r.ConfigData) + dataHash(r.SecretData)))
+	h := componentImage(c) + "\x00" + dataHash(r.ConfigData) + digestOf(r)
+	if len(r.Env) > 0 {
+		// The environment changes the pod template; an empty one leaves
+		// the hash of earlier revisions as it was.
+		h += "\x00env\x00" + dataHash(r.Env)
+	}
+	sum := sha256.Sum256([]byte(h))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -419,7 +482,7 @@ func configMapName(server *cnmsv1alpha1.MailServer, c render.Component, r *rende
 // secretName is the name of the immutable Secret of a rendered
 // component: "<server>-<component>-<hash8>" over the SecretData.
 func secretName(server *cnmsv1alpha1.MailServer, c render.Component, r *render.RenderResult) string {
-	return render.ServiceName(server.Name, c) + "-" + hashSuffix(dataHash(r.SecretData))
+	return render.ServiceName(server.Name, c) + "-" + hashSuffix(digestOf(r))
 }
 
 // podAnnotations adds the config-hash annotation to a pod template.
@@ -639,5 +702,29 @@ func portProbe(port int32) *corev1.Probe {
 		ProbeHandler: corev1.ProbeHandler{
 			TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(port)},
 		},
+	}
+}
+
+// HashKeyData is the data key of the hash key Secret.
+const HashKeyData = "key"
+
+// HashKeySecretName is the name of the Secret that holds the random key
+// of the secret-file digests of a MailServer (see render.RenderRequest).
+func HashKeySecretName(server *cnmsv1alpha1.MailServer) string {
+	return server.Name + "-hash-key"
+}
+
+// HashKeySecret is the immutable Secret with the hash key. It is created
+// once and never changed; losing it only changes the names and hashes of
+// the next revision, which costs one rollout.
+func HashKeySecret(server *cnmsv1alpha1.MailServer, key []byte) *corev1.Secret {
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      HashKeySecretName(server),
+			Namespace: server.Namespace,
+			Labels:    objectLabels(server, ""),
+		},
+		Immutable: new(true),
+		Data:      map[string][]byte{HashKeyData: key},
 	}
 }

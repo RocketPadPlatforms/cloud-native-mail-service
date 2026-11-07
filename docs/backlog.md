@@ -18,10 +18,13 @@ Scoped in [ADR 0015](decisions/0015-user-sources-directory-users-and-aliases.md)
   the header From and get it signed (ADR 0013, section 3). The check that
   the From address is owned by the login is PR 3b (ADR 0015, section 4.4,
   check 2); the served-domain check (check 1) is done.
-- Directory lookup timeouts: a lookup against an unreachable LDAP server
-  blocks a Postfix process for 8 to 10 s (libldap's network timeout). PR 3a
-  tests `NETWORK_TIMEOUT` in `ldap.conf` (not verified) and relies on the
-  per-client limits of ADR 0006 otherwise.
+- Directory lookup timeouts: the Postfix tables bound a lookup against a
+  directory that drops packets (`timeout = 5` for LDAP, `PGCONNECT_TIMEOUT`
+  for PostgreSQL; a `451` after 5 to 10 s, ADR 0015 row 27), and the
+  per-client limits of ADR 0006 apply on top. Dovecot has no connect
+  timeout for `pgsql` in 2.4.5: a login against dropped packets takes about
+  two minutes. Look for a bound, for example a shorter query timeout of the
+  SQL pool, if that matters.
 
 Not scoped (ADR 0015, "Limits" and section 4.7):
 

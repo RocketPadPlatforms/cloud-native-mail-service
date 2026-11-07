@@ -99,7 +99,7 @@ func expectCertificateGone(ns string) {
 func failClosedJobsG(ns, hostname string) map[string]bool {
 	server := &cnmsv1alpha1.MailServer{}
 	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testServerName, Namespace: ns}, server)).To(Succeed())
-	plane, err := renderDataPlane(server, nil, hostname, nil, nil)
+	plane, err := renderDataPlane(server, nil, hostname, userSource{}, nil, noHashKey)
 	Expect(err).ToNot(HaveOccurred())
 	names := map[string]bool{}
 	for _, v := range plane.Validations {
@@ -371,6 +371,30 @@ var _ = Describe("MailServer domain revocation", func() {
 		settle()
 
 		Expect(certificateDNSNamesG(ns)).To(ConsistOf(testHostnameG(ns)))
+	})
+
+	// The fail-closed render holds no secret content, so it neither needs
+	// nor creates the hash key: a tenant that puts a Secret of its own under
+	// the name of the key (after deleting the key of the server) cannot keep
+	// a revoked domain from being withdrawn (ADR 0003).
+	It("renders fail closed although a foreign Secret holds the name of the hash key", func() {
+		name := types.NamespacedName{Name: testServerName + "-hash-key", Namespace: ns}
+		Expect(k8sClient.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name.Name, Namespace: ns}})).To(Succeed())
+		Expect(k8sClient.Create(ctx, &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: name.Name, Namespace: ns},
+			Data:       map[string][]byte{"key": make([]byte, 32)},
+		})).To(Succeed())
+
+		revoke(domainA)
+		revoke(domainB)
+		settle()
+
+		expectFailClosed()
+		_, reason, _ := serverConditionG(ns, testServerName, conditionReady)
+		Expect(reason).ToNot(Equal(ReasonOwnershipConflict))
+		foreign := &corev1.Secret{}
+		Expect(k8sClient.Get(ctx, name, foreign)).To(Succeed())
+		Expect(foreign.OwnerReferences).To(BeEmpty(), "the Secret of the tenant is left as it is")
 	})
 
 	It("revokes a domain although the users Secret is broken", func() {

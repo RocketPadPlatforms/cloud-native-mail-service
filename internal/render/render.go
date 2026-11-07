@@ -22,6 +22,7 @@ package render
 
 import (
 	cnmsv1alpha1 "github.com/RocketPadPlatforms/cloud-native-mail-service/api/v1alpha1"
+	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/directory"
 )
 
 // Component identifies a data-plane component.
@@ -35,13 +36,29 @@ const (
 	ComponentValkey  Component = "valkey"
 )
 
-// StaticUser is one test user from the insecureStaticUsers Secret
-// (Phase 2 test source; see the MailServer docs). PasswordHash is a
-// crypt(3) hash, never a plaintext password.
-type StaticUser struct {
-	Username     string
+// Account is one operator-managed account (ADR 0015, section 5). The
+// insecureStaticUsers Secret (Phase 2 test source; see the MailServer
+// docs) is one producer of accounts. PasswordHash is a crypt(3) hash,
+// never a plaintext password.
+//
+// shortcut: only what the renderers read today. Aliases, the disabled
+// and send-only flags of the MailUser accounts are added by the commit
+// that renders them.
+type Account struct {
+	// Name is the account name: the login, and the mailbox directory.
+	Name         string
 	PasswordHash string
-	Mailbox      string
+	// Address is the primary (canonical) address.
+	Address string
+}
+
+// DirectorySource is the external user directory of a MailServer (a
+// MailDirectory, ADR 0015), with the secret values already read. Exactly
+// one of LDAP and SQL is set. The renderers put the secret values into
+// Secrets only, never into a ConfigMap.
+type DirectorySource struct {
+	LDAP *directory.LDAPTarget
+	SQL  *directory.SQLTarget
 }
 
 // RenderRequest is the complete input for rendering the configuration
@@ -63,14 +80,23 @@ type RenderRequest struct {
 	// name the server presents, see ServerHostname.
 	Hostname string
 
-	// StaticUsers holds the parsed users from
-	// spec.submission.insecureStaticUsers (empty when unset).
-	StaticUsers []StaticUser
+	// Accounts are the operator-managed accounts, today the parsed
+	// users of spec.submission.insecureStaticUsers (empty when unset).
+	Accounts []Account
+	// Directory is the external user directory, or nil. It replaces
+	// the accounts as the user source of Postfix and Dovecot.
+	Directory *DirectorySource
 
 	// DKIMKeys are the active signing keys of the authorized domains
 	// (ADR 0011). A domain without an entry has no key: it is still
 	// served, and its outbound mail fails closed (ADR 0013).
 	DKIMKeys []DomainKeys
+
+	// HashKey keys the digest of the secret files in the config hash and
+	// in the names of the Secrets (manifests.Build): a plain hash of a
+	// bind password would let anyone who can read the pod template or the
+	// Secret names confirm a guess offline. The renderers do not read it.
+	HashKey []byte
 }
 
 // ServerHostname is the name the server presents (Postfix myhostname and
@@ -97,6 +123,15 @@ type RenderResult struct {
 	// controller places them in an immutable Secret that is mounted
 	// next to the ConfigMap. Empty for most components.
 	SecretData map[string]string
+	// SecretDigest is the keyed digest of SecretData that names the Secret
+	// and enters the config hash. manifests.Build sets it; the renderers
+	// leave it empty.
+	SecretDigest string
+	// Env is the environment the engine process needs beyond its
+	// image (the PostgreSQL TLS settings of Postfix, which libpq reads
+	// from the environment). It is part of the config hash. Empty for
+	// most components.
+	Env map[string]string
 
 	// ValidateCommand runs in a validation Job with the new
 	// configuration mounted. It must exit non-zero for an invalid

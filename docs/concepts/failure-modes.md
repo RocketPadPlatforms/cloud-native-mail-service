@@ -19,7 +19,7 @@ from the hardening phase on.
 | Rspamd down (all replicas) | Mail tempfails into the Postfix queues (4xx to remote senders); nothing unsigned is sent |
 | Rspamd up, but a domain has no usable DKIM key | Outbound mail of that domain is deferred (`451 4.7.1`, the sender keeps it); inbound mail and the other domains are not affected; `DKIMKeysAvailable=False` names the key |
 | Valkey down | Rspamd degrades (rate limits and learned state unavailable); mail still flows and is still signed |
-| User directory down | Unknown-recipient lookups tempfail (4xx, not 5xx); Dovecot authentication fails so submission is deferred by the sender |
+| User directory down | Recipient lookups tempfail (`451 4.3.0`, not 5xx), also for known recipients; Dovecot cannot authenticate (`454 4.7.0`) so submission is deferred by the sender, and LMTP delivery waits in the Postfix queue |
 | Postfix replica lost | Queued mail survives on the per-replica queue PVC; remaining replicas keep serving; the lost replica is replaced |
 | Scale-down of Postfix | Not supported yet: the queue move is not implemented, so decreasing `postfix.replicas` is rejected |
 | Dovecot down | IMAP/LMTP unavailable until the pod reschedules onto a node that can attach the mail volume; mail is queued in Postfix meanwhile |
@@ -113,12 +113,34 @@ depend on the key-value store.
 ### User directory down
 
 Recipient validation and authentication query the external
-directory (LDAP/SQL). A lookup failure produces a tempfail:
-Postfix defers instead of rejecting unknown recipients, and
-Dovecot refuses to guess — the sending MTA retries later. This is
-the directory phase's e2e contract: valid and invalid recipients
-behave correctly, and a stopped directory shows as tempfail, not
-550.
+directory (LDAP/PostgreSQL, [how-to](../how-to/directories.md)). A lookup
+failure produces a tempfail and never a rejection; only a missing entry
+gives `550 5.1.1`. Verified against Postfix 3.11.7 and Dovecot 2.4.5
+([ADR 0015](../decisions/0015-user-sources-directory-users-and-aliases.md),
+Verification):
+
+- **Receiving.** A directory that is down, refuses the bind or fails the TLS
+  verification (a wrong CA) gives `451 4.3.0 Temporary lookup failure` at
+  `RCPT`, for known and unknown recipients alike; the sending server
+  retries. A directory that refuses connections is answered at once; one
+  whose packets are dropped costs the lookup timeout (5 s): the `RCPT` was
+  answered after about 5 s with LDAP and about 10 s with PostgreSQL (the
+  `pgsql` client connects twice, and the operator sets `PGCONNECT_TIMEOUT`
+  to the same 5 s; without it the `RCPT` was not answered within 300 s).
+  Dovecot has no such bound for PostgreSQL: a login against dropped packets
+  takes about two minutes. The `pgsql` client of Postfix does not try to
+  connect again for 60 seconds after a failure, so a returning PostgreSQL is
+  used after at most a minute.
+- **Submission.** Dovecot cannot check the password: the client gets a
+  temporary failure (`454 4.7.0` on port 587) and keeps the mail.
+- **Delivery from Postfix.** Dovecot cannot look the recipient up: LMTP
+  answers `451 4.3.0`, after up to about two and a half minutes with LDAP
+  that cannot be resolved; Postfix keeps the mail in its queue.
+- **Control plane.** The operator being down or the `MailDirectory` being
+  unreachable from the operator pod does not change this: `Reachable` is a
+  warning and never feeds into `Ready`. A `MailDirectory` that is deleted
+  or not valid blocks new revisions (`DirectoryNotFound`,
+  `DirectoryInvalid`), and the running one keeps running.
 
 ### Postfix replicas
 

@@ -19,7 +19,9 @@ package controller
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
+	"unicode"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -64,6 +66,11 @@ const (
 	// ReasonInvalidFilter is set when the active filter, or the filter
 	// composed with it, is not a valid LDAP filter.
 	ReasonInvalidFilter = string(directory.InvalidFilter)
+	// ReasonInvalidSettings is set when the engines refuse a setting that
+	// the probe would accept: tls.mode None for LDAP (Dovecot would send
+	// the password of every login in clear text), "%{" in a DN, blanks
+	// or control characters around a DN.
+	ReasonInvalidSettings = "InvalidSettings"
 	// ReasonReachable and the following are the probe outcomes.
 	ReasonReachable         = string(directory.Reachable)
 	ReasonUnreachable       = string(directory.Unreachable)
@@ -118,7 +125,7 @@ func (r *MailDirectoryReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	prevReady := meta.FindStatusCondition(orig.Status.Conditions, conditionReady)
 	prevReachable := meta.FindStatusCondition(orig.Status.Conditions, ConditionReachable)
 
-	target, bad, err := r.resolve(ctx, dir)
+	target, bad, err := directoryResolver{r.APIReader}.resolve(ctx, dir)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -184,7 +191,7 @@ func (t probeTarget) probe(ctx context.Context, p directory.Prober) directory.Ou
 // resolve checks the configuration without any network access to the
 // directory and reads the Secrets. A non-nil badConfig means not Ready;
 // an error is a failure to read from the API server and is retried.
-func (r *MailDirectoryReconciler) resolve(ctx context.Context, dir *cnmsv1alpha1.MailDirectory) (probeTarget, *badConfig, error) {
+func (r directoryResolver) resolve(ctx context.Context, dir *cnmsv1alpha1.MailDirectory) (probeTarget, *badConfig, error) {
 	switch {
 	case dir.Spec.Type == cnmsv1alpha1.DirectoryTypeLDAP && dir.Spec.LDAP != nil:
 		return r.resolveLDAP(ctx, dir.Namespace, dir.Spec.LDAP)
@@ -198,7 +205,7 @@ func (r *MailDirectoryReconciler) resolve(ctx context.Context, dir *cnmsv1alpha1
 // errInvalidDirectorySpec cannot happen with the CRD installed.
 var errInvalidDirectorySpec = errors.New("the settings of the MailDirectory do not match its type")
 
-func (r *MailDirectoryReconciler) resolveLDAP(ctx context.Context, ns string, l *cnmsv1alpha1.LDAP) (probeTarget, *badConfig, error) {
+func (r directoryResolver) resolveLDAP(ctx context.Context, ns string, l *cnmsv1alpha1.LDAP) (probeTarget, *badConfig, error) {
 	t := &directory.LDAPTarget{
 		Host: l.Host, BaseDN: l.BaseDN, TLSMode: directory.LDAPStartTLS,
 		Attributes: directory.Attributes{Login: directory.DefaultLogin, Mail: directory.DefaultMail},
@@ -227,7 +234,7 @@ func (r *MailDirectoryReconciler) resolveLDAP(ctx context.Context, ns string, l 
 		return probeTarget{}, &badConfig{ReasonInvalidFilter, "the active filter is not a valid LDAP filter"}, nil
 	}
 	if l.BindDN != nil && *l.BindDN != "" && l.BindSecretRef != nil {
-		pw, bad, err := r.secretKey(ctx, ns, l.BindSecretRef.Name, "password")
+		pw, bad, err := r.passwordKey(ctx, ns, l.BindSecretRef.Name)
 		if bad != nil || err != nil {
 			return probeTarget{}, bad, err
 		}
@@ -240,10 +247,15 @@ func (r *MailDirectoryReconciler) resolveLDAP(ctx context.Context, ns string, l 
 		}
 		t.CA = ca
 	}
+	// Postfix and Dovecot refuse what the probe would accept: a
+	// MailServer always runs Dovecot, so its rules apply.
+	if err := t.DovecotProblem(); err != nil {
+		return probeTarget{}, &badConfig{ReasonInvalidSettings, err.Error()}, nil
+	}
 	return probeTarget{ldap: t}, nil, nil
 }
 
-func (r *MailDirectoryReconciler) resolveSQL(ctx context.Context, ns string, s *cnmsv1alpha1.SQL) (probeTarget, *badConfig, error) {
+func (r directoryResolver) resolveSQL(ctx context.Context, ns string, s *cnmsv1alpha1.SQL) (probeTarget, *badConfig, error) {
 	t := &directory.SQLTarget{
 		Host: s.Host, Port: 5432, TLSMode: directory.SQLVerifyFull, Database: s.Database, Username: s.Username,
 		Users: directory.Relation{Schema: "public", Name: "cnms_users"},
@@ -261,7 +273,7 @@ func (r *MailDirectoryReconciler) resolveSQL(ctx context.Context, ns string, s *
 		a := relation(*s.Aliases)
 		t.Aliases = &a
 	}
-	pw, bad, err := r.secretKey(ctx, ns, s.PasswordSecretRef.Name, "password")
+	pw, bad, err := r.passwordKey(ctx, ns, s.PasswordSecretRef.Name)
 	if bad != nil || err != nil {
 		return probeTarget{}, bad, err
 	}
@@ -285,11 +297,33 @@ func relation(r cnmsv1alpha1.SQLRelation) directory.Relation {
 	return out
 }
 
+// directoryResolver reads the configuration of a MailDirectory and its
+// Secrets. The MailDirectory controller probes with the result, and the
+// MailServer controller renders it, so both see the same directory.
+type directoryResolver struct{ reader client.Reader }
+
+// passwordKey reads the key "password". The value goes into a setting of
+// a configuration file (Postfix has no file reference for it), so a
+// value that would end the setting (a newline, often a trailing one
+// from `echo`) or that the engines would trim is not accepted: it would
+// make the probe and the engines disagree.
+func (r directoryResolver) passwordKey(ctx context.Context, ns, name string) ([]byte, *badConfig, error) {
+	pw, bad, err := r.secretKey(ctx, ns, name, "password")
+	if bad != nil || err != nil {
+		return nil, bad, err
+	}
+	s := string(pw)
+	if strings.TrimSpace(s) != s || strings.ContainsFunc(s, unicode.IsControl) {
+		return nil, &badConfig{ReasonSecretIncomplete, "key password of Secret " + name + " holds a control character or surrounding blanks (a trailing newline?)"}, nil
+	}
+	return pw, nil, nil
+}
+
 // secretKey reads one key of a Secret of the namespace. The message
 // names the Secret and the key, never a value.
-func (r *MailDirectoryReconciler) secretKey(ctx context.Context, ns, name, key string) ([]byte, *badConfig, error) {
+func (r directoryResolver) secretKey(ctx context.Context, ns, name, key string) ([]byte, *badConfig, error) {
 	s := &corev1.Secret{}
-	if err := r.APIReader.Get(ctx, types.NamespacedName{Namespace: ns, Name: name}, s); err != nil {
+	if err := r.reader.Get(ctx, types.NamespacedName{Namespace: ns, Name: name}, s); err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil, &badConfig{ReasonSecretNotFound, "Secret " + name + " not found"}, nil
 		}
@@ -302,7 +336,7 @@ func (r *MailDirectoryReconciler) secretKey(ctx context.Context, ns, name, key s
 }
 
 // caBundle reads the key "ca.crt" and checks that it holds a certificate.
-func (r *MailDirectoryReconciler) caBundle(ctx context.Context, ns, name string) ([]byte, *badConfig, error) {
+func (r directoryResolver) caBundle(ctx context.Context, ns, name string) ([]byte, *badConfig, error) {
 	ca, bad, err := r.secretKey(ctx, ns, name, "ca.crt")
 	if bad != nil || err != nil {
 		return nil, bad, err
