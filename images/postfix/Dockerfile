@@ -6,7 +6,10 @@
 # verified against Wietse's GPG signature (key in keys/wietse.pgp,
 # fingerprint 622C 7C01 2254 C186 6774 69C5 0C0B 590E 80CA 15A7).
 #
-# Build:  docker build -t ghcr.io/rocketpadplatforms/cnms-postfix:3.11.7 images/postfix
+# Build:  docker build -t ghcr.io/rocketpadplatforms/cnms-postfix:3.11.7-1 images/postfix
+#         The tag is <POSTFIX_VERSION>-<IMAGE_REVISION>: raise the revision
+#         whenever the content changes under the same Postfix version and
+#         reset it to 1 when POSTFIX_VERSION changes.
 #
 # Runtime contract (used by the CNMS operator):
 #   - main container:  runs as root; /usr/local/bin/cnms-postfix-entrypoint.sh
@@ -23,12 +26,16 @@
 #     config) is part of the config gate (validation Job, ADR 0009).
 #   - queue metrics:   /usr/local/bin/cnms-postfix-queue-metrics.sh serves
 #     Prometheus text on 9150 (ADR 0005).
+#   - system roots:    /etc/ssl/certs/ca-certificates.crt (the Debian
+#     ca-certificates package). libldap and libpq verify a directory
+#     against it when its MailDirectory names no CA (ADR 0015).
 
 ARG BASE_IMAGE=debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
 
 FROM ${BASE_IMAGE} AS builder
 
 ARG POSTFIX_VERSION=3.11.7
+ARG IMAGE_REVISION=1
 ARG POSTFIX_SHA512=3b4ef7562a24bbab1d0ca361ac0af1037aa3d4ae65a7c825711de9d5d3ed88975aad63cb09991717de334f4382c29039b527a3e8d4e65c5a6d35efd3e782910f
 ARG POSTFIX_MIRROR=https://postfix-mirror.horus-it.com/postfix-release
 ARG POSTFIX_FALLBACK_MIRROR=http://ftp.porcupine.org/mirrors/postfix-release
@@ -36,7 +43,7 @@ ARG POSTFIX_FALLBACK_MIRROR=http://ftp.porcupine.org/mirrors/postfix-release
 RUN apt-get -o Acquire::Retries=5 update \
  && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
         build-essential ca-certificates curl ed gpg gpg-agent libldap-dev m4 \
-        liblmdb-dev libsqlite3-dev libssl-dev \
+        liblmdb-dev libpq-dev libsqlite3-dev libssl-dev \
  && rm -rf /var/lib/apt/lists/*
 
 COPY keys/wietse.pgp /tmp/wietse.pgp
@@ -69,7 +76,9 @@ RUN set -eux; \
 #                        The double escaping is deliberate: makedefs writes
 #                        CCARGS verbatim and the build shell consumes one
 #                        level, leaving the quoted default for the compiler.
-#   -DHAS_LMDB/SQLITE/LDAP static map clients for the directory phases
+#   -DHAS_LMDB/SQLITE/LDAP/PGSQL static map clients for the directory
+#                        phases (the libpq headers are in
+#                        /usr/include/postgresql, hence the -I)
 #   -DNO_DB                no Berkeley DB; LMDB is the map store
 #   -DNO_NIS(-PLUS)        no NIS/Yellow Pages (unused in containers)
 #
@@ -79,11 +88,12 @@ RUN set -eux; \
 RUN set -eux; \
     cd /opt/postfix-${POSTFIX_VERSION}; \
     make makefiles \
-        "CCARGS=-DNO_DB -DNO_NIS -DNO_NISPLUS -DUSE_TLS -DUSE_SASL_AUTH -DDEF_SERVER_SASL_TYPE=\\\"dovecot\\\" -DHAS_LMDB -DHAS_SQLITE -DHAS_LDAP" \
+        "CCARGS=-DNO_DB -DNO_NIS -DNO_NISPLUS -DUSE_TLS -DUSE_SASL_AUTH -DDEF_SERVER_SASL_TYPE=\\\"dovecot\\\" -DHAS_LMDB -DHAS_SQLITE -DHAS_LDAP -DHAS_PGSQL -I/usr/include/postgresql" \
         "AUXLIBS=-lssl -lcrypto" \
         "AUXLIBS_LMDB=-llmdb" \
         "AUXLIBS_SQLITE=-lsqlite3 -lpthread" \
         "AUXLIBS_LDAP=-lldap -llber" \
+        "AUXLIBS_PGSQL=-lpq" \
         "default_database_type=lmdb" \
         "default_cache_db_type=lmdb" \
         "command_directory=/usr/sbin" \
@@ -123,10 +133,13 @@ RUN for b in /usr/libexec/postfix/master /usr/libexec/postfix/smtpd \
 FROM ${BASE_IMAGE} AS runtime
 
 # Runtime dependencies of the built binaries plus the queue-metrics sidecar
-# tools (busybox httpd, jq; ADR 0005).
+# tools (busybox httpd, jq; ADR 0005). ca-certificates is the system root
+# bundle that libldap and libpq verify a directory against when its
+# MailDirectory names no CA (ADR 0015, section 4.8, point 5).
 RUN apt-get -o Acquire::Retries=5 update \
  && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
-        busybox jq libldap2 liblmdb0 libsqlite3-0 libssl3t64 \
+        busybox ca-certificates jq libldap2 liblmdb0 libpq5 libsqlite3-0 \
+        libssl3t64 \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /usr/libexec/postfix /usr/libexec/postfix

@@ -130,8 +130,9 @@ container image with a known user, writable paths, and a log path
    only build; pushes to main and version tags publish them to
    `ghcr.io/rocketpadplatforms` (`cnms-operator`, `cnms-postfix`,
    `cnms-e2e-client`) with an SBOM and a provenance attestation. The
-   Postfix and e2e client images are also tagged with the Postfix
-   version. The e2e suite builds the images locally for the host
+   Postfix and e2e client images are also tagged with the
+   `<POSTFIX_VERSION>-<revision>` tag (amended by ADR 0015, as in item
+   6). The e2e suite builds the images locally for the host
    architecture (amd64 in CI). The Makefile `docker-buildx` target
    builds the operator for further platforms. The Postfix image is
    compiled under emulation for arm64, so that build is slow.
