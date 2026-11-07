@@ -328,7 +328,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `mode` _string_ | Mode of the connection: "StartTLS" upgrades an existing<br />connection (default), "LDAPS" connects directly over TLS, "None"<br />disables transport security. With "None", bindDN and caSecretRef<br />must not be set. | StartTLS | Enum: [StartTLS LDAPS None] <br />Optional: \{\} <br /> |
+| `mode` _string_ | Mode of the connection: "StartTLS" upgrades an existing<br />connection (default), "LDAPS" connects directly over TLS, "None"<br />disables transport security. With "None", bindDN and caSecretRef<br />must not be set, and a MailServer cannot use the directory<br />(DirectoryInvalid): Dovecot checks a password by binding to the<br />directory as the user, which would send the password of every<br />login in clear text. | StartTLS | Enum: [StartTLS LDAPS None] <br />Optional: \{\} <br /> |
 | `caSecretRef` _[SecretReference](#secretreference)_ | CASecretRef references a Secret with the CA bundle (key<br />"ca.crt") used to verify the server certificate. |  | Optional: \{\} <br /> |
 
 

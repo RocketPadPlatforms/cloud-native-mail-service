@@ -235,7 +235,7 @@ var _ = Describe("MailServer hostname rendering", func() {
 	closedJobsG := func(hostname string) []string {
 		server := &cnmsv1alpha1.MailServer{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testServerName, Namespace: ns}, server)).To(Succeed())
-		plane, err := renderDataPlane(server, nil, hostname, nil, nil)
+		plane, err := renderDataPlane(server, nil, hostname, userSource{}, nil, noHashKey)
 		Expect(err).ToNot(HaveOccurred())
 		closed := map[string]bool{}
 		for _, v := range plane.Validations {

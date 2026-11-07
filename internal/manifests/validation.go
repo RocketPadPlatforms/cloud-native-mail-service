@@ -137,12 +137,16 @@ func validationVolumes(server *cnmsv1alpha1.MailServer, c render.Component, r *r
 	config := configVolume(configMapName(server, c, r))
 	switch c {
 	case render.ComponentPostfix:
-		// `postfix check` creates the queue directories.
-		return []corev1.Volume{config, {
+		// `postfix check` creates the queue directories. The directory
+		// tables are mounted too: Postfix opens a table named in main.cf
+		// when it reads the configuration and warns when the file is
+		// missing (verified on 3.11.7), which fails the gate. It does
+		// not connect to the directory.
+		return append([]corev1.Volume{config, {
 				Name:         postfixQueueVolume,
 				VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
-			}},
-			append(configSubPathMounts(), queueMount())
+			}}, postfixSecretVolumes(server, r)...),
+			append(append(configSubPathMounts(), queueMount()), postfixSecretMounts(r)...)
 	case render.ComponentRspamd:
 		// The keys are not mounted: configtest does not read key files,
 		// and a missing key must not hold back the rollout (ADR 0011);

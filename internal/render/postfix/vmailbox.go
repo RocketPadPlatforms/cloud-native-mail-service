@@ -38,14 +38,13 @@ const vmailboxFile = "vmailbox"
 // no valid mailbox). It is rendered even when mailboxes are disabled
 // (and then unused) so that the file is always part of the ConfigMap.
 //
-// Seam for the user phases: the static test users are the only source
-// today; the directory maps and operator-managed users replace this
-// table (ADR 0008), with a tempfail on lookup errors.
+// A directory replaces this table with its ldap: or pgsql: tables
+// (directory.go), which tempfail on lookup errors.
 func renderVMailbox(req *render.RenderRequest) string {
-	addrs := make([]string, 0, len(req.StaticUsers))
-	for _, u := range req.StaticUsers {
+	addrs := make([]string, 0, len(req.Accounts))
+	for _, u := range req.Accounts {
 		// Postfix folds lookup keys to lower case.
-		addrs = append(addrs, strings.ToLower(u.Mailbox))
+		addrs = append(addrs, strings.ToLower(u.Address))
 	}
 	slices.Sort(addrs)
 	addrs = slices.Compact(addrs)

@@ -63,6 +63,10 @@ const (
 // the read-only ConfigMap mount at /etc/dovecot cannot be created.
 const DovecotUsersDir = "/etc/dovecot-users"
 
+// PostfixSecretDir is where the Secret with the directory tables of
+// Postfix is mounted (they carry the bind password).
+const PostfixSecretDir = "/etc/postfix-secret"
+
 // AllComponents lists the data-plane components in a fixed order.
 func AllComponents() []Component {
 	return []Component{ComponentPostfix, ComponentRspamd, ComponentDovecot, ComponentValkey}

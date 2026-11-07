@@ -38,10 +38,10 @@ func TestParseStaticUsers(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		want := []StaticUser{{
-			Username:     "testuser",
+		want := []Account{{
+			Name:         "testuser",
 			PasswordHash: "{SHA512-CRYPT}$6$salt$hash",
-			Mailbox:      "testuser@example.com",
+			Address:      "testuser@example.com",
 		}}
 		if len(users) != len(want) || users[0] != want[0] {
 			t.Fatalf("got %v, want %v", users, want)
@@ -54,8 +54,8 @@ func TestParseStaticUsers(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if users[0].Mailbox != "testuser@example.com" {
-			t.Fatalf("got mailbox %q, want it lower-cased", users[0].Mailbox)
+		if users[0].Address != "testuser@example.com" {
+			t.Fatalf("got mailbox %q, want it lower-cased", users[0].Address)
 		}
 	})
 
@@ -65,8 +65,8 @@ func TestParseStaticUsers(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if users[0].Username != "testuser" {
-			t.Fatalf("got username %q, want it lower-cased", users[0].Username)
+		if users[0].Name != "testuser" {
+			t.Fatalf("got username %q, want it lower-cased", users[0].Name)
 		}
 	})
 

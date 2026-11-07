@@ -50,8 +50,8 @@ func testRequest(t *testing.T, mutate func(*v1alpha1.MailServer)) *render.Render
 	return &render.RenderRequest{
 		Server:            server,
 		AuthorizedDomains: []string{domainB, domainA},
-		StaticUsers: []render.StaticUser{
-			{Username: "testuser", PasswordHash: "{SHA512-CRYPT}x", Mailbox: "testuser@" + domainA},
+		Accounts: []render.Account{
+			{Name: "testuser", PasswordHash: "{SHA512-CRYPT}x", Address: "testuser@" + domainA},
 		},
 	}
 }
@@ -141,10 +141,10 @@ func TestRenderUsers(t *testing.T) {
 	})
 	t.Run("multi-user", func(t *testing.T) {
 		req := testRequest(t, nil)
-		req.StaticUsers = append(req.StaticUsers, render.StaticUser{
-			Username:     "alice",
+		req.Accounts = append(req.Accounts, render.Account{
+			Name:         "alice",
 			PasswordHash: "{SHA512-CRYPT}y",
-			Mailbox:      "alice@" + domainA,
+			Address:      "alice@" + domainA,
 		})
 		res, err := New().Render(req)
 		if err != nil {

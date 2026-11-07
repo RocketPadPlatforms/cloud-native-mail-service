@@ -55,8 +55,8 @@ func testRequest(t *testing.T, mutate func(*v1alpha1.MailServer)) *render.Render
 		Server:            server,
 		AuthorizedDomains: []string{domainB, domainA},
 		Hostname:          testHostname,
-		StaticUsers: []render.StaticUser{
-			{Username: "testuser", PasswordHash: "{SHA512-CRYPT}x", Mailbox: "testuser@" + domainA},
+		Accounts: []render.Account{
+			{Name: "testuser", PasswordHash: "{SHA512-CRYPT}x", Address: "testuser@" + domainA},
 		},
 	}
 }
@@ -106,7 +106,7 @@ func TestRenderMainCF(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := testRequest(t, tt.mutate)
-			got := renderMainCF(req)
+			got := renderMainCF(req, nil)
 			checkGolden(t, tt.name+".maincf", got)
 		})
 	}
@@ -121,12 +121,12 @@ func TestRenderMainCF(t *testing.T) {
 func TestMainCFSignsThroughTheMilterOnly(t *testing.T) {
 	req := testRequest(t, nil)
 	req.DKIMKeys = []render.DomainKeys{{Domain: domainA, Keys: []render.DKIMKey{{Selector: "s1", Available: true}}}}
-	for _, got := range []string{renderMainCF(req), renderMasterCF(req)} {
+	for _, got := range []string{renderMainCF(req, nil), renderMasterCF(req)} {
 		if strings.Contains(got, "internal_mail_filter_classes") {
 			t.Error("internal_mail_filter_classes must stay unset (ADR 0013)")
 		}
 	}
-	main := renderMainCF(req)
+	main := renderMainCF(req, nil)
 	milter := "inet:" + render.ServiceFQDN(testName, testNamespace, render.ComponentRspamd) + ":11332"
 	for _, want := range []string{
 		"\nsmtpd_milters = " + milter + "\n",
@@ -164,23 +164,23 @@ func TestRenderMasterCF(t *testing.T) {
 func TestRenderVMailbox(t *testing.T) {
 	tests := []struct {
 		name  string
-		users []render.StaticUser
+		users []render.Account
 	}{
 		{name: "no-users"},
 		{
 			// Sorted, lower-cased and de-duplicated.
 			name: "multi-user",
-			users: []render.StaticUser{
-				{Username: "zed", Mailbox: "Zed@" + domainB},
-				{Username: "amy", Mailbox: "amy@" + domainA},
-				{Username: "amy2", Mailbox: "AMY@" + domainA},
+			users: []render.Account{
+				{Name: "zed", Address: "Zed@" + domainB},
+				{Name: "amy", Address: "amy@" + domainA},
+				{Name: "amy2", Address: "AMY@" + domainA},
 			},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := testRequest(t, nil)
-			req.StaticUsers = tt.users
+			req.Accounts = tt.users
 			checkGolden(t, tt.name+".vmailbox", renderVMailbox(req))
 		})
 	}
@@ -248,7 +248,7 @@ func TestRenderPresentsTheHostname(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			req := testRequest(t, nil)
 			req.AuthorizedDomains, req.Hostname = tc.domains, tc.hostname
-			mainCF := renderMainCF(req)
+			mainCF := renderMainCF(req, nil)
 			if !strings.Contains(mainCF, "\nmyhostname = "+tc.want+"\n") || !strings.Contains(mainCF, "\nmyorigin = $myhostname\n") {
 				t.Errorf("main.cf does not present %s:\n%s", tc.want, mainCF)
 			}

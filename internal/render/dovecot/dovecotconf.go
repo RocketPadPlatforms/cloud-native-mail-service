@@ -47,7 +47,7 @@ const (
 // pinned in internal/images/images.go (2.4.5 when last verified;
 // doveconf -n plus live protocol probes on the container ports
 // 31024, 31143, 31993 and 12345, and LMTP/IMAP deliveries).
-func renderDovecotConf(req *render.RenderRequest) string {
+func renderDovecotConf(req *render.RenderRequest) (conf string, dirSecret map[string]string, err error) {
 	var b strings.Builder
 	b.WriteString("# CNMS-rendered Dovecot dovecot.conf -- do not edit.\n")
 	fmt.Fprintf(&b, "# Source: MailServer %s/%s (ADR 0004)\n\n",
@@ -130,6 +130,14 @@ func renderDovecotConf(req *render.RenderRequest) string {
 		b.WriteString("  }\n")
 		b.WriteString("}\n")
 	}
+	if req.Directory != nil {
+		dir, secret, err := renderDirectory(req.Directory)
+		if err != nil {
+			return "", nil, err
+		}
+		b.WriteString(dir)
+		return b.String(), secret, nil
+	}
 	b.WriteString("# Phase 2 test source: the passwd-file rendered into this same\n")
 	b.WriteString("# tree (users, from insecureStaticUsers). Phase 3 replaces it\n")
 	b.WriteString("# with the directory (MailDirectory).\n")
@@ -139,5 +147,5 @@ func renderDovecotConf(req *render.RenderRequest) string {
 	b.WriteString("userdb passwd-file {\n")
 	fmt.Fprintf(&b, "  passwd_file_path = %s\n", usersPath)
 	b.WriteString("}\n")
-	return b.String()
+	return b.String(), nil, nil
 }

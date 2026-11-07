@@ -46,11 +46,19 @@ const (
 )
 
 // validateScript is the Postfix config gate: `postfix check` must
-// pass and `postconf -n` must not warn (stdout is the parameter dump
-// and is discarded; only the warnings on stderr are inspected).
+// pass, `postconf -n` must not warn (stdout is the parameter dump
+// and is discarded; only the warnings on stderr are inspected) and
+// the texthash table must parse (`postmap -s` warns about a line it
+// ignores and fails on a missing file). The Job mounts the Secret with
+// the ldap: and pgsql: tables, because `postfix check` and `postconf -n`
+// warn about a table file that is missing; they open the tables but make
+// no lookup, so the gate needs no network and no directory (ADR 0015,
+// verification rows 21 and 29). The golden files and the e2e test cover
+// the queries.
 const validateScript = `set -eu
 postfix check
-warnings=$(postconf -n 2>&1 >/dev/null)
+tables=$(postmap -s texthash:/etc/postfix/vmailbox 2>&1 >/dev/null) || { echo "$tables" >&2; exit 1; }
+warnings="$(postconf -n 2>&1 >/dev/null)$tables"
 if [ -n "$warnings" ]; then
   echo "$warnings" >&2
   case "$warnings" in *warning:*) exit 1;; esac
@@ -74,13 +82,23 @@ func (r *Renderer) Render(req *render.RenderRequest) (*render.RenderResult, erro
 	if req == nil || req.Server == nil {
 		return nil, errors.New("render request without MailServer")
 	}
-	mainCF := renderMainCF(req)
+	dir, err := directoryOf(req)
+	if err != nil {
+		return nil, err
+	}
+	var secret, env map[string]string
+	if dir != nil {
+		secret, env = dir.secret, dir.env
+	}
 	return &render.RenderResult{
 		ConfigData: map[string]string{
-			"main.cf":    mainCF,
+			"main.cf":    renderMainCF(req, dir),
 			"master.cf":  renderMasterCF(req),
 			vmailboxFile: renderVMailbox(req),
 		},
+		// The directory tables carry the bind password: a Secret.
+		SecretData: secret,
+		Env:        env,
 		// `postfix check` validates the rendered configuration before
 		// rollout (D4: a bad config must never replace a working one).
 		// It only warns (exit 0) about unknown main.cf parameters,
@@ -90,6 +108,17 @@ func (r *Renderer) Render(req *render.RenderRequest) (*render.RenderResult, erro
 		// Certificate renewals trigger a reload, not a rollout (D5).
 		ReloadCommand: []string{"postfix", "reload"},
 	}, nil
+}
+
+// directoryOf renders the directory tables when they are used: the
+// server receives mail (mailboxes enabled) for at least one authorized
+// domain. Nothing else reads them, so a send-only or fail-closed render
+// carries no directory (and no secret).
+func directoryOf(req *render.RenderRequest) (*directoryMaps, error) {
+	if req.Directory == nil || !mailboxesEnabled(req) || len(req.AuthorizedDomains) == 0 {
+		return nil, nil
+	}
+	return renderDirectory(req.Directory)
 }
 
 // serverHostname is the name used for myhostname, which is also the HELO

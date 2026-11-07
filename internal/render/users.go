@@ -44,7 +44,7 @@ type userDoc struct {
 }
 
 // ParseStaticUsers parses the users.yaml payload of the
-// spec.submission.insecureStaticUsers Secret into StaticUsers.
+// spec.submission.insecureStaticUsers Secret into Accounts.
 //
 // The schema is:
 //
@@ -67,12 +67,12 @@ type userDoc struct {
 //   - username and mailbox are lower-cased (Dovecot lower-cases logins);
 //   - mailbox is a full address with exactly one "@";
 //   - usernames and mailboxes are unique, compared case-insensitively.
-func ParseStaticUsers(data []byte) ([]StaticUser, error) {
+func ParseStaticUsers(data []byte) ([]Account, error) {
 	var doc usersDoc
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return nil, fmt.Errorf("users.yaml: %w", err)
 	}
-	users := make([]StaticUser, 0, len(doc.Users))
+	users := make([]Account, 0, len(doc.Users))
 	for i, u := range doc.Users {
 		// Postfix lower-cases the recipient lookup and Dovecot 2.4
 		// lower-cases logins by default, so both are stored lower-case:
@@ -83,14 +83,14 @@ func ParseStaticUsers(data []byte) ([]StaticUser, error) {
 			return nil, fmt.Errorf("users.yaml: users[%d]: %w", i, err)
 		}
 		for _, prev := range users {
-			if prev.Username == u.Username {
+			if prev.Name == u.Username {
 				return nil, fmt.Errorf("users.yaml: users[%d]: duplicate username %q (case-insensitive)", i, u.Username)
 			}
-			if prev.Mailbox == u.Mailbox {
+			if prev.Address == u.Mailbox {
 				return nil, fmt.Errorf("users.yaml: users[%d]: duplicate mailbox %q (case-insensitive)", i, u.Mailbox)
 			}
 		}
-		users = append(users, StaticUser(u))
+		users = append(users, Account{Name: u.Username, PasswordHash: u.PasswordHash, Address: u.Mailbox})
 	}
 	return users, nil
 }

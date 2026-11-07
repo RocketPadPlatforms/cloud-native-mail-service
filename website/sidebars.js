@@ -13,6 +13,7 @@ module.exports = {
       items: [
         'how-to/install-and-operate',
         'how-to/dkim-keys-and-dns-records',
+        'how-to/directories',
         'how-to/block-direct-smtp-egress',
       ],
     },

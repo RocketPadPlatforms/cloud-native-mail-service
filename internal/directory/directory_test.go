@@ -76,6 +76,64 @@ func TestProbeFilter(t *testing.T) {
 	}
 }
 
+func TestLookupFilter(t *testing.T) {
+	const active = "(objectClass=PostfixBookMailAccount)"
+	attrs := Attributes{Login: DefaultLogin, Mail: DefaultMail, Aliases: "mailAlias"}
+	const guards = "(uid=*)(mail=*)(!(uid=.*))(!(uid=*/*))(!(uid=sa.*)))"
+	for name, tc := range map[string]struct {
+		by   Lookup
+		key  string
+		want string
+	}{
+		"mail, Postfix":  {ByMail, KeyPostfix, "(&" + active + "(mail=%s)" + guards},
+		"alias, Postfix": {ByAlias, KeyPostfix, "(&" + active + "(mailAlias=%s)" + guards},
+		"login, Dovecot": {ByLogin, KeyDovecot, "(&" + active + "(|(uid=%{user})(mail=%{user}))" + guards},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := LookupFilter(attrs, active, tc.by, tc.key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Errorf("filter = %q, want %q", got, tc.want)
+			}
+		})
+	}
+
+	// The probe and the lookups share the restriction and the guards:
+	// without the key clause the lookup is the probe filter.
+	probe, err := ProbeFilter(attrs, active)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "(&" + active + guards; probe != want {
+		t.Errorf("probe filter = %q, want %q", probe, want)
+	}
+
+	for name, tc := range map[string]struct {
+		attrs Attributes
+		by    Lookup
+		key   string
+	}{
+		"free text key":       {attrs, ByMail, "alice@example.com"},
+		"key with a filter":   {attrs, ByMail, "%s)(uid=*"},
+		"empty key":           {attrs, ByMail, ""},
+		"alias without attr":  {uidMail, ByAlias, KeyPostfix},
+		"unknown lookup":      {attrs, Lookup(9), KeyPostfix},
+		"attribute with a )":  {Attributes{Login: "uid)(x", Mail: DefaultMail}, ByLogin, KeyDovecot},
+		"mail attribute with": {Attributes{Login: DefaultLogin, Mail: "mail=*)(|(x"}, ByMail, KeyPostfix},
+	} {
+		t.Run("refuses "+name, func(t *testing.T) {
+			if got, err := LookupFilter(tc.attrs, active, tc.by, tc.key); err == nil {
+				t.Errorf("filter %q was built, want an error", got)
+			}
+		})
+	}
+	if _, err := LookupFilter(attrs, "(a=b))(|(c=d)", ByMail, KeyPostfix); err == nil {
+		t.Error("an active filter that only works in the composition was accepted")
+	}
+}
+
 func TestInvalidFilters(t *testing.T) {
 	for name, active := range map[string]string{
 		"no parentheses":             "mailEnabled=TRUE",
@@ -122,8 +180,8 @@ func TestLDAPPort(t *testing.T) {
 		{LDAPTarget{TLSMode: LDAPS}, 636},
 		{LDAPTarget{TLSMode: LDAPS, Port: 1636}, 1636},
 	} {
-		if got := ldapPort(tc.t); got != tc.want {
-			t.Errorf("ldapPort(%+v) = %d, want %d", tc.t, got, tc.want)
+		if got := LDAPPort(tc.t); got != tc.want {
+			t.Errorf("LDAPPort(%+v) = %d, want %d", tc.t, got, tc.want)
 		}
 	}
 }

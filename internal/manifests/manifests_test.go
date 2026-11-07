@@ -17,6 +17,7 @@ limitations under the License.
 package manifests
 
 import (
+	"bytes"
 	"fmt"
 	"os/exec"
 	"regexp"
@@ -77,27 +78,28 @@ func build(t *testing.T, mutate func(*cnmsv1alpha1.MailServer)) []client.Object 
 
 // buildPlane renders all four components and builds the staged
 // object set.
-func buildPlane(t *testing.T, mutate func(*cnmsv1alpha1.MailServer), users []render.StaticUser) *DataPlane {
+func buildPlane(t *testing.T, mutate func(*cnmsv1alpha1.MailServer), users []render.Account) *DataPlane {
 	t.Helper()
 	return buildPlaneFor(t, mutate, users, []string{domainB, domainA}) // unsorted on purpose
 }
 
 // buildPlaneFor is buildPlane with an explicit authorized domain set.
-func buildPlaneFor(t *testing.T, mutate func(*cnmsv1alpha1.MailServer), users []render.StaticUser, domains []string) *DataPlane {
+func buildPlaneFor(t *testing.T, mutate func(*cnmsv1alpha1.MailServer), users []render.Account, domains []string) *DataPlane {
 	t.Helper()
 	return buildPlaneHost(t, mutate, users, domains, testHostname)
 }
 
 // buildPlaneHost is buildPlaneFor with an explicit authorized hostname
 // ("" while it is not authorized).
-func buildPlaneHost(t *testing.T, mutate func(*cnmsv1alpha1.MailServer), users []render.StaticUser, domains []string, hostname string) *DataPlane {
+func buildPlaneHost(t *testing.T, mutate func(*cnmsv1alpha1.MailServer), users []render.Account, domains []string, hostname string) *DataPlane {
 	t.Helper()
 	server := testServer(t, mutate)
 	req := &render.RenderRequest{
 		Server:            server,
 		AuthorizedDomains: domains,
 		Hostname:          hostname,
-		StaticUsers:       users,
+		Accounts:          users,
+		HashKey:           testHashKey,
 	}
 	renders := map[render.Component]*render.RenderResult{}
 	for _, r := range []render.EngineRenderer{
@@ -929,8 +931,8 @@ func TestConfigObjectsAreContentNamed(t *testing.T) {
 }
 
 func TestDovecotUsersLiveInAnImmutableSecret(t *testing.T) {
-	user := render.StaticUser{Username: "u", PasswordHash: "{SHA512-CRYPT}x", Mailbox: "u@" + domainA}
-	dp := buildPlane(t, nil, []render.StaticUser{user})
+	user := render.Account{Name: "u", PasswordHash: testCryptHash, Address: "u@" + domainA}
+	dp := buildPlane(t, nil, []render.Account{user})
 	var sec *corev1.Secret
 	for _, o := range dp.Configs {
 		if s, ok := o.(*corev1.Secret); ok {
@@ -984,7 +986,7 @@ func TestDovecotUsersLiveInAnImmutableSecret(t *testing.T) {
 
 	// A user change changes the Secret name and the pod-template hash,
 	// but not the ConfigMap name.
-	other := buildPlane(t, nil, []render.StaticUser{{Username: "v", PasswordHash: "{SHA512-CRYPT}y", Mailbox: "v@" + domainA}})
+	other := buildPlane(t, nil, []render.Account{{Name: "v", PasswordHash: "{SHA512-CRYPT}y", Address: "v@" + domainA}})
 	osts := mustFind[*appsv1.StatefulSet](t, find(t, other.Workloads, kindStatefulSet, testName+"-dovecot"), "sts")
 	if osts.Spec.Template.Annotations[ConfigHashAnnotation] == sts.Spec.Template.Annotations[ConfigHashAnnotation] {
 		t.Error("a user change must change the pod-template hash")
@@ -1080,7 +1082,7 @@ func longestName(t *testing.T, serverName string) int {
 		s.Name = serverName
 		s.Spec.Mailboxes = &cnmsv1alpha1.Mailboxes{Enabled: new(true)}
 		s.Spec.Valkey = &cnmsv1alpha1.Valkey{Persistence: new(true)}
-	}, []render.StaticUser{{Username: "u", PasswordHash: "{SHA512-CRYPT}x", Mailbox: "u@" + domainA}})
+	}, []render.Account{{Name: "u", PasswordHash: testCryptHash, Address: "u@" + domainA}})
 	longest := 0
 	for _, o := range slices.Concat(dp.Configs, dp.Base, dp.Workloads) {
 		longest = max(longest, len(o.GetName()))
@@ -1338,3 +1340,9 @@ func TestK8upAnnotations(t *testing.T) {
 		t.Errorf("backup disabled: annotations queue=%v mail=%v valkey=%v, want none", queue, mail, data)
 	}
 }
+
+// testHashKey keys the secret digests of the planes the tests build.
+var testHashKey = bytes.Repeat([]byte{7}, 32)
+
+// testCryptHash stands in for the password hash of a test account.
+const testCryptHash = "{SHA512-CRYPT}x"

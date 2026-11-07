@@ -85,7 +85,7 @@ var _ = Describe("MailServer object ownership", func() {
 			server := &cnmsv1alpha1.MailServer{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testServerName, Namespace: ns}, server)).To(Succeed())
 			var err error
-			plane, err = renderDataPlane(server, []string{domain}, server.Spec.Hostname, nil, nil)
+			plane, err = renderDataPlane(server, []string{domain}, server.Spec.Hostname, userSource{}, nil, noHashKey)
 			Expect(err).ToNot(HaveOccurred())
 		})
 

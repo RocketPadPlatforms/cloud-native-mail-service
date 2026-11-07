@@ -8,7 +8,7 @@ Task-oriented guides:
 - Install (Helm, Kustomize)
 - Manual rDNS
 - IP pools
-- Directories (LDAP/SQL)
+- [Use an LDAP or PostgreSQL directory](directories.md)
 - Relay mode
 - Mailboxes
 - Observability with and without the Prometheus Operator
