@@ -1072,7 +1072,8 @@ Aliases and senders come from the directory through the **same contract** as
 ### 5. `MailDirectory` rendering contract
 
 - **Controller (3a).** Conditions: `Ready` (configuration is valid: Secrets
-  exist and carry their keys, TLS mode and CA are consistent, the LDAP filter
+  exist and carry their keys, TLS mode and CA are consistent (a CEL rule
+  refuses `caSecretRef` with LDAP `None` or SQL `disable`), the LDAP filter
   compiles, the SQL relation names are valid) and `Reachable` (a bind and a
   base search with the **composed** filter, which must return at least one
   entry, or `SELECT 1 FROM <relation> LIMIT 1` plus the `WHERE` of 4.8,

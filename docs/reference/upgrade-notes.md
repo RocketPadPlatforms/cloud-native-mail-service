@@ -128,10 +128,26 @@ the new CRDs reject or prune the old field names.
 - **`MailDomain.status.records` is an atomic list**, no longer a map
   keyed by name. Clients that patch single records must replace the
   whole list.
-- **`MailDirectory.spec.ldap.userFilter` uses the placeholder
-  `{user}`** (exactly once, default `(mail={user})`) instead of `%s`.
-  The operator translates it for Postfix and Dovecot; a filter with `%`
-  is rejected.
+- **`MailDirectory.spec.ldap.userFilter` is renamed `activeFilter` and
+  has a new meaning** ([ADR
+  0015](../decisions/0015-user-sources-directory-users-and-aliases.md),
+  section 4.8). It is a static restriction **without** a placeholder (no
+  `{user}`, no `%`; the characters `{`, `}` and `%` are rejected), for
+  example `(&(objectClass=PostfixBookMailAccount)(mailEnabled=TRUE))`;
+  unset means no restriction. The operator builds the lookups around it.
+  The old name is not accepted: the CRD prunes a stored `userFilter`, and
+  `kubectl apply` with strict field validation (the default) fails with an
+  unknown-field error, so remove the field and set `activeFilter` if you
+  want a restriction. A GitOps tool that does not validate strictly drops
+  the field silently, and the account set then widens to every entry that
+  has the attributes: check the objects after the upgrade. No release
+  exists yet, so this only concerns clusters that run a snapshot of `main`.
+  New: `spec.ldap.attributes` (`login`, default `uid`; `mail`, default
+  `mail`; `aliases`, optional) names the attributes of an account, and
+  `spec.sql.users` (default relation `cnms_users`) and `spec.sql.aliases`
+  name the relations of a PostgreSQL directory, each with an optional
+  `schema` (default `public`). The column names are fixed. The API takes no
+  SQL and no filter fragments.
 - **Storage sizes are immutable:** `spec.postfix.queueStorage` and
   `spec.mailboxes.storage` cannot be edited once set, and decreasing
   `spec.postfix.replicas` is rejected. Resize the PersistentVolumeClaims

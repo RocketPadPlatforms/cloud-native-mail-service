@@ -95,24 +95,61 @@ type LDAP struct {
 	// +optional
 	BindSecretRef *SecretReference `json:"bindSecretRef,omitempty"`
 
-	// Search filter for users. It must contain the engine-neutral
-	// placeholder {user} exactly once; it stands for the user's mail
-	// address. The renderer translates the placeholder and escapes
-	// the value for each engine (Postfix %s, Dovecot %{user}). Control
-	// characters and "%" are rejected. Defaults to "(mail={user})".
+	// Attributes names the directory attributes of an account. Unset
+	// means the defaults of the fields below.
 	// +optional
+	Attributes *LDAPAttributes `json:"attributes,omitempty"`
+
+	// ActiveFilter is a static restriction that every lookup of an
+	// account adds, for example
+	// "(&(objectClass=PostfixBookMailAccount)(mailEnabled=TRUE))". It
+	// is a complete LDAP filter without a placeholder: the operator
+	// builds the lookups around it and supplies the looked-up value
+	// itself. Unset means no restriction. The characters "{", "}" and
+	// "%" and control characters are rejected.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=256
-	// +kubebuilder:validation:Pattern=`^[^\x00-\x1f\x7f%]*$`
-	// +kubebuilder:validation:XValidation:rule="self.split('{user}').size() == 2",message="userFilter must contain the placeholder {user} exactly once"
-	UserFilter *string `json:"userFilter,omitempty"`
+	// +kubebuilder:validation:Pattern=`^[^\x00-\x1f\x7f%{}]*$`
+	ActiveFilter *string `json:"activeFilter,omitempty"`
+}
+
+// LDAPAttributes names the LDAP attributes of an account. Only
+// attribute names are accepted, never filter or query fragments.
+type LDAPAttributes struct {
+	// Login is the attribute with the login name. It is also the
+	// account name (and so the mailbox directory); it must be
+	// single-valued. Defaults to "uid".
+	// +optional
+	// +kubebuilder:default=uid
+	// +kubebuilder:validation:MaxLength=64
+	// +kubebuilder:validation:Pattern=`^[A-Za-z][A-Za-z0-9-]{0,63}$`
+	Login *string `json:"login,omitempty"`
+
+	// Mail is the attribute with the canonical (primary) address of
+	// the account. It must be single-valued. Defaults to "mail".
+	// +optional
+	// +kubebuilder:default=mail
+	// +kubebuilder:validation:MaxLength=64
+	// +kubebuilder:validation:Pattern=`^[A-Za-z][A-Za-z0-9-]{0,63}$`
+	Mail *string `json:"mail,omitempty"`
+
+	// Aliases is the multi-valued attribute with the further
+	// addresses of the account, for example "mailAlias". Unset means
+	// the directory has no aliases.
+	// +optional
+	// +kubebuilder:validation:MaxLength=64
+	// +kubebuilder:validation:Pattern=`^[A-Za-z][A-Za-z0-9-]{0,63}$`
+	Aliases *string `json:"aliases,omitempty"`
 }
 
 // LDAPTLS configures transport security for the LDAP connection.
+// +kubebuilder:validation:XValidation:rule="!has(self.caSecretRef) || !has(self.mode) || self.mode != 'None'",message="caSecretRef must not be set when mode is None (no TLS to verify)"
 type LDAPTLS struct {
 	// Mode of the connection: "StartTLS" upgrades an existing
 	// connection (default), "LDAPS" connects directly over TLS, "None"
-	// disables transport security. With "None", bindDN must not be
-	// set (cleartext bind).
+	// disables transport security. With "None", bindDN and caSecretRef
+	// must not be set.
 	// +optional
 	// +kubebuilder:validation:Enum=StartTLS;LDAPS;None
 	// +kubebuilder:default=StartTLS
@@ -125,10 +162,12 @@ type LDAPTLS struct {
 }
 
 // SQLTLS configures transport security for the SQL connection.
+// +kubebuilder:validation:XValidation:rule="!has(self.caSecretRef) || !has(self.mode) || self.mode != 'disable'",message="caSecretRef must not be set when mode is disable (no TLS to verify)"
 type SQLTLS struct {
 	// Mode of the connection: "verify-full" encrypts and verifies the
 	// host name (default), "require" encrypts without host name
-	// verification, "disable" sends cleartext.
+	// verification, "disable" sends cleartext. With "disable",
+	// caSecretRef must not be set.
 	// +optional
 	// +kubebuilder:validation:Enum=verify-full;require;disable
 	// +kubebuilder:default=verify-full
@@ -176,6 +215,39 @@ type SQL struct {
 	// Transport security. Defaults to verify-full.
 	// +optional
 	TLS *SQLTLS `json:"tls,omitempty"`
+
+	// Users is the relation (table or view) with the accounts. The
+	// operator generates every query itself and reads the fixed
+	// columns login, mail and password (a "{SCHEME}hash" value); a
+	// view adapts an existing schema, and is also where accounts are
+	// switched off. Defaults to "cnms_users" in the schema "public".
+	// +optional
+	// +kubebuilder:default={name: "cnms_users"}
+	Users *SQLRelation `json:"users,omitempty"`
+
+	// Aliases is the relation with the further addresses, read as the
+	// fixed columns alias and target (the canonical address). Unset
+	// means the directory has no aliases.
+	// +optional
+	Aliases *SQLRelation `json:"aliases,omitempty"`
+}
+
+// SQLRelation names a relation (table or view) of the directory
+// database. Only identifiers are accepted, never SQL.
+type SQLRelation struct {
+	// Name of the relation: lower case letters, digits and "_".
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z_][a-z0-9_]{0,62}$`
+	Name string `json:"name"`
+
+	// Schema of the relation, with the same characters as name.
+	// Defaults to "public".
+	// +optional
+	// +kubebuilder:default=public
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z_][a-z0-9_]{0,62}$`
+	Schema *string `json:"schema,omitempty"`
 }
 
 // MailDirectoryStatus defines the observed state of a MailDirectory.

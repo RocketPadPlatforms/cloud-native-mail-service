@@ -8,6 +8,8 @@
 # and cnms_v1alpha1_sample-static-users.yaml) are not listed here: they need
 # the operator flag --enable-insecure-test-features and replace the
 # MailDirectory of cnms_v1alpha1_mailserver.yaml.
+# The PostgreSQL directory cnms_v1alpha1_maildirectory-sql.yaml is an
+# alternative to cnms_v1alpha1_maildirectory.yaml and is not listed either.
 # The MailDomain variants cnms_v1alpha1_maildomain-byo-keys.yaml and
 # cnms_v1alpha1_maildomain-ed25519.yaml claim the same domain as
 # cnms_v1alpha1_maildomain.yaml and are not listed here either.

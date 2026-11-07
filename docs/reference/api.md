@@ -292,7 +292,27 @@ _Appears in:_
 | `baseDN` _string_ | Base DN for user searches. Control characters are rejected. |  | MaxLength: 256 <br />Pattern: `^[^\x00-\x1f\x7f]*$` <br />Required: \{\} <br /> |
 | `bindDN` _string_ | Bind DN used for searches. Empty means an anonymous bind.<br />Control characters are rejected. |  | MaxLength: 256 <br />Pattern: `^[^\x00-\x1f\x7f]*$` <br />Optional: \{\} <br /> |
 | `bindSecretRef` _[SecretReference](#secretreference)_ | Secret with the bind password (key "password"). Required when<br />bindDN is set. |  | Optional: \{\} <br /> |
-| `userFilter` _string_ | Search filter for users. It must contain the engine-neutral<br />placeholder \{user\} exactly once; it stands for the user's mail<br />address. The renderer translates the placeholder and escapes<br />the value for each engine (Postfix %s, Dovecot %\{user\}). Control<br />characters and "%" are rejected. Defaults to "(mail=\{user\})". |  | MaxLength: 256 <br />Pattern: `^[^\x00-\x1f\x7f%]*$` <br />Optional: \{\} <br /> |
+| `attributes` _[LDAPAttributes](#ldapattributes)_ | Attributes names the directory attributes of an account. Unset<br />means the defaults of the fields below. |  | Optional: \{\} <br /> |
+| `activeFilter` _string_ | ActiveFilter is a static restriction that every lookup of an<br />account adds, for example<br />"(&(objectClass=PostfixBookMailAccount)(mailEnabled=TRUE))". It<br />is a complete LDAP filter without a placeholder: the operator<br />builds the lookups around it and supplies the looked-up value<br />itself. Unset means no restriction. The characters "\{", "\}" and<br />"%" and control characters are rejected. |  | MaxLength: 256 <br />MinLength: 1 <br />Pattern: `^[^\x00-\x1f\x7f%\{\}]*$` <br />Optional: \{\} <br /> |
+
+
+#### LDAPAttributes
+
+
+
+LDAPAttributes names the LDAP attributes of an account. Only
+attribute names are accepted, never filter or query fragments.
+
+
+
+_Appears in:_
+- [LDAP](#ldap)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `login` _string_ | Login is the attribute with the login name. It is also the<br />account name (and so the mailbox directory); it must be<br />single-valued. Defaults to "uid". | uid | MaxLength: 64 <br />Pattern: `^[A-Za-z][A-Za-z0-9-]\{0,63\}$` <br />Optional: \{\} <br /> |
+| `mail` _string_ | Mail is the attribute with the canonical (primary) address of<br />the account. It must be single-valued. Defaults to "mail". | mail | MaxLength: 64 <br />Pattern: `^[A-Za-z][A-Za-z0-9-]\{0,63\}$` <br />Optional: \{\} <br /> |
+| `aliases` _string_ | Aliases is the multi-valued attribute with the further<br />addresses of the account, for example "mailAlias". Unset means<br />the directory has no aliases. |  | MaxLength: 64 <br />Pattern: `^[A-Za-z][A-Za-z0-9-]\{0,63\}$` <br />Optional: \{\} <br /> |
 
 
 #### LDAPTLS
@@ -308,7 +328,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `mode` _string_ | Mode of the connection: "StartTLS" upgrades an existing<br />connection (default), "LDAPS" connects directly over TLS, "None"<br />disables transport security. With "None", bindDN must not be<br />set (cleartext bind). | StartTLS | Enum: [StartTLS LDAPS None] <br />Optional: \{\} <br /> |
+| `mode` _string_ | Mode of the connection: "StartTLS" upgrades an existing<br />connection (default), "LDAPS" connects directly over TLS, "None"<br />disables transport security. With "None", bindDN and caSecretRef<br />must not be set. | StartTLS | Enum: [StartTLS LDAPS None] <br />Optional: \{\} <br /> |
 | `caSecretRef` _[SecretReference](#secretreference)_ | CASecretRef references a Secret with the CA bundle (key<br />"ca.crt") used to verify the server certificate. |  | Optional: \{\} <br /> |
 
 
@@ -780,6 +800,26 @@ _Appears in:_
 | `username` _string_ | Database user: letters, digits, "_", "-" and "." only, so that<br />the value cannot add keywords to the connection string. |  | MaxLength: 63 <br />Pattern: `^[A-Za-z0-9_][A-Za-z0-9_.-]*$` <br />Required: \{\} <br /> |
 | `passwordSecretRef` _[SecretReference](#secretreference)_ | Secret with the database password (key "password"). |  | Required: \{\} <br /> |
 | `tls` _[SQLTLS](#sqltls)_ | Transport security. Defaults to verify-full. |  | Optional: \{\} <br /> |
+| `users` _[SQLRelation](#sqlrelation)_ | Users is the relation (table or view) with the accounts. The<br />operator generates every query itself and reads the fixed<br />columns login, mail and password (a "\{SCHEME\}hash" value); a<br />view adapts an existing schema, and is also where accounts are<br />switched off. Defaults to "cnms_users" in the schema "public". | \{ name:cnms_users \} | Optional: \{\} <br /> |
+| `aliases` _[SQLRelation](#sqlrelation)_ | Aliases is the relation with the further addresses, read as the<br />fixed columns alias and target (the canonical address). Unset<br />means the directory has no aliases. |  | Optional: \{\} <br /> |
+
+
+#### SQLRelation
+
+
+
+SQLRelation names a relation (table or view) of the directory
+database. Only identifiers are accepted, never SQL.
+
+
+
+_Appears in:_
+- [SQL](#sql)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `name` _string_ | Name of the relation: lower case letters, digits and "_". |  | MaxLength: 63 <br />Pattern: `^[a-z_][a-z0-9_]\{0,62\}$` <br />Required: \{\} <br /> |
+| `schema` _string_ | Schema of the relation, with the same characters as name.<br />Defaults to "public". | public | MaxLength: 63 <br />Pattern: `^[a-z_][a-z0-9_]\{0,62\}$` <br />Optional: \{\} <br /> |
 
 
 #### SQLTLS
@@ -795,7 +835,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `mode` _string_ | Mode of the connection: "verify-full" encrypts and verifies the<br />host name (default), "require" encrypts without host name<br />verification, "disable" sends cleartext. | verify-full | Enum: [verify-full require disable] <br />Optional: \{\} <br /> |
+| `mode` _string_ | Mode of the connection: "verify-full" encrypts and verifies the<br />host name (default), "require" encrypts without host name<br />verification, "disable" sends cleartext. With "disable",<br />caSecretRef must not be set. | verify-full | Enum: [verify-full require disable] <br />Optional: \{\} <br /> |
 | `caSecretRef` _[SecretReference](#secretreference)_ | CASecretRef references a Secret with the CA bundle (key<br />"ca.crt") used to verify the server certificate. |  | Optional: \{\} <br /> |
 
 
