@@ -98,6 +98,7 @@ rules:
 - apiGroups:
   - cnms.rpp.gmbh
   resources:
+  - maildirectories/status
   - maildomaingrants/status
   - maildomains/status
   - mailservers/status

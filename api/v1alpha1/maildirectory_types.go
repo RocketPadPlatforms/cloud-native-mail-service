@@ -166,8 +166,9 @@ type LDAPTLS struct {
 type SQLTLS struct {
 	// Mode of the connection: "verify-full" encrypts and verifies the
 	// host name (default), "require" encrypts without host name
-	// verification, "disable" sends cleartext. With "disable",
-	// caSecretRef must not be set.
+	// verification (with caSecretRef it also verifies the certificate
+	// chain, like libpq with a root certificate), "disable" sends
+	// cleartext. With "disable", caSecretRef must not be set.
 	// +optional
 	// +kubebuilder:validation:Enum=verify-full;require;disable
 	// +kubebuilder:default=verify-full

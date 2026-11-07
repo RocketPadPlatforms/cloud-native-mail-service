@@ -835,7 +835,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `mode` _string_ | Mode of the connection: "verify-full" encrypts and verifies the<br />host name (default), "require" encrypts without host name<br />verification, "disable" sends cleartext. With "disable",<br />caSecretRef must not be set. | verify-full | Enum: [verify-full require disable] <br />Optional: \{\} <br /> |
+| `mode` _string_ | Mode of the connection: "verify-full" encrypts and verifies the<br />host name (default), "require" encrypts without host name<br />verification (with caSecretRef it also verifies the certificate<br />chain, like libpq with a root certificate), "disable" sends<br />cleartext. With "disable", caSecretRef must not be set. | verify-full | Enum: [verify-full require disable] <br />Optional: \{\} <br /> |
 | `caSecretRef` _[SecretReference](#secretreference)_ | CASecretRef references a Secret with the CA bundle (key<br />"ca.crt") used to verify the server certificate. |  | Optional: \{\} <br /> |
 
 

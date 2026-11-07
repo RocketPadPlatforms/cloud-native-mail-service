@@ -158,7 +158,30 @@ informational: they never feed into `Ready`.
 
 ## MailDirectory
 
-No controller sets conditions on this resource yet. The API reserves
-`Ready` (directory reachable, Phase 3), and the `Ready` printer column
-stays empty until then. Its domains are authorized and reported on the
-`MailServer` (`DomainsAuthorized`).
+The `MailDirectory` controller checks the configuration and probes the
+directory ([ADR 0015](../decisions/0015-user-sources-directory-users-and-aliases.md),
+section 5). It changes no data plane: nothing reads these conditions yet.
+
+| Condition | Status | Reason | Meaning |
+|---|---|---|---|
+| `Ready` | `True` | `Ready` | The configuration is valid: the referenced Secrets exist and carry their keys (`password`, `ca.crt`), the CA bundle holds a certificate, and the LDAP filter compiles |
+| `Ready` | `False` | `SecretNotFound` | A Secret named in the spec does not exist (read again every minute) |
+| `Ready` | `False` | `SecretIncomplete` | A Secret lacks the key that is read from it, or `ca.crt` holds no certificate |
+| `Ready` | `False` | `InvalidFilter` | `ldap.activeFilter` is not one complete LDAP filter, or the filter the operator composes from it does not compile |
+| `Reachable` | `True` | `Reachable` | The probe connected, bound and found at least one account with the composed filter (LDAP), or read a row of the users relation (SQL) |
+| `Reachable` | `False` | `Unreachable` | The directory did not answer |
+| `Reachable` | `False` | `BindFailed` | The directory rejected the credentials (LDAP bind, PostgreSQL login), or the user may not read the relation |
+| `Reachable` | `False` | `TLSFailed` | The TLS handshake or the verification of the server certificate failed |
+| `Reachable` | `False` | `NoMatchingEntries` | The lookup worked and found no account. A directory that is still empty gets this too, and so does an LDAP login attribute without substring matching, because the login guard (no leading dot, no `/`, not `sa.*`) then excludes every entry |
+| `Reachable` | `False` | `RelationMissing` | A schema, a relation or a fixed column of the PostgreSQL directory does not exist |
+| `Reachable` | `Unknown` | the reason of `Ready` | Not probed while `Ready` is `False` |
+
+`Reachable` is a warning. It never feeds into the `Ready` of a
+`MailServer` and never takes a rollout away: the operator pod may see a
+different network than the data plane, and an outage of the directory must
+not stop mail (it tempfails). The probe runs on every spec change and every
+five minutes. The messages are fixed texts: the error text of a driver can
+carry a credential, so it is never copied into a condition or an Event.
+Warning Events are emitted when `Ready` or `Reachable` change for the worse;
+a Normal Event is emitted when `Reachable` becomes `True` again after it was
+`False`.
