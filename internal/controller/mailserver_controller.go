@@ -114,6 +114,10 @@ const (
 	// ReasonNoUserSource is set when the server has neither a
 	// directoryRef nor static test users.
 	ReasonNoUserSource = "NoUserSource"
+	// ReasonUserSourceConflict is set when the server configures more
+	// than one user source (ADR 0015, section 3). The previous
+	// revision keeps running.
+	ReasonUserSourceConflict = "UserSourceConflict"
 	// ReasonRelayNotAvailable is set for relay outbound (Phase 6).
 	ReasonRelayNotAvailable = "RelayNotAvailable"
 	// ReasonIpPoolClaimNotAvailable is set for a direct outbound with
@@ -254,7 +258,9 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 	orig := server.DeepCopy()
-	prevReady := meta.FindStatusCondition(server.Status.Conditions, conditionReady)
+	// A copy: setCondition updates the condition in place, and the Ready
+	// transition Event compares against the state before.
+	prevReady := meta.FindStatusCondition(server.Status.Conditions, conditionReady).DeepCopy()
 	conds := &server.Status.Conditions
 	generation := server.Generation
 	// dnsDelay is when the records are looked up again; the re-check
@@ -497,6 +503,12 @@ type blockedBy struct{ reason, message string }
 func (r *MailServerReconciler) preflight(ctx context.Context, server *cnmsv1alpha1.MailServer, needUsers bool) (*blockedBy, userSource, error) {
 	var src userSource
 	staticUsers := server.Spec.Submission != nil && server.Spec.Submission.InsecureStaticUsers != nil
+	// A server has one user source: never pick one silently.
+	if sources := userSourceNames(server); len(sources) > 1 {
+		return &blockedBy{ReasonUserSourceConflict, fmt.Sprintf(
+			"the server configures more than one user source (%s); keep exactly one",
+			strings.Join(sources, ", "))}, src, nil
+	}
 	// Fail closed when no user source is configured, or the
 	// referenced MailDirectory is missing or invalid (recipient
 	// validation and auth are backed by it).
@@ -511,10 +523,8 @@ func (r *MailServerReconciler) preflight(ctx context.Context, server *cnmsv1alph
 			return nil, src, err
 		}
 		// The directory is read with its Secrets (uncached) only for a
-		// normal render. shortcut: static test users win over a
-		// directory until UserSourceConflict makes the combination an
-		// error (ADR 0015, commit 5).
-		if needUsers && !staticUsers {
+		// normal render.
+		if needUsers {
 			target, bad, err := directoryResolver{r.APIReader}.resolve(ctx, dir)
 			if err != nil {
 				return nil, src, err
@@ -554,6 +564,20 @@ func (r *MailServerReconciler) preflight(ctx context.Context, server *cnmsv1alph
 	}
 	src.accounts = users
 	return nil, src, nil
+}
+
+// userSourceNames lists the user sources the spec configures, for the
+// UserSourceConflict check. MailUsers join the list with their
+// controller (ADR 0015, 3b).
+func userSourceNames(server *cnmsv1alpha1.MailServer) []string {
+	var names []string
+	if server.Spec.DirectoryRef != nil {
+		names = append(names, "directoryRef")
+	}
+	if server.Spec.Submission != nil && server.Spec.Submission.InsecureStaticUsers != nil {
+		names = append(names, "submission.insecureStaticUsers")
+	}
+	return names
 }
 
 // userSource is where the accounts of a render come from: the static
@@ -1010,7 +1034,7 @@ func (r *MailServerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 	return b.
 		Watches(&cnmsv1alpha1.MailDomain{}, handler.EnqueueRequestsFromMapFunc(r.mapDomainServers)).
-		Watches(&cnmsv1alpha1.MailDirectory{}, handler.EnqueueRequestsFromMapFunc(r.mapSameNamespaceServers)).
+		Watches(&cnmsv1alpha1.MailDirectory{}, handler.EnqueueRequestsFromMapFunc(r.mapDirectoryServers)).
 		Watches(&cnmsv1alpha1.MailDomainGrant{}, handler.EnqueueRequestsFromMapFunc(r.mapGrantServers)).
 		// The hostname is unique across namespaces: a server that takes
 		// it, renames or goes away blocks or frees the other claimants.
@@ -1040,10 +1064,17 @@ func (r *MailServerReconciler) mapPeerServers(ctx context.Context, obj client.Ob
 	return reqs
 }
 
-// mapSameNamespaceServers enqueues every MailServer of the object's
-// namespace (a directory change may change the render).
-func (r *MailServerReconciler) mapSameNamespaceServers(ctx context.Context, obj client.Object) []reconcile.Request {
-	return r.serversInNamespace(ctx, obj.GetNamespace())
+// mapDirectoryServers enqueues the MailServers of the directory's
+// namespace that reference it by name (a directory change may change
+// the render; ADR 0015, section 7).
+func (r *MailServerReconciler) mapDirectoryServers(ctx context.Context, obj client.Object) []reconcile.Request {
+	list := &cnmsv1alpha1.MailServerList{}
+	if err := r.List(ctx, list, client.InNamespace(obj.GetNamespace()),
+		client.MatchingFields{mailServerDirectoryIndex: obj.GetName()}); err != nil {
+		log.FromContext(ctx).Error(err, "Could not list MailServers", "directory", obj.GetName())
+		return nil
+	}
+	return serverRequests(list)
 }
 
 // mapDomainServers enqueues the MailServer the MailDomain references
@@ -1105,6 +1136,11 @@ func (r *MailServerReconciler) serversInNamespace(ctx context.Context, ns string
 		log.FromContext(ctx).Error(err, "Could not list MailServers", "namespace", ns)
 		return nil
 	}
+	return serverRequests(list)
+}
+
+// serverRequests turns a list of MailServers into reconcile requests.
+func serverRequests(list *cnmsv1alpha1.MailServerList) []reconcile.Request {
 	reqs := make([]reconcile.Request, 0, len(list.Items))
 	for i := range list.Items {
 		reqs = append(reqs, reconcile.Request{NamespacedName: types.NamespacedName{

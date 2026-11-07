@@ -17,6 +17,8 @@ limitations under the License.
 package controller
 
 import (
+	"strings"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -251,15 +253,73 @@ var _ = Describe("MailServer with a MailDirectory", func() {
 		Expect(postfixHash()).To(Equal(before))
 	})
 
-	It("lets static test users win until the combination is an error", func() {
-		createUsersSecretG(ns, "users:\n  - username: alice\n    passwordHash: '{SHA512-CRYPT}x'\n    mailbox: alice@"+domain+"\n")
-		mutateServerG(ns, func(s *cnmsv1alpha1.MailServer) {
-			s.Spec.Submission = &cnmsv1alpha1.Submission{InsecureStaticUsers: &cnmsv1alpha1.InsecureStaticUsers{SecretName: usersSecretName}}
+	// ADR 0015, section 3, point 7: one user source per server.
+	Describe("with a second user source", func() {
+		addStaticUsers := func() {
+			createUsersSecretG(ns, "users:\n  - username: alice\n    passwordHash: '{SHA512-CRYPT}x'\n    mailbox: alice@"+domain+"\n")
+			mutateServerG(ns, func(s *cnmsv1alpha1.MailServer) {
+				s.Spec.Submission = &cnmsv1alpha1.Submission{InsecureStaticUsers: &cnmsv1alpha1.InsecureStaticUsers{SecretName: usersSecretName}}
+			})
+		}
+
+		It("is not Ready and keeps the running revision", func() {
+			deployG(r, ns, testServerName)
+			before := postfixHash()
+			// The envtest has no Pods, so the server is not Ready yet:
+			// make it Ready, as it would be, to see the transition.
+			server := &cnmsv1alpha1.MailServer{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testServerName, Namespace: ns}, server)).To(Succeed())
+			setCondition(&server.Status.Conditions, server.Generation, conditionReady, metav1.ConditionTrue, ReasonReady, "ready")
+			Expect(k8sClient.Status().Update(ctx, server)).To(Succeed())
+			rec := events.NewFakeRecorder(50)
+			r.Recorder = rec
+			addStaticUsers()
+			jobs := len(jobsG(ns, testServerName, ""))
+
+			reconcileServerG(r, ns, testServerName)
+			Expect(strings.Join(drainEvents(rec), "\n")).To(ContainSubstring("UserSourceConflict"),
+				"the change of Ready to False is an Event")
+			status, reason, msg := ready()
+			Expect(status).To(Equal(metav1.ConditionFalse))
+			Expect(reason).To(Equal(ReasonUserSourceConflict))
+			Expect(msg).To(ContainSubstring("directoryRef"))
+			Expect(msg).To(ContainSubstring("submission.insecureStaticUsers"))
+			Expect(postfixHash()).To(Equal(before))
+			Expect(jobsG(ns, testServerName, "")).To(HaveLen(jobs), "no validation for a render that was refused")
+			Expect(postfixMainCFG(ns)).To(ContainSubstring("virtual_mailbox_maps = ldap:"))
 		})
-		deployG(r, ns, testServerName)
-		Expect(postfixMainCFG(ns)).To(ContainSubstring("virtual_mailbox_maps = texthash:/etc/postfix/vmailbox"))
-		Expect(mountedSecret("postfix", "directory")).To(BeNil())
-		Expect(mountedSecret("dovecot", "users")).To(HaveKey("users"))
+
+		It("is resolved by removing either source", func() {
+			deployG(r, ns, testServerName)
+			before := postfixHash()
+			addStaticUsers()
+			reconcileServerG(r, ns, testServerName)
+			_, reason, _ := ready()
+			Expect(reason).To(Equal(ReasonUserSourceConflict))
+
+			mutateServerG(ns, func(s *cnmsv1alpha1.MailServer) { s.Spec.Submission = nil })
+			reconcileServerG(r, ns, testServerName)
+			_, reason, _ = ready()
+			Expect(reason).NotTo(Equal(ReasonUserSourceConflict))
+			Expect(postfixHash()).To(Equal(before), "the directory render is unchanged")
+
+			staticOnly := func(s *cnmsv1alpha1.MailServer) {
+				s.Spec.DirectoryRef = nil
+				s.Spec.Submission = &cnmsv1alpha1.Submission{InsecureStaticUsers: &cnmsv1alpha1.InsecureStaticUsers{SecretName: usersSecretName}}
+			}
+			mutateServerG(ns, staticOnly)
+			reconcileServerG(r, ns, testServerName)
+			_, reason, _ = ready()
+			Expect(reason).NotTo(Equal(ReasonUserSourceConflict))
+		})
+
+		It("is reported before a missing directory", func() {
+			addStaticUsers()
+			Expect(k8sClient.Delete(ctx, &cnmsv1alpha1.MailDirectory{ObjectMeta: metav1.ObjectMeta{Name: directoryName, Namespace: ns}})).To(Succeed())
+			reconcileServerG(r, ns, testServerName)
+			_, reason, _ := ready()
+			Expect(reason).To(Equal(ReasonUserSourceConflict))
+		})
 	})
 })
 

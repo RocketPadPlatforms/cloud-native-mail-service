@@ -21,6 +21,7 @@ reason and message.
 | `Ready` | `False` | `HostnameNotAuthorized`, `DuplicateHostname` | the hostname is not authorized (see `HostnameAuthorized`); the server runs with the name of its Postfix Service and serves its domains, but is not ready for what its spec asks for |
 | `Ready` | `False` | `NoDomains` | no `MailDomain` of the namespace references the server in `spec.serverRef`; nothing is deployed, and a running data plane is re-rendered fail closed ([ADR 0014](../decisions/0014-domain-server-binding-and-hostname.md)) |
 | `Ready` | `False` | `NoUserSource` | no `spec.directoryRef` and no other user source |
+| `Ready` | `False` | `UserSourceConflict` | the spec configures more than one user source, today `spec.directoryRef` together with `spec.submission.insecureStaticUsers`; the message names them. A server has one user source, so none is picked silently. The running revision keeps running, and an Event says so; remove one source to resolve it ([ADR 0015](../decisions/0015-user-sources-directory-users-and-aliases.md), section 3) |
 | `Ready` | `False` | `InsecureStaticUsersDisabled` | `spec.submission.insecureStaticUsers` is set but the operator runs without `--enable-insecure-test-features` |
 | `Ready` | `False` | `StaticUsersInvalid` | the users Secret is missing, has no `users.yaml` key, or does not parse |
 | `Ready` | `False` | `ClusterIssuerNotAllowed` | `spec.tls.issuerRef` is a `ClusterIssuer` and the operator runs without `--allow-cluster-issuers` |

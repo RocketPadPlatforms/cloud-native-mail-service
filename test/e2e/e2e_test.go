@@ -98,7 +98,7 @@ var _ = Describe("CNMS e2e", Ordered, func() {
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
 
-		By("enabling the static test users (Phase 2 test feature)")
+		By("enabling the static test users (the user source specs use them)")
 		// kubectl has no `set args`; a JSON patch replaces the container
 		// args. It replaces all of them, so it repeats the args of the
 		// kustomize overlays (metrics, leader election, probes) and adds
@@ -620,6 +620,8 @@ subjects:
 			Expect(err).NotTo(HaveOccurred())
 			Expect(hash).NotTo(BeEmpty(), "the config hash annotation is missing")
 
+			// The server runs on the PostgreSQL fixture, a real
+			// directory; only the reference breaks.
 			By("breaking the spec (missing MailDirectory)")
 			out, err := kubectl("patch", "mailserver", "mail", "-n", e2eNamespace,
 				"--type", "merge",
@@ -647,10 +649,14 @@ subjects:
 			Expect(err).NotTo(HaveOccurred())
 			Expect(restored).To(Equal(hash), "the pod template changed although the apply was blocked")
 
+			By("the running pods still serve the users of the directory")
+			Expect(rcptReply(e2eMailbox)).To(HavePrefix("250 "))
+			Expect(authReply(e2eUser, e2ePassword)).To(HavePrefix("235 "))
+
 			By("restoring the spec")
 			out, err = kubectl("patch", "mailserver", "mail", "-n", e2eNamespace,
 				"--type", "merge",
-				"-p", `{"spec":{"directoryRef":{"name":"sql-e2e"}}}`)
+				"-p", `{"spec":{"directoryRef":{"name":"`+e2eSQLDirectory+`"}}}`)
 			Expect(err).NotTo(HaveOccurred(), "patch output: %s", out)
 			Eventually(func() (string, error) {
 				return mailServerCondition("Ready")
@@ -795,7 +801,10 @@ subjects:
 		})
 	})
 
-	registerDKIMSpecs() // dkim_test.go: the MailDomain specs share this fixture
+	// The directory specs leave the server on the PostgreSQL directory,
+	// where the MailDomain specs expect it.
+	registerDirectorySpecs() // directory_test.go
+	registerDKIMSpecs()      // dkim_test.go: the MailDomain specs share this fixture
 })
 
 // managerImage is the manager image to be built and loaded for testing.

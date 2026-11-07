@@ -20,6 +20,8 @@ re-checked when an image major version changes (project plan, section 9).
 | redis_exporter | MIT | Upstream `oliver006/redis_exporter` |
 | Mailpit (e2e sink only) | MIT | Upstream `axllent/mailpit` |
 | CoreDNS (e2e test DNS server only) | Apache-2.0 | Upstream `coredns/coredns` |
+| OpenLDAP (e2e LDAP directory only) | OLDAP-2.8 ([licence](https://www.openldap.org/software/release/license.html)); the image tooling is MIT ([licence](https://github.com/osixia/container-openldap/blob/main/LICENSE.md)) | Upstream `osixia/openldap` |
+| PostgreSQL (e2e SQL directory only) | PostgreSQL License ([licence](https://www.postgresql.org/about/licence/)) | Upstream `postgres` |
 | BusyBox | GPL-2.0-only | Installed in the CNMS Postfix image (queue-metrics and Rspamd metrics sidecars) |
 | Debian base packages | Mixed, including GPL and LGPL | Base of the CNMS Postfix image and of the upstream Rspamd, Dovecot and Valkey images |
 

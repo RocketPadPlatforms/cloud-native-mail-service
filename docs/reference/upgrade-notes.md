@@ -204,12 +204,47 @@ the new CRDs reject or prune the old field names.
   reason `DirectoryInvalid` and keeps its running revision; a password with
   a trailing newline is now refused there and in the `MailDirectory`
   (`SecretIncomplete`). The Postfix image must be
-  `cnms-postfix:3.11.7-1` or later (the `pgsql` map type). A server that
-  sets both `directoryRef` and `submission.insecureStaticUsers` keeps
-  using the static users.
-- **The Postfix validation Job mounts the directory Secret** and checks the
-  recipient table with `postmap -s`; a line Postfix ignores fails the
-  gate.
+  `cnms-postfix:3.11.7-1` or later (the `pgsql` map type).
+- **A `MailServer` has one user source.** A server that sets both
+  `directoryRef` and `submission.insecureStaticUsers` is now
+  `Ready=False` with the reason `UserSourceConflict`, an Event says so, and
+  its running revision keeps running; before, the static users won silently.
+  Remove one of the two. The data plane of such a server does not change
+  until you do.
+- **A directory needs an egress allow of your own: add it before you
+  upgrade.** The NetworkPolicies of the data plane (default-deny egress, DNS
+  and the pods of the server only) also stop Postfix and Dovecot from
+  reaching the directory. In a cluster that enforces NetworkPolicies a server
+  that rolls to this version without the allow answers `451 4.3.0` to every
+  recipient and fails every login. Add a policy that selects the Postfix and
+  Dovecot pods of the server (`cnms.rpp.gmbh/mailserver=<server>` with
+  `app.kubernetes.io/component` in `postfix`, `dovecot`; the first label
+  alone also matches Rspamd and Valkey) and allows the directory port (389 or
+  636, 5432), as the e2e suite does.
+- **The Postfix validation Job mounts the Secret with the directory tables**
+  so that `postfix check` and `postconf -n` can open them (they warn about a
+  table file that is missing, which fails the gate); no lookup is made, so
+  the gate needs no directory. `postmap -s` parses the `texthash` tables
+  only.
+- **What else changes for a server with a directory.** A `MailDirectory` with
+  LDAP `tls.mode: None` is `Ready=False` (`InvalidSettings`) and a server that
+  uses it is `DirectoryInvalid`: Dovecot would send the password of every
+  login in clear text. The same holds for `%{` in the base DN or the bind DN
+  and for blanks around either. A PostgreSQL alias counts only when its
+  target is the primary address of an account in the users relation whose
+  login passes the login guard; other aliases were accepted at `RCPT` and
+  bounced, and now get `550 5.1.1`. The Postfix container gets
+  `PGCONNECT_TIMEOUT` (5 s). The Postfix image installs `ca-certificates`, so
+  a directory without a `caSecretRef` is verified against public roots; the
+  image tag is unchanged because `3.11.7-1` was not released before.
+- **The hash of the secret files is keyed, for every server that has some.**
+  The hash that names the Secrets of a revision and enters the config hash
+  is an HMAC under the new Secret `<server>-hash-key` (created once, owned by
+  the server, when a render holds secret content). This holds for a server
+  with a directory and equally for one with `submission.insecureStaticUsers`
+  (the users Secret of Dovecot): their Secrets and pods roll once with this
+  version, and once more if a restore from GitOps loses the key Secret. A
+  server without secret content needs no key.
 - **Outbound mail now fails closed without a DKIM key.** Rspamd signs
   the mail of authenticated senders and Postfix's own non-SMTP mail with
   the active keys of the `MailDomain`s a server serves, and a guard defers

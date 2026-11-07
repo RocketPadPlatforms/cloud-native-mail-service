@@ -749,6 +749,7 @@ var _ = Describe("MailServer controller", func() {
 		It("renders with a valid users Secret", func() {
 			createUsersSecretG(ns, validUsers)
 			createServerG(ns, "mail", func(s *cnmsv1alpha1.MailServer) {
+				s.Spec.DirectoryRef = nil
 				s.Spec.Submission = &cnmsv1alpha1.Submission{
 					InsecureStaticUsers: &cnmsv1alpha1.InsecureStaticUsers{SecretName: usersSecretName},
 				}
@@ -801,6 +802,7 @@ var _ = Describe("MailServer controller", func() {
 			createUsersSecretG(ns,
 				"users:\n  - username: testuser\n    passwordHash: plaintext\n    mailbox: testuser@example.org\n")
 			createServerG(ns, "mail", func(s *cnmsv1alpha1.MailServer) {
+				s.Spec.DirectoryRef = nil
 				s.Spec.Submission = &cnmsv1alpha1.Submission{
 					InsecureStaticUsers: &cnmsv1alpha1.InsecureStaticUsers{SecretName: usersSecretName},
 				}
@@ -818,6 +820,7 @@ var _ = Describe("MailServer controller", func() {
 		It("fails closed without the feature flag", func() {
 			createUsersSecretG(ns, validUsers)
 			createServerG(ns, "mail", func(s *cnmsv1alpha1.MailServer) {
+				s.Spec.DirectoryRef = nil
 				s.Spec.Submission = &cnmsv1alpha1.Submission{
 					InsecureStaticUsers: &cnmsv1alpha1.InsecureStaticUsers{SecretName: usersSecretName},
 				}
@@ -830,6 +833,7 @@ var _ = Describe("MailServer controller", func() {
 
 		It("fails closed for a missing Secret", func() {
 			createServerG(ns, "mail", func(s *cnmsv1alpha1.MailServer) {
+				s.Spec.DirectoryRef = nil
 				s.Spec.Submission = &cnmsv1alpha1.Submission{
 					InsecureStaticUsers: &cnmsv1alpha1.InsecureStaticUsers{SecretName: usersSecretName},
 				}

@@ -49,12 +49,32 @@ const e2eHostname = "mail.e2e.example.org"
 // label form; the domain string lives in spec.domain).
 const e2eMailDomainName = "e2eexampleorg"
 
-// e2eUser is the static test user of the e2e-users Secret.
+// e2eUser is the directory user of the e2e MailServer: the login of an
+// account in both directory fixtures (directoryfixtures.go).
 const e2eUser = "alice"
 
-// e2ePassword is the password of e2eUser; the SHA512-CRYPT hash in
-// the fixture (fixed salt) is its crypt(3) encoding.
+// e2ePassword is the password of e2eUser in both directories.
 const e2ePassword = "e2e-pass-123"
+
+// e2eStaticUser is the account of the static test users Secret, which
+// only the user source specs (directory_test.go) apply. It has e2ePassword;
+// the SHA512-CRYPT hash (fixed salt) is its crypt(3) encoding.
+const e2eStaticUser = "static"
+
+// e2eStaticUsersYAML is the Secret of the static test users.
+const e2eStaticUsersYAML = `
+apiVersion: v1
+kind: Secret
+metadata:
+  name: e2e-users
+  namespace: cnms-e2e
+stringData:
+  users.yaml: |
+    users:
+      - username: static
+        passwordHash: "$6$e2efixedsalt$SViigPLFNLb6S8tH8GdMzgK5b7w.vDHWhZMFunPyTVvz9v3S3WyukyQO9ktCCfKMoGvLpyCFouCP4vIf.gl7i0"
+        mailbox: static@e2e.example.org
+`
 
 // e2eMailbox is the full mailbox address of e2eUser.
 const e2eMailbox = e2eUser + "@" + e2eDomain
@@ -66,19 +86,19 @@ const e2eMailpitSink = "mailpit." + e2eNamespace + ".svc.cluster.local"
 // e2ePostfixSVC is the cluster FQDN of the Postfix inbound Service.
 const e2ePostfixSVC = "mail-postfix." + e2eNamespace + ".svc.cluster.local"
 
-// e2eFixturesYAMLTemplate is the full fixture set applied to the
-// cluster: namespace, the cert-manager Issuer, the credential and
-// static-user Secrets, the MailDirectory, the MailDomainGrants of the
-// domain and of the hostname (cluster-scoped, one each), the MailDomain,
-// the MailServer under test, the
-// Mailpit sink (Pod + Service) and the e2e client Pod (swaks,
-// openssl, curl). The two %s are the Mailpit and the e2e client
-// images (pinned in internal/images, ADR 0004).
+// e2eFixturesYAMLTemplate is the fixture set applied to the cluster:
+// namespace, the cert-manager Issuer, the MailDomainGrants of the domain
+// and of the hostname (cluster-scoped, one each), the MailDomain, the
+// MailServer under test, the Mailpit sink (Pod + Service) and the e2e
+// client Pod (swaks, openssl, curl). The two %s are the Mailpit and the
+// e2e client images (pinned in internal/images, ADR 0004). The
+// directories the server uses are in directoryfixtures.go.
 //
 // The MailServer runs with one replica per component (CI keeps the
 // suite fast; HA behaviour is Phase 9), mailboxes enabled (so the
 // inbound path delivers to the Dovecot mail volume) and the ClusterIP
-// inbound service (kind has no load balancer).
+// inbound service (kind has no load balancer). Its only user source is
+// the PostgreSQL directory (ADR 0015: one source per server).
 const e2eFixturesYAMLTemplate = `
 apiVersion: v1
 kind: Namespace
@@ -92,40 +112,6 @@ metadata:
   namespace: cnms-e2e
 spec:
   selfSigned: {}
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: sql-creds
-  namespace: cnms-e2e
-stringData:
-  password: e2e-sql-pass
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: e2e-users
-  namespace: cnms-e2e
-stringData:
-  users.yaml: |
-    users:
-      - username: alice
-        passwordHash: "$6$e2efixedsalt$SViigPLFNLb6S8tH8GdMzgK5b7w.vDHWhZMFunPyTVvz9v3S3WyukyQO9ktCCfKMoGvLpyCFouCP4vIf.gl7i0"
-        mailbox: alice@e2e.example.org
----
-apiVersion: cnms.rpp.gmbh/v1alpha1
-kind: MailDirectory
-metadata:
-  name: sql-e2e
-  namespace: cnms-e2e
-spec:
-  type: sql
-  sql:
-    host: sql.cnms-e2e.svc
-    database: maildir
-    username: maildir
-    passwordSecretRef:
-      name: sql-creds
 ---
 apiVersion: cnms.rpp.gmbh/v1alpha1
 kind: MailDomainGrant
@@ -170,8 +156,6 @@ spec:
     serviceType: ClusterIP
   submission:
     enabled: true
-    insecureStaticUsers:
-      secretName: e2e-users
   mailboxes:
     enabled: true
   postfix:
@@ -228,9 +212,10 @@ spec:
       command: ["sleep", "infinity"]
 `
 
-// e2eFixturesYAML renders the fixture set with the pinned images.
+// e2eFixturesYAML renders the fixture set, with the directory fixtures,
+// with the pinned images.
 func e2eFixturesYAML() string {
-	return fmt.Sprintf(e2eFixturesYAMLTemplate, images.Mailpit, images.E2EClient)
+	return fmt.Sprintf(e2eFixturesYAMLTemplate, images.Mailpit, images.E2EClient) + "---" + e2eDirectoryFixturesYAML()
 }
 
 // kubectl runs a kubectl command and returns its combined output.
