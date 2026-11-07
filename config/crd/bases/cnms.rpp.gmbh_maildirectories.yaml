@@ -52,6 +52,50 @@ spec:
               ldap:
                 description: LDAP settings. Required when type is "ldap".
                 properties:
+                  activeFilter:
+                    description: |-
+                      ActiveFilter is a static restriction that every lookup of an
+                      account adds, for example
+                      "(&(objectClass=PostfixBookMailAccount)(mailEnabled=TRUE))". It
+                      is a complete LDAP filter without a placeholder: the operator
+                      builds the lookups around it and supplies the looked-up value
+                      itself. Unset means no restriction. The characters "{", "}" and
+                      "%" and control characters are rejected.
+                    maxLength: 256
+                    minLength: 1
+                    pattern: ^[^\x00-\x1f\x7f%{}]*$
+                    type: string
+                  attributes:
+                    description: |-
+                      Attributes names the directory attributes of an account. Unset
+                      means the defaults of the fields below.
+                    properties:
+                      aliases:
+                        description: |-
+                          Aliases is the multi-valued attribute with the further
+                          addresses of the account, for example "mailAlias". Unset means
+                          the directory has no aliases.
+                        maxLength: 64
+                        pattern: ^[A-Za-z][A-Za-z0-9-]{0,63}$
+                        type: string
+                      login:
+                        default: uid
+                        description: |-
+                          Login is the attribute with the login name. It is also the
+                          account name (and so the mailbox directory); it must be
+                          single-valued. Defaults to "uid".
+                        maxLength: 64
+                        pattern: ^[A-Za-z][A-Za-z0-9-]{0,63}$
+                        type: string
+                      mail:
+                        default: mail
+                        description: |-
+                          Mail is the attribute with the canonical (primary) address of
+                          the account. It must be single-valued. Defaults to "mail".
+                        maxLength: 64
+                        pattern: ^[A-Za-z][A-Za-z0-9-]{0,63}$
+                        type: string
+                    type: object
                   baseDN:
                     description: Base DN for user searches. Control characters are
                       rejected.
@@ -114,28 +158,19 @@ spec:
                         description: |-
                           Mode of the connection: "StartTLS" upgrades an existing
                           connection (default), "LDAPS" connects directly over TLS, "None"
-                          disables transport security. With "None", bindDN must not be
-                          set (cleartext bind).
+                          disables transport security. With "None", bindDN and caSecretRef
+                          must not be set.
                         enum:
                         - StartTLS
                         - LDAPS
                         - None
                         type: string
                     type: object
-                  userFilter:
-                    description: |-
-                      Search filter for users. It must contain the engine-neutral
-                      placeholder {user} exactly once; it stands for the user's mail
-                      address. The renderer translates the placeholder and escapes
-                      the value for each engine (Postfix %s, Dovecot %{user}). Control
-                      characters and "%" are rejected. Defaults to "(mail={user})".
-                    maxLength: 256
-                    pattern: ^[^\x00-\x1f\x7f%]*$
-                    type: string
                     x-kubernetes-validations:
-                    - message: userFilter must contain the placeholder {user} exactly
-                        once
-                      rule: self.split('{user}').size() == 2
+                    - message: caSecretRef must not be set when mode is None (no TLS
+                        to verify)
+                      rule: '!has(self.caSecretRef) || !has(self.mode) || self.mode
+                        != ''None'''
                 required:
                 - baseDN
                 - host
@@ -150,6 +185,29 @@ spec:
               sql:
                 description: SQL settings. Required when type is "sql".
                 properties:
+                  aliases:
+                    description: |-
+                      Aliases is the relation with the further addresses, read as the
+                      fixed columns alias and target (the canonical address). Unset
+                      means the directory has no aliases.
+                    properties:
+                      name:
+                        description: 'Name of the relation: lower case letters, digits
+                          and "_".'
+                        maxLength: 63
+                        pattern: ^[a-z_][a-z0-9_]{0,62}$
+                        type: string
+                      schema:
+                        default: public
+                        description: |-
+                          Schema of the relation, with the same characters as name.
+                          Defaults to "public".
+                        maxLength: 63
+                        pattern: ^[a-z_][a-z0-9_]{0,62}$
+                        type: string
+                    required:
+                    - name
+                    type: object
                   database:
                     description: |-
                       Database name: letters, digits, "_", "-" and "." only, so that
@@ -202,13 +260,19 @@ spec:
                         description: |-
                           Mode of the connection: "verify-full" encrypts and verifies the
                           host name (default), "require" encrypts without host name
-                          verification, "disable" sends cleartext.
+                          verification, "disable" sends cleartext. With "disable",
+                          caSecretRef must not be set.
                         enum:
                         - verify-full
                         - require
                         - disable
                         type: string
                     type: object
+                    x-kubernetes-validations:
+                    - message: caSecretRef must not be set when mode is disable (no
+                        TLS to verify)
+                      rule: '!has(self.caSecretRef) || !has(self.mode) || self.mode
+                        != ''disable'''
                   username:
                     description: |-
                       Database user: letters, digits, "_", "-" and "." only, so that
@@ -216,6 +280,33 @@ spec:
                     maxLength: 63
                     pattern: ^[A-Za-z0-9_][A-Za-z0-9_.-]*$
                     type: string
+                  users:
+                    default:
+                      name: cnms_users
+                    description: |-
+                      Users is the relation (table or view) with the accounts. The
+                      operator generates every query itself and reads the fixed
+                      columns login, mail and password (a "{SCHEME}hash" value); a
+                      view adapts an existing schema, and is also where accounts are
+                      switched off. Defaults to "cnms_users" in the schema "public".
+                    properties:
+                      name:
+                        description: 'Name of the relation: lower case letters, digits
+                          and "_".'
+                        maxLength: 63
+                        pattern: ^[a-z_][a-z0-9_]{0,62}$
+                        type: string
+                      schema:
+                        default: public
+                        description: |-
+                          Schema of the relation, with the same characters as name.
+                          Defaults to "public".
+                        maxLength: 63
+                        pattern: ^[a-z_][a-z0-9_]{0,62}$
+                        type: string
+                    required:
+                    - name
+                    type: object
                 required:
                 - database
                 - host

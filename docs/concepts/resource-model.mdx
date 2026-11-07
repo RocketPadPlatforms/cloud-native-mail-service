@@ -143,6 +143,16 @@ Postfix recipient validation (unknown recipients tempfail when the directory
 is down) and Dovecot authentication (submission and IMAP). `status` carries a
 `Ready` condition for reachability.
 
+The API names only attributes and relations, never queries. For `ldap`,
+`attributes` gives the attribute of the login name (default `uid`), of the
+primary address (default `mail`, single-valued) and, optionally, of further
+addresses (`aliases`, multi-valued), and `activeFilter` is a static
+restriction such as `(mailEnabled=TRUE)` that every lookup adds (it has no
+placeholder). For `sql`, `users` and `aliases` name a relation each (table or
+view, with an optional `schema`); the column names are fixed (`login`, `mail`,
+`password`; `alias`, `target`), so an existing schema is adapted with views.
+Design: [ADR 0015](../decisions/0015-user-sources-directory-users-and-aliases.md).
+
 <CodeBlock language="yaml" title="config/samples/full-setup/maildirectory.yaml">{DirectorySample}</CodeBlock>
 
 The files above are part of the draft scenario in

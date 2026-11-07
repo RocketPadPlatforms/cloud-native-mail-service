@@ -1,0 +1,31 @@
+# A PostgreSQL directory. The operator generates every query itself and
+# reads fixed columns from the two relations: login, mail and password
+# (a "{SCHEME}hash" value) from users; alias and target (the canonical
+# address) from aliases. Adapt an existing schema with views. It is not
+# listed in kustomization.yaml: cnms_v1alpha1_maildirectory.yaml is the
+# directory that cnms_v1alpha1_mailserver.yaml references.
+apiVersion: cnms.rpp.gmbh/v1alpha1
+kind: MailDirectory
+metadata:
+  labels:
+    app.kubernetes.io/name: cloud-native-mail-service
+    app.kubernetes.io/managed-by: kustomize
+  name: maildirectory-sql-sample
+spec:
+  type: sql
+  sql:
+    host: db.example.org
+    database: mail
+    username: mail_lookup
+    passwordSecretRef:
+      name: sql-password-secret
+    tls:
+      mode: verify-full
+      caSecretRef:
+        name: sql-ca-secret
+    users:
+      name: mail_users
+      schema: directory
+    aliases:
+      name: mail_aliases
+      schema: directory

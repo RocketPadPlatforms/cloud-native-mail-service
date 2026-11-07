@@ -21,4 +21,8 @@ spec:
     bindDN: cn=lookup,ou=services,dc=example,dc=com
     bindSecretRef:
       name: mail-ldap-bind
-    userFilter: "(mail={user})"
+    attributes:
+      login: uid
+      mail: mail
+      aliases: mailAlias
+    activeFilter: "(&(objectClass=PostfixBookMailAccount)(mailEnabled=TRUE))"

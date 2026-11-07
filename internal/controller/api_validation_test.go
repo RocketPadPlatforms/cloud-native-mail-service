@@ -28,6 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
@@ -48,6 +49,8 @@ const (
 	apiServerName     = "srv"
 	apiDirectoryName  = "dir"
 	mtaStsName        = "mta-sts." + testDomain
+	sqlTestHost       = "db.example.org"
+	sqlTestSecret     = "db-password"
 	ldapHostField     = "spec.ldap.host"
 	dmarcRuaField     = "spec.dmarc.rua"
 	domainField       = "spec.domain"
@@ -168,8 +171,8 @@ func createLDAP(mutate func(*cnmsv1alpha1.LDAP)) func(string) error {
 func createSQL(mutate func(*cnmsv1alpha1.SQL)) func(string) error {
 	return func(ns string) error {
 		s := &cnmsv1alpha1.SQL{
-			Host: "db.example.org", Database: testServerName, Username: testServerName,
-			PasswordSecretRef: cnmsv1alpha1.SecretReference{Name: "db-password"},
+			Host: sqlTestHost, Database: testServerName, Username: testServerName,
+			PasswordSecretRef: cnmsv1alpha1.SecretReference{Name: sqlTestSecret},
 		}
 		mutate(s)
 		return k8sClient.Create(ctx, &cnmsv1alpha1.MailDirectory{
@@ -181,9 +184,46 @@ func createSQL(mutate func(*cnmsv1alpha1.SQL)) func(string) error {
 
 var _ = Describe("API validation of MailDirectory", func() {
 	filter := func(f string) func(string) error {
-		return createLDAP(func(l *cnmsv1alpha1.LDAP) { l.UserFilter = &f })
+		return createLDAP(func(l *cnmsv1alpha1.LDAP) { l.ActiveFilter = &f })
 	}
-	const placeholderMsg = "exactly once"
+	attrs := func(a cnmsv1alpha1.LDAPAttributes) func(string) error {
+		return createLDAP(func(l *cnmsv1alpha1.LDAP) { l.Attributes = &a })
+	}
+	relations := func(users, aliases *cnmsv1alpha1.SQLRelation) func(string) error {
+		return createSQL(func(s *cnmsv1alpha1.SQL) { s.Users, s.Aliases = users, aliases })
+	}
+	rel := func(name, schema string) *cnmsv1alpha1.SQLRelation {
+		r := &cnmsv1alpha1.SQLRelation{Name: name}
+		if schema != "" {
+			r.Schema = &schema
+		}
+		return r
+	}
+	ca := func(withCA bool) *cnmsv1alpha1.SecretReference {
+		if !withCA {
+			return nil
+		}
+		return &cnmsv1alpha1.SecretReference{Name: "ca"}
+	}
+	ldapTLS := func(mode string, withCA bool) func(string) error {
+		return createLDAP(func(l *cnmsv1alpha1.LDAP) {
+			l.TLS = &cnmsv1alpha1.LDAPTLS{Mode: &mode, CASecretRef: ca(withCA)}
+		})
+	}
+	sqlTLS := func(mode string, withCA bool) func(string) error {
+		return createSQL(func(s *cnmsv1alpha1.SQL) {
+			s.TLS = &cnmsv1alpha1.SQLTLS{Mode: &mode, CASecretRef: ca(withCA)}
+		})
+	}
+	const (
+		attrLoginField   = "spec.ldap.attributes.login"
+		attrMailField    = "spec.ldap.attributes.mail"
+		attrAliasesField = "spec.ldap.attributes.aliases"
+		filterField      = "spec.ldap.activeFilter"
+		usersNameField   = "spec.sql.users.name"
+		usersSchemaField = "spec.sql.users.schema"
+		aliasesNameField = "spec.sql.aliases.name"
+	)
 	runAPICases([]apiCase{
 		{name: "accepts a host name with a dash", mutate: createLDAP(func(l *cnmsv1alpha1.LDAP) { l.Host = "ldap-1.example.org" })},
 		{name: "accepts an IPv4 host", mutate: createLDAP(func(l *cnmsv1alpha1.LDAP) { l.Host = "203.0.113.5" })},
@@ -197,14 +237,98 @@ var _ = Describe("API validation of MailDirectory", func() {
 			l.BindDN = &dn
 			l.BindSecretRef = &cnmsv1alpha1.SecretReference{Name: "bind"}
 		}), wantErr: "spec.ldap.bindDN"},
-		{name: "accepts a filter with one placeholder", mutate: filter("(&(objectClass=person)(mail={user}))")},
-		{name: "rejects a filter without a placeholder", mutate: filter("(objectClass=person)"), wantErr: placeholderMsg},
-		{name: "rejects a filter with two placeholders", mutate: filter("(|(mail={user})(uid={user}))"), wantErr: placeholderMsg},
-		{name: "rejects a filter with Postfix syntax", mutate: filter("(mail=%s)"), wantErr: "spec.ldap.userFilter"},
-		{name: "rejects a filter with a newline", mutate: filter("(mail={user})\nresult_attribute = x"), wantErr: "spec.ldap.userFilter"},
+		{name: "accepts an LDAP CA with StartTLS", mutate: ldapTLS("StartTLS", true)},
+		{name: "accepts an LDAP CA with LDAPS", mutate: ldapTLS("LDAPS", true)},
+		{name: "accepts LDAP mode None without a CA", mutate: ldapTLS("None", false)},
+		{name: "rejects an LDAP CA with mode None", mutate: ldapTLS("None", true), wantErr: "caSecretRef must not be set when mode is None"},
+		{name: "accepts an SQL CA with verify-full", mutate: sqlTLS("verify-full", true)},
+		{name: "accepts an SQL CA with require", mutate: sqlTLS("require", true)},
+		{name: "accepts SQL mode disable without a CA", mutate: sqlTLS("disable", false)},
+		{name: "rejects an SQL CA with mode disable", mutate: sqlTLS("disable", true), wantErr: "caSecretRef must not be set when mode is disable"},
+		{name: "accepts an active filter", mutate: filter("(&(objectClass=PostfixBookMailAccount)(mailEnabled=TRUE))")},
+		{name: "rejects an active filter with the old placeholder", mutate: filter("(mail={user})"), wantErr: filterField},
+		{name: "rejects an active filter with Postfix syntax", mutate: filter("(mail=%s)"), wantErr: filterField},
+		{name: "rejects an active filter with Dovecot syntax", mutate: filter("(mail=%{user})"), wantErr: filterField},
+		{name: "rejects an active filter with a newline", mutate: filter("(mailEnabled=TRUE)\nresult_attribute = x"), wantErr: filterField},
+		{name: "rejects an empty active filter", mutate: filter(""), wantErr: filterField},
+		{name: "rejects the removed userFilter field", mutate: func(ns string) error {
+			dir := &cnmsv1alpha1.MailDirectory{
+				ObjectMeta: metav1.ObjectMeta{Name: apiDirectoryName, Namespace: ns},
+				Spec: cnmsv1alpha1.MailDirectorySpec{Type: cnmsv1alpha1.DirectoryTypeLDAP,
+					LDAP: &cnmsv1alpha1.LDAP{Host: ldapTestHost, BaseDN: ldapTestBaseDN}},
+			}
+			obj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(dir)
+			Expect(err).NotTo(HaveOccurred())
+			u := &unstructured.Unstructured{Object: obj}
+			u.SetGroupVersionKind(cnmsv1alpha1.GroupVersion.WithKind("MailDirectory"))
+			Expect(unstructured.SetNestedField(u.Object, "(mail={user})", "spec", "ldap", "userFilter")).To(Succeed())
+			return k8sClient.Create(ctx, u, client.FieldValidation("Strict"))
+		}, wantErr: "unknown field \"spec.ldap.userFilter\""},
+		{name: "accepts LDAP attributes with aliases", mutate: attrs(cnmsv1alpha1.LDAPAttributes{
+			Login: new("uid"), Mail: new("mail"), Aliases: new("mailAlias"),
+		})},
+		{name: "accepts LDAP attributes without aliases", mutate: attrs(cnmsv1alpha1.LDAPAttributes{Login: new("sAMAccountName")})},
+		{name: "rejects an attribute name with a filter fragment", mutate: attrs(cnmsv1alpha1.LDAPAttributes{Login: new("uid)(objectClass=*")}), wantErr: attrLoginField},
+		{name: "rejects an attribute name with an equals sign", mutate: attrs(cnmsv1alpha1.LDAPAttributes{Mail: new("mail=x")}), wantErr: attrMailField},
+		{name: "rejects an attribute name with a space", mutate: attrs(cnmsv1alpha1.LDAPAttributes{Aliases: new("mail alias")}), wantErr: attrAliasesField},
+		{name: "rejects an attribute name that starts with a digit", mutate: attrs(cnmsv1alpha1.LDAPAttributes{Login: new("1uid")}), wantErr: attrLoginField},
+		{name: "rejects an attribute name with a semicolon", mutate: attrs(cnmsv1alpha1.LDAPAttributes{Mail: new("mail;binary")}), wantErr: attrMailField},
+		{name: "rejects an empty attribute name", mutate: attrs(cnmsv1alpha1.LDAPAttributes{Aliases: new("")}), wantErr: attrAliasesField},
+		{name: "rejects an over-long attribute name", mutate: attrs(cnmsv1alpha1.LDAPAttributes{Login: new("a" + strings.Repeat("b", 64))}), wantErr: attrLoginField},
+		{name: "accepts SQL relations with schemas", mutate: relations(rel("mail_users", "directory"), rel("mail_aliases", "directory"))},
+		{name: "accepts SQL relations without schemas", mutate: relations(rel("v_users", ""), rel("_aliases", ""))},
+		{name: "accepts no SQL relations", mutate: relations(nil, nil)},
+		{name: "rejects an SQL relation name with a quote", mutate: relations(rel("users'--", ""), nil), wantErr: usersNameField},
+		{name: "rejects an SQL relation name with a semicolon", mutate: relations(nil, rel("aliases;drop", "")), wantErr: aliasesNameField},
+		{name: "rejects an SQL relation name with a dot", mutate: relations(rel("other.users", ""), nil), wantErr: usersNameField},
+		{name: "rejects an SQL relation name in upper case", mutate: relations(rel("Users", ""), nil), wantErr: usersNameField},
+		{name: "rejects an SQL relation name with a dash", mutate: relations(rel("mail-users", ""), nil), wantErr: usersNameField},
+		{name: "rejects an SQL relation name with a leading digit", mutate: relations(rel("1users", ""), nil), wantErr: usersNameField},
+		{name: "rejects an empty SQL relation name", mutate: relations(rel("", ""), nil), wantErr: usersNameField},
+		{name: "rejects an over-long SQL relation name", mutate: relations(rel("a"+strings.Repeat("b", 63), ""), nil), wantErr: usersNameField},
+		{name: "rejects an SQL schema with a dot", mutate: relations(rel("users", "a.b"), nil), wantErr: usersSchemaField},
+		{name: "rejects an SQL schema with a space", mutate: relations(rel("users", "a b"), nil), wantErr: usersSchemaField},
 		{name: "accepts an SQL database name with a dash", mutate: createSQL(func(s *cnmsv1alpha1.SQL) { s.Database = "mail-db_1" })},
 		{name: "rejects an SQL database name with a space", mutate: createSQL(func(s *cnmsv1alpha1.SQL) { s.Database = "mail sslmode=disable" }), wantErr: "spec.sql.database"},
 		{name: "rejects an SQL user with a quote", mutate: createSQL(func(s *cnmsv1alpha1.SQL) { s.Username = "mail'x" }), wantErr: "spec.sql.username"},
+	})
+})
+
+var _ = Describe("Defaults of MailDirectory", func() {
+	// apply creates the directory in a fresh namespace and reads it back,
+	// so that the defaults of the API server show.
+	apply := func(create func(string) error) *cnmsv1alpha1.MailDirectory {
+		apiNSCounter++
+		ns := fmt.Sprintf("cnms-api-%d", apiNSCounter)
+		Expect(k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}})).To(Succeed())
+		Expect(create(ns)).To(Succeed())
+		dir := &cnmsv1alpha1.MailDirectory{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: ns, Name: apiDirectoryName}, dir)).To(Succeed())
+		return dir
+	}
+
+	It("defaults the login and mail attributes when attributes is set", func() {
+		dir := apply(createLDAP(func(l *cnmsv1alpha1.LDAP) {
+			l.Attributes = &cnmsv1alpha1.LDAPAttributes{Aliases: new("mailAlias")}
+		}))
+		attrs := dir.Spec.LDAP.Attributes
+		Expect(attrs.Login).To(HaveValue(Equal("uid")))
+		Expect(attrs.Mail).To(HaveValue(Equal("mail")))
+		Expect(attrs.Aliases).To(HaveValue(Equal("mailAlias")))
+		Expect(dir.Spec.LDAP.ActiveFilter).To(BeNil())
+	})
+
+	It("defaults the users relation and leaves aliases unset", func() {
+		dir := apply(createSQL(func(*cnmsv1alpha1.SQL) {}))
+		Expect(dir.Spec.SQL.Users).To(Equal(&cnmsv1alpha1.SQLRelation{Name: "cnms_users", Schema: new("public")}))
+		Expect(dir.Spec.SQL.Aliases).To(BeNil())
+	})
+
+	It("defaults the schema of a relation", func() {
+		dir := apply(createSQL(func(s *cnmsv1alpha1.SQL) {
+			s.Aliases = &cnmsv1alpha1.SQLRelation{Name: "mail_aliases"}
+		}))
+		Expect(dir.Spec.SQL.Aliases).To(Equal(&cnmsv1alpha1.SQLRelation{Name: "mail_aliases", Schema: new("public")}))
 	})
 })
 
