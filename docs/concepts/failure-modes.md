@@ -19,7 +19,7 @@ from the hardening phase on.
 | Rspamd down (all replicas) | Mail tempfails into the Postfix queues (4xx to remote senders); nothing unsigned is sent |
 | Rspamd up, but a domain has no usable DKIM key | Outbound mail of that domain is deferred (`451 4.7.1`, the sender keeps it); inbound mail and the other domains are not affected; `DKIMKeysAvailable=False` names the key |
 | Valkey down | Rspamd degrades (rate limits and learned state unavailable); mail still flows and is still signed |
-| User directory down | Recipient lookups tempfail (`451 4.3.0`, not 5xx), also for known recipients; Dovecot cannot authenticate (`454 4.7.0`) so submission is deferred by the sender, and LMTP delivery waits in the Postfix queue |
+| User directory down | Recipient lookups tempfail (`451 4.3.0`, not 5xx), also for known recipients; Dovecot cannot authenticate (`454 4.7.0` with LDAP; `535 5.7.8` with PostgreSQL, see the backlog) so submission fails for the client, and LMTP delivery waits in the Postfix queue |
 | Postfix replica lost | Queued mail survives on the per-replica queue PVC; remaining replicas keep serving; the lost replica is replaced |
 | Scale-down of Postfix | Not supported yet: the queue move is not implemented, so decreasing `postfix.replicas` is rejected |
 | Dovecot down | IMAP/LMTP unavailable until the pod reschedules onto a node that can attach the mail volume; mail is queued in Postfix meanwhile |
@@ -132,7 +132,9 @@ Verification):
   connect again for 60 seconds after a failure, so a returning PostgreSQL is
   used after at most a minute.
 - **Submission.** Dovecot cannot check the password: the client gets a
-  temporary failure (`454 4.7.0` on port 587) and keeps the mail.
+  temporary failure (`454 4.7.0` on port 587) with LDAP and keeps the mail. With
+  PostgreSQL that refuses connections the reply was `535 5.7.8` in the e2e
+  suite, which the client may take for a wrong password.
 - **Delivery from Postfix.** Dovecot cannot look the recipient up: LMTP
   answers `451 4.3.0`, after up to about two and a half minutes with LDAP
   that cannot be resolved; Postfix keeps the mail in its queue.

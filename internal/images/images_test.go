@@ -24,8 +24,10 @@ import (
 )
 
 var (
-	// upstreamRe is name:tag@sha256:<64 hex> (ADR 0004, section 6).
-	upstreamRe = regexp.MustCompile(`^[a-z0-9]+(?:\.[a-z0-9-]+)*/[a-z0-9._/-]+:[^@"]+@sha256:[0-9a-f]{64}$`)
+	// upstreamRe is name:tag@sha256:<64 hex> (ADR 0004, section 6); the
+	// registry or namespace prefix is optional (official images such as
+	// postgres have none).
+	upstreamRe = regexp.MustCompile(`^(?:[a-z0-9]+(?:\.[a-z0-9-]+)*/)?[a-z0-9._/-]+:[^@"]+@sha256:[0-9a-f]{64}$`)
 	// localRe is name:tag without digest (CNMS-built images).
 	localRe = regexp.MustCompile(`^ghcr\.io/rocketpadplatforms/cnms-[a-z0-9-]+:\d+\.\d+\.\d+-\d+$`)
 )
@@ -38,6 +40,8 @@ func TestUpstreamPinsAreTagAndDigest(t *testing.T) {
 		"RedisExporter": RedisExporter,
 		"Mailpit":       Mailpit,
 		"CoreDNS":       CoreDNS,
+		"OpenLDAP":      OpenLDAP,
+		"PostgreSQL":    PostgreSQL,
 	} {
 		if !upstreamRe.MatchString(ref) {
 			t.Errorf("%s: %q is not name:tag@sha256:<digest>", name, ref)
@@ -98,6 +102,7 @@ func TestPinsAreUnique(t *testing.T) {
 	for name, ref := range map[string]string{
 		"Dovecot": Dovecot, "Rspamd": Rspamd, "Valkey": Valkey,
 		"RedisExporter": RedisExporter, "Mailpit": Mailpit, "CoreDNS": CoreDNS,
+		"OpenLDAP": OpenLDAP, "PostgreSQL": PostgreSQL,
 		"Postfix": Postfix, "E2EClient": E2EClient,
 	} {
 		if prev, dup := seen[ref]; dup {

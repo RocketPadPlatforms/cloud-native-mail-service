@@ -42,6 +42,10 @@ const (
 	// other claimants of its hostname, and a MailDomain apex the
 	// servers presenting it.
 	mailServerHostnameIndex = "spec.hostname"
+	// mailServerDirectoryIndex indexes MailServers by
+	// spec.directoryRef.name: a MailDirectory event must reach the
+	// servers that use it, and no others (ADR 0015, section 7).
+	mailServerDirectoryIndex = "spec.directoryRef.name"
 )
 
 // IndexFields registers the field indexes of MailDomains and
@@ -58,7 +62,15 @@ func IndexFields(mgr ctrl.Manager) error {
 			return err
 		}
 	}
-	return idx.IndexField(context.Background(), &cnmsv1alpha1.MailServer{}, mailServerHostnameIndex, indexMailServerByHostname)
+	for field, extract := range map[string]client.IndexerFunc{
+		mailServerHostnameIndex:  indexMailServerByHostname,
+		mailServerDirectoryIndex: indexMailServerByDirectory,
+	} {
+		if err := idx.IndexField(context.Background(), &cnmsv1alpha1.MailServer{}, field, extract); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // indexMailDomainByDomain is the extractor of mailDomainDomainIndex.
@@ -77,6 +89,15 @@ func indexMailDomainByServer(obj client.Object) []string {
 		return nil
 	}
 	return []string{d.Spec.ServerRef.Name}
+}
+
+// indexMailServerByDirectory is the extractor of mailServerDirectoryIndex.
+func indexMailServerByDirectory(obj client.Object) []string {
+	s, ok := obj.(*cnmsv1alpha1.MailServer)
+	if !ok || s.Spec.DirectoryRef == nil || s.Spec.DirectoryRef.Name == "" {
+		return nil
+	}
+	return []string{s.Spec.DirectoryRef.Name}
 }
 
 // indexMailServerByHostname is the extractor of mailServerHostnameIndex.

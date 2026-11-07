@@ -132,8 +132,16 @@ Secrets without the operator.
 
 Nothing is rejected and nothing is lost; see [failure
 modes](../concepts/failure-modes.md#user-directory-down). Postfix answers
-`451 4.3.0` to the sender, who retries; SASL on port 587 answers `454
-4.7.0`.
+`451 4.3.0` to the sender, who retries: at once when the directory refuses
+connections, after about 5 seconds with LDAP and about 10 seconds with
+PostgreSQL when its packets are dropped (a firewall, a network policy; the
+operator sets the lookup timeout, 5 seconds, also for `libpq`). SASL on port
+587 answers `454 4.7.0` with an LDAP directory; with a PostgreSQL directory
+that refuses connections the e2e suite measured `535 5.7.8`, a failed login
+that a client may take for a wrong password (see the
+[backlog](../backlog.md)). Dovecot has no connect timeout for `pgsql`: a login
+against a PostgreSQL directory that drops packets takes about two minutes (a
+libpq `connect_timeout` in the parameters did not shorten it).
 
 ## Limits of this version
 
@@ -145,6 +153,17 @@ modes](../concepts/failure-modes.md#user-directory-down). Postfix answers
 - A directory with an address that two accounts share (or an alias that is
   another account's address, or two values in `mail`) expands that address
   to both: keep the directory consistent. CNMS cannot see its content.
-- A `MailServer` that sets both `directoryRef` and
-  `submission.insecureStaticUsers` (a test feature) uses the static users.
+- A `MailServer` has one user source. One that sets both `directoryRef` and
+  `submission.insecureStaticUsers` (a test feature) is `Ready=False` with
+  reason `UserSourceConflict` and keeps the revision that runs, until you
+  remove one of them.
+- The NetworkPolicies of the data plane allow DNS and the pods of the same
+  server, and nothing else. Postfix and Dovecot reach the directory only if
+  you add an egress allow for it: a `NetworkPolicy` that selects the Postfix
+  and Dovecot pods of the server (`cnms.rpp.gmbh/mailserver=<server>` with
+  `app.kubernetes.io/component` in `postfix`, `dovecot`; the first label
+  alone also matches Rspamd and Valkey) and allows the directory address and
+  port, 389, 636 or 5432. The operator cannot know where an
+  external directory is; generating the allow from the `MailDirectory` is in
+  the [backlog](../backlog.md).
 - Only PostgreSQL is supported for `type: sql`.

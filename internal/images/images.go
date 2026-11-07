@@ -49,6 +49,13 @@ const (
 	// CoreDNS is the e2e DNS server that serves the test zone the
 	// operator verifies the MailDomain records against (ADR 0012).
 	CoreDNS = "coredns/coredns:1.15.0@sha256:0a9d8c8ddf34347eb59aad9a8784f0710de88d6d112726d11d271f9bc6daca26"
+	// OpenLDAP is the e2e LDAP directory (ADR 0015, section 9). It is a
+	// pre-release tag on purpose: the 2.6 line has no other (a stable
+	// tag has to be adopted by hand once one exists).
+	OpenLDAP = "osixia/openldap:2.6.15-rc@sha256:caf6a875d6cab9543e415ac5623f1cefd20795b220a3aa896438be7eaaab02e0"
+	// PostgreSQL is the e2e SQL directory (ADR 0015, section 9). It is
+	// an official image, which has no namespace in its name.
+	PostgreSQL = "postgres:18.6-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395"
 )
 
 // CNMS-built images (version tag only, see package docs).

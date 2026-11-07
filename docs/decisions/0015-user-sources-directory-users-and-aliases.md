@@ -1,6 +1,10 @@
 # ADR 0015: User sources, directory users and addresses
 
-- **Status:** Accepted; nothing is implemented yet (3a, 3b and 3c below)
+- **Status:** Accepted; 3a is implemented (the five commits of section 1: the
+  Postfix image, the `activeFilter` rename, the `MailDirectory` controller,
+  the render seam and the directory maps, `UserSourceConflict` with the e2e
+  fixtures); the Rspamd header `From` check 1 is delivered ahead of 3a in its
+  own pull request (#40); 3b and 3c are not
 - **Date:** 2026-11-06
 
 ## Context
@@ -36,17 +40,22 @@ as such.
 
 | PR | Content | Done when |
 |---|---|---|
-| **3a** `MailDirectory` | LDAP and PostgreSQL maps for Postfix (recipient validation, alias to canonical address; `451` on lookup errors) and Dovecot (auth and user lookup against the directory); the `MailDirectory` controller (configuration validity, reachability); the Postfix image with the `pgsql` map type; the Rspamd header `From` check 1 (section 4.4); the `userFilter` rename (section 4.8); e2e with an OpenLDAP and a PostgreSQL fixture | e2e: valid, alias and invalid recipients; tempfail (not reject) with the directory down; a directory user logs in by login name and by address, not by alias; IMAP reads a delivered message; the guard matrix with check 1 |
+| **3a** `MailDirectory` | LDAP and PostgreSQL maps for Postfix (recipient validation, alias to canonical address; `451` on lookup errors) and Dovecot (auth and user lookup against the directory); the `MailDirectory` controller (configuration validity, reachability); the Postfix image with the `pgsql` map type; the `userFilter` rename (section 4.8); e2e with an OpenLDAP and a PostgreSQL fixture | e2e: valid, alias and invalid recipients; tempfail (not reject) with the directory down; a directory user logs in by login name and by address, not by alias; IMAP reads a delivered message |
 | **3b** `MailUser` and sender binding | `MailUser` with aliases across domains; credential Secrets and password hashing; the live Dovecot passdb and userdb files (section 4.7); the accounts rendered into Dovecot and Postfix; address uniqueness; **strict sender binding for every user source** (envelope in Postfix); `soft_bounce` on the `lmtp` service (4.7); the Rspamd check 2 as the last, separable commit | e2e: a `MailUser` with aliases in two domains logs in, receives on all addresses into one mailbox, sends as each, is refused for another user's address, for a foreign domain and for the null sender; a disabled user cannot log in (IMAP and SASL on 587) and still receives mail; a user added, changed and removed with no Dovecot restart; revoking the alias domain stops its addresses in the same reconcile |
 | **3c** `MailServiceAccount` | The CRD, `allowedNamespaces` (a list of objects, section 4.9), the credential Secret and the NetworkPolicy in the application namespace, sender conflicts across namespaces | e2e: an application in a second namespace sends with the operator-provided Secret, only as `spec.sender`; revoking the namespace removes the credential |
+
+The Rspamd header `From` check 1 (section 4.4) is not part of 3a: it is
+delivered ahead of it, as its own pull request (#40, branch
+`feat/guard-from-domain`), with the changed guard matrix. 3a starts from the
+guard it leaves.
 
 3a is useful alone: a deployment with a directory can go live. Its gap is
 the missing envelope sender binding for directory users until 3b; 3a says so
 in the docs. Each PR carries its docs, golden files and envtest coverage, and
 the checklist of section 10.
 
-**Commit order of 3a.** Every commit builds and passes `make test` on its
-own; the order is what makes that true:
+**Commit order of 3a.** Five commits. Every commit builds and passes
+`make test` on its own; the order is what makes that true:
 
 1. The Postfix image with libpq, the `pgsql` map type and the build revision
    in the tag (section 9, all places together). No behaviour change.
@@ -63,7 +72,6 @@ own; the order is what makes that true:
    the e2e suite and fixtures (section 10), in one commit: the e2e
    `MailServer` sets both sources today, so the rule and the suite must
    change together.
-6. Rspamd check 1 with the changed guard matrix (section 4.4).
 
 The docs of each step go in the commit of that step.
 
@@ -508,9 +516,10 @@ login; loopback mail of Postfix itself is not touched), both permanent
 rejects (`554 5.7.1`), because no retry makes such a message legitimate (the
 same reasoning as ADR 0013's several-`From` rule):
 
-1. **Check 1, in 3a: every header `From` address has a domain, and that
-   domain is a served domain** (data-free, every user source, and the only
-   check that needs no data about accounts). A missing `From` header, a
+1. **Check 1, delivered ahead of 3a (PR #40): every header `From`
+   address has a domain, and that domain is a served domain** (data-free,
+   every user source, and the only check that needs no data about
+   accounts). A missing `From` header, a
    `From` without a domain (`From: bob`), an unserved domain and a
    subdomain of a served domain (only exact served domains count) are
    refused. An **empty-string domain counts as missing**: in Lua `''` is
@@ -903,8 +912,9 @@ Aliases and senders come from the directory through the **same contract** as
    construction on the API side. The key is put into the query by the
    engine's own quoting (`%s` in Postfix, `%{user}` in Dovecot); on the
    Dovecot side a quote-injection key and an LDAP filter key found nothing
-   (Verification); on the Postfix side the quoting is documented for the
-   `ldap` and `pgsql` tables and **inferred** here, not run.
+   (Verification); on the Postfix side the same keys found nothing against
+   the rendered `ldap:` and `pgsql:` tables (row 22; Postfix writes the
+   key as `x\29` in the LDAP filter).
 2. **The login is a path component.** Dovecot's home is
    `/srv/mail/%{ldap:<login>}` (or the SQL `login` column), the value of a
    directory attribute and not something Dovecot validates. The guard
@@ -929,7 +939,10 @@ Aliases and senders come from the directory through the **same contract** as
    at the source.
 3. **Postfix (verified with OpenLDAP and PostgreSQL, except where marked):**
    an alias table (`mailAlias=%s` returning `mail`; for SQL a `SELECT` of
-   `target` with `WHERE alias='%s'`), a mailbox table (`mail=%s`), and, in
+   `a.target` with `WHERE lower(a.alias) = '%s'`, joined to the users
+   relation on `lower(u.mail) = lower(a.target)` with the login guard on
+   `u.login`, so an alias of a removed or guarded account is `550` at
+   `RCPT` as with LDAP, and not accepted and bounced later; row 28), a mailbox table (`mail=%s`), and, in
    3b, a sender table (`(|(mail=%s)(mailAlias=%s))` returning the login;
    **the LDAP sender table was not run**, inferred from the other two). All
    three with the active restriction.
@@ -950,7 +963,17 @@ Aliases and senders come from the directory through the **same contract** as
    (`start_tls`, `tls_require_cert = yes`, `tls_ca_cert_file`), Dovecot
    (`ldap_starttls`, `ssl_client_ca_file`) and PostgreSQL (`sslmode`,
    `sslrootcert`) verify against the supplied CA; a wrong CA ends in the
-   temporary failures above.
+   temporary failures above. An LDAP directory with `None` is not usable by a
+   `MailServer`: Dovecot checks a password by binding as the user, so every
+   IMAP and submission login would send its password in clear text; the
+   renderer refuses it and the server is `DirectoryInvalid` (Postfix alone
+   could look up without TLS, but a `MailServer` always runs Dovecot). Without a `caSecretRef` the engines verify
+   against the system roots of their images, which both images carry (the
+   Postfix image installs `ca-certificates`; row 26). PostgreSQL `require` with a CA is verified
+   like `verify-ca` (chain, no host name): libpq does this when a root
+   certificate is present ([libpq SSL
+   support](https://www.postgresql.org/docs/current/libpq-ssl.html)), and
+   the probe of the operator does the same.
 6. **Credentials.** Never in a ConfigMap and never in a URI. The
    referenced Secrets (`bindSecretRef`, `passwordSecretRef`,
    `caSecretRef`) are read by the `MailServer` controller and copied into the
@@ -984,12 +1007,26 @@ Aliases and senders come from the directory through the **same contract** as
      controller never copies a driver error into a condition or an Event
      verbatim, it maps it to a reason and a fixed message, and logs only the
      reason and the host.
-7. **Timeouts and caching.** Postfix's `timeout` covers the search but not the
-   connection; with an unreachable server a lookup blocked for 8 to 10 s in
-   the tests (libldap's own network timeout; not tunable per table).
-   The consequence is a slow `451`, not a loss; 3a tests `NETWORK_TIMEOUT`
-   in an `ldap.conf` (not verified) and relies on the per-client limits of
-   ADR 0006. Dovecot's `auth_cache_size` stays 0 (default): no stale
+7. **Timeouts and caching.** The first measurement said Postfix's `timeout`
+   covers the search but not the connection (a lookup blocked for 8 to 10 s
+   against an unreachable server). **Re-measured with the directory maps on 3.11.7
+   (Verification, row 22):** the `ldap:` table applies `timeout` to the
+   connection as well (an address that drops packets fails after about
+   1.2 to 1.5 times the value: `timeout = 3` after 4.5 s, `5` after 6.2 s,
+   `10` after 11 s), so the renderer sets `timeout = 5` and no `ldap.conf`
+   with `NETWORK_TIMEOUT` is needed. The `pgsql:` table has no timeout
+   setting and libpq has none by default: a `RCPT` against a directory
+   that drops packets was not answered within 300 s, so the renderer sets
+   `PGCONNECT_TIMEOUT` to the same 5 s next to `PGSSLMODE` (and adds it to
+   `import_environment`); the `RCPT` is then answered `451` after about
+   5 s with LDAP and about 10 s with PostgreSQL, which connects twice (row
+   27). The consequence is a slow `451`, not a loss, and the per-client
+   limits of ADR 0006 apply. Dovecot's `ldap_timeout` (30 s) is left at its
+   default; Dovecot 2.4.5 has no connect timeout setting for `pgsql` (only
+   `pgsql_connection_limit`, `pgsql_host` and `pgsql_parameters`; `mysql`
+   has `mysql_connect_timeout`), and a libpq `connect_timeout` in the
+   parameters did not shorten a lookup against dropped packets (about two
+   minutes either way, the query timeout of its SQL pool; row 27). Dovecot's `auth_cache_size` stays 0 (default): no stale
    credential after a password change in the directory.
 8. **Trust boundary.** The directory is outside the cluster; the operator
    can neither see nor police its content. What the operator guarantees:
@@ -1089,7 +1126,16 @@ Aliases and senders come from the directory through the **same contract** as
   password hash, primary address, aliases, `Disabled`, `SendOnly`) and
   `Directory *DirectorySource` (type, resolved settings, secret values).
   `insecureStaticUsers` becomes one more producer of `Accounts`, so existing
-  golden files keep their content. The Postfix renderer emits `vmailbox`,
+  golden files keep their content. **In the first version:** `Account` has the fields
+  the renderers read (`Name`, `PasswordHash`, `Address`); `Aliases`,
+  `Disabled` and `SendOnly` come with the commit that renders them (3b).
+  `DirectorySource` holds the `LDAPTarget` or `SQLTarget` of
+  `internal/directory` that the `MailDirectory` probe uses, read by the same
+  resolver (`directoryResolver`), so the probe and the renderers see one
+  configuration. `RenderResult` gets `Env` (the environment the engine
+  process needs; part of the config hash only when set). A server that
+  sets both a directory and `insecureStaticUsers` is `UserSourceConflict`
+  (before, the static users won, and the e2e server set both). The Postfix renderer emits `vmailbox`,
   `valias`, `sender_login`, `recipient_defer`, `null_sender` (ConfigMap) and
   the `.cf` files (Secret); the Dovecot renderer emits the `passdb` and
   `userdb` files (the live Secret of 4.7) or the directory passdb/userdb
@@ -1097,16 +1143,26 @@ Aliases and senders come from the directory through the **same contract** as
   emits `from_owners`. Rendering is deterministic: sorted, stable, no
   timestamps.
 - **Validation gate (ADR 0009).** `postfix check` and `postconf -n` cover
-  `main.cf` and `master.cf`; they do **not** open maps (verified: a missing
-  table file passes, an unknown key in a `.cf` file is silently ignored, and
-  a query against an unreachable server fails at query time). The new map
-  files therefore get no real check from the Job; they are covered by golden
-  files, a Go parser test per table, the `MailDirectory` probe, and e2e. The
-  Job runs `postmap -s` on each `texthash` file (parse check, no server) as
-  a cheap addition. `doveconf -n` covers the Dovecot structure.
-  The Job mounts no Secret, so the `.cf` files are not seen by it. A
-  `master.cf` argument error is not caught either (section 4.4); the e2e
-  suite starts the listener.
+  `main.cf` and `master.cf`; they do **not** query maps (verified: an
+  unknown key in a `.cf` file is silently ignored, and a query against an
+  unreachable server fails at query time). The new map files therefore get
+  no real check from the Job; they are covered by golden files, a Go parser
+  test per table, the `MailDirectory` probe, and e2e. The Job runs
+  `postmap -s` on each `texthash` file (parse check, no server; it warns
+  about a line it ignores and fails on a missing file, so the gate treats a
+  `warning:` as a failure as it does for `postconf -n`). `doveconf -n`
+  covers the Dovecot structure. A `master.cf` argument error is not caught
+  (section 4.4); the e2e suite starts the listener.
+  **Amended with the directory maps: the Postfix Job mounts the directory Secret.**
+  The first text said the Job mounts no Secret and that a missing table
+  file passes. That is wrong for `ldap:` and `pgsql:` tables (Verification,
+  row 21): `postconf -n` and `postfix check` open the configuration of a
+  table named in `main.cf` and warn `open "ldap" configuration ...: No such
+  file or directory`, which fails the gate. The Postfix Job therefore
+  mounts the Postfix Secret of the revision (the `.cf` files and the CA)
+  read-only, exactly as the Postfix pod does; with it the gate passes
+  without a network, so it never needs the directory. The Dovecot Job still
+  mounts no Secret (`doveconf -n` does not read `<file` references).
 - **Startup.** With PostgreSQL unreachable at start, Dovecot's `auth`
   service is killed by the master after 30 s and restarted until the
   database answers; it recovers without a pod restart (verified). While
@@ -1123,6 +1179,7 @@ Aliases and senders come from the directory through the **same contract** as
 | directory settings, secret values by `<file` | Dovecot ConfigMap + Secret, immutable | structure stays validatable |
 | `from_owners` | own Rspamd ConfigMap, immutable | addresses only; it is the table that grows (4.7) |
 | password hash per user | `<name>-credential` Secret, owned by the `MailUser` | stable across reconciles |
+| key of the secret-file digests | `<server>-hash-key` Secret, immutable, owned by the `MailServer`, 32 random bytes, created once, and only when a render holds secret content (the fail-closed render and a server without a directory or accounts need none, so a Secret of a tenant under that name cannot keep a revoked domain from being withdrawn) | the name of a revision's Secret and the config hash cover the bind password; a plain SHA-256 of it would let anyone who can read the pod template confirm a guess offline, so that part is an HMAC-SHA256 under this key. Losing it (a restore from GitOps) costs one rollout: the names and hashes change once. The hash of the non-secret files stays plain |
 
 The `MailServer` controller reads the credential Secrets with **one**
 label-selected, uncached list (ADR 0009 allows list without watch), not one
@@ -1197,7 +1254,7 @@ Not added to `internal/images` by this ADR (3a does that).
 | Fixture | Image | Licence | Notes (measured here) |
 |---|---|---|---|
 | LDAP | `osixia/openldap:2.6.15-rc`, pinned by digest (below) | image tooling MIT ([licence](https://github.com/osixia/container-openldap/blob/main/LICENSE.md)); OpenLDAP **OLDAP-2.8** ([licence](https://www.openldap.org/software/release/license.html); read from the package metadata in the image) | 51 MB, Alpine 3.24, runs as user `ldap`; first authenticated StartTLS search about 2 s after `docker run`; seeds LDIF from a mounted directory; `OPENLDAP_BOOTSTRAP_TLS=true` takes `tls.crt`, `tls.key`, `ca.crt`; ships the Postfix Book schema (`mailAlias`, `mailEnabled`) |
-| PostgreSQL | `postgres:18-alpine` (digest below; the e2e pins the exact version tag, to be confirmed in 3a) | **PostgreSQL License** ([licence](https://www.postgresql.org/about/licence/); package metadata) | 433 MB on disk; ready with schema about 2.4 s; `/docker-entrypoint-initdb.d` seeds SQL; TLS needs the key owned by `postgres` mode 0600 |
+| PostgreSQL | `postgres:18.6-alpine`, pinned by digest (`sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395`, the digest of row 18; the exact tag was confirmed with the e2e fixtures, row 25) | **PostgreSQL License** ([licence](https://www.postgresql.org/about/licence/); package metadata) | 433 MB on disk; ready with schema about 2.4 s; `/docker-entrypoint-initdb.d` seeds SQL; TLS needs the key owned by `postgres` mode 0600 |
 
 **The LDAP image is a pre-release tag, deliberately.** On Docker Hub the
 2.6.x line of `osixia/openldap` has only `-alpha`, `-beta` and `-rc` tags
@@ -1287,7 +1344,7 @@ Each item is a place the change reaches that is easy to forget.
 - Samples validate in envtest (`config/samples`), and the files of
   `config/samples/full-setup/` that describe the draft are marked **DRAFT**.
 - Docs: how-to for directories, upgrade notes, `status-conditions.md`,
-  `docs/reference/testing.md` (guard matrix with check 1).
+  `docs/reference/testing.md`.
 - Licenses: `make license-check` and `make license-report`; NOTICE, ADR 0001
   and `docs/reference/data-plane-licenses.md` list libpq, and the test images
   where they are listed; go-ldap and pgx in the Go report.
@@ -1360,7 +1417,8 @@ exist.
 - **ADR 0008:** the `MailUser` name is a DNS-1123 subdomain; `MailUser` has
   `domainRef` and `aliases`; the three-PR split; sender binding is strict
   and covers every user source; header `From` binding for authenticated
-  mail moves from the backlog into 3a (check 1) and 3b (check 2);
+  mail moves from the backlog into check 1 (PR #40, ahead of 3a) and 3b
+  (check 2);
   `allowedNamespaces` holds objects; the one-source rule has a reason for
   its conflict and counts service accounts.
 - **ADR 0003:** the address ownership and conflict rules (section 4.2) and
@@ -1370,9 +1428,9 @@ exist.
   on Secrets; the
   credential Secret is updated in place; map files are not validated by the
   Job beyond `postmap -s`; limits and the refusal of an over-limit revision.
-- **ADR 0013:** the known gap of section 3 is closed by check 1 in 3a for
-  every user source and by check 2 in 3b for operator-managed accounts, with
-  the directory residual.
+- **ADR 0013:** the known gap of section 3 is closed by check 1 (PR #40,
+  ahead of 3a) for every user source and by check 2 in 3b for
+  operator-managed accounts, with the directory residual.
 - **ADR 0014:** `MailUser` uses `serverRef` and checks that `domainRef`
   resolves to a domain of the same server.
 
@@ -1399,7 +1457,7 @@ exist.
   addresses, per-alias send-only, plus-addressing, quotas (Phase 4),
   MySQL/MariaDB, automatic `postmaster@` (all in `docs/backlog.md`).
 - **How we know it worked:** the e2e of section 1, the throughput and memory
-  test of the password hash, the `NETWORK_TIMEOUT` test, the guard matrix
+  test of the password hash, the LDAP timeout measurement (row 22), the guard matrix
   with the new rules, and golden files for every table.
 
 ## Verification
@@ -1434,6 +1492,20 @@ written down from its result, so anyone can repeat it.
 | 16 | Outages in Dovecot | PostgreSQL or LDAP stopped while Dovecot runs and at its start; `doveadm auth test`, SASL through Postfix, LMTP `RCPT` | Runtime: `doveadm auth test` internal failure, SASL via Postfix `454 4.7.0`, LMTP `RCPT` `451 4.3.0` (PostgreSQL case captured; the LDAP LMTP reply was not captured); at start with PostgreSQL down the `auth` service is killed after 30 s and restarts; both recover without a restart. LDAP down at start: not tested. |
 | 17 | `unionmap` | `postmap -q` with `unionmap:{texthash:..., ldap:...}` and one member failing | Returns the union; an error in either member fails the lookup. |
 | 18 | Test images | `docker image inspect`, `apk info -a` in the images; upstream pages | `osixia/openldap:2.6.15-rc@sha256:caf6a875d6cab9543e415ac5623f1cefd20795b220a3aa896438be7eaaab02e0`: 51 MB, OpenLDAP 2.6.15, Alpine 3.24.3, licences from `apk info` (`OLDAP-2.8`) and upstream; `postgres:18-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395`: PostgreSQL 18.6, licence `PostgreSQL` from `apk info`. Upstream licences: osixia MIT, go-ldap MIT, pgx MIT, x/crypto BSD-3-Clause (the URLs in section 9; the osixia licence and the tags on Docker Hub were re-read when this ADR was finished). |
+| 19 | The committed Postfix image (3a, the Postfix image) | `docker build -t ghcr.io/rocketpadplatforms/cnms-postfix:3.11.7-1 images/postfix` (amd64) with `libpq-dev`, `libpq5`, `-DHAS_PGSQL -I/usr/include/postgresql`, `AUXLIBS_PGSQL=-lpq`; in the image `postconf -c <dir with an empty main.cf> -m`, `postconf -h mail_version`, `ldd /usr/libexec/postfix/smtpd`, `/usr/share/doc/libpq5/copyright` | Builds in about 1.5 minutes (warm cache); `postconf -m` lists `ldap` **and** `pgsql` (`btree cidr debug environ fail hash inline internal ldap lmdb memcache pgsql pipemap proxy randmap regexp socketmap sqlite static tcp texthash unionmap unix`); `mail_version` 3.11.7; `smtpd` links `libpq.so.5`; Debian `libpq5` 17.11 (trixie), licence `PostgreSQL` (upstream [licence](https://www.postgresql.org/about/licence/), read 2026-11-06). Image size 207 MB on disk (the stock build was 202 MB, row 1). Query behaviour of the `pgsql` table is not exercised here. |
+| 20 | The filter and the probe of the `MailDirectory` controller (3a, the MailDirectory controller) | Go unit tests (`internal/directory`) against `go-ldap/ldap/v3` v3.4.15 and `jackc/pgx/v5` v5.12.0 (both MIT, licences read in the module cache; `make license-check` passes) | `CompileFilter` accepts the composed probe filter of 4.8, point 2, with `(!(<login>=.*))(!(<login>=*/*))(!(<login>=sa.*))`, and refuses `mailEnabled=TRUE`, `(mailEnabled=TRUE`, `()`, `(a=b)x` and a filter that closes early and appends a second one as an active filter, so the active filter is compiled alone as well as composed; `(&)` is a valid filter. The pgx configuration built field by field (no connection string) has no fallbacks to plain text in any TLS mode, takes the password verbatim, and `pgx.Identifier` quotes a relation name that holds a quote or a semicolon. The classification of connection, TLS, bind and search errors is tested with synthetic errors, and the real error values of pgx and go-ldap with loopback servers (a server that refuses TLS, a plain-text server on an LDAPS port, a closed port); a refused connection to a host name that contains `tls` is not a TLS failure, and PostgreSQL `require` with a CA verifies the chain without the host name. **Not run:** the probe against a real OpenLDAP or PostgreSQL (CI e2e only), and whether a login attribute without a SUBSTR rule makes the guard match nothing. |
+| 21 | The validation gate with directory tables (3a, the directory maps) | The rendered `main.cf` and `master.cf` of the golden files (`directory-ldap`, `directory-pgsql`) and the `validateScript` of the renderer, run with `sh` in the pinned Postfix image, with a tmpfs queue: the ConfigMap files only, then the Secret mounted too (`--network none`), then a `vmailbox` with a line `onlykey` and then none | Without the Secret the gate fails: `postconf` (and so `postfix check`) warns `open "ldap" configuration "/etc/postfix-secret/ldap-mailbox.cf": No such file or directory` for every table named in `main.cf`. This corrects the first text of section 5. With the Secret mounted, and no network, it exits 0 for both sources (the tables are opened, not queried). `postmap -s texthash:` warns `expected format: key whitespace value -- ignoring this line` for a bad line (exit 0) and fails on a missing file (exit 1); the script fails on both. |
+| 22 | The rendered Postfix tables against OpenLDAP and PostgreSQL (3a, the directory maps) | `osixia/openldap:2.6.15-rc` and `postgres:18-alpine` (digests of row 18) on a private network, with TLS from a throw-away CA, seeded with `alice` (aliases `sales@b.example`, `alice@b.example`), `bob`, a disabled `carol`, and accounts whose login is `x/../bob`, `.hidden` and `sa.0123456789abcdef`; the `.cf` files, `main.cf` and `master.cf` of the golden files (the LDAP bind as the directory root, the CA replaced by the real one, the plain `smtpd` on port 25 and no milter instead of postscreen and Rspamd), started with the image entrypoint; an SMTP dialogue to `RCPT TO` from loopback, `postmap -q` for the quoting. The LDAP and the PostgreSQL service stopped, a wrong CA, a wrong bind password | LDAP: `alice@a.example` (also in upper case), `sales@b.example`, `alice@b.example` (alias to the canonical address), `bob@a.example` `250`; the disabled account, its alias, and the three guarded logins `550 5.1.1`; an unknown address `550 5.1.1`. Directory stopped, wrong CA, wrong bind password: `451 4.3.0 Temporary lookup failure` for known and unknown recipients; the directory back: `250` and `550` again. `StartTLS` and `LDAPS` (`ldaps://host:636`, `start_tls = no`) work with the CA; without the CA file the verification fails. PostgreSQL: the same matrix, `saturn@a.example` (`sa` is not the reserved form) `250`; `x'` and the key of an injection find nothing; PostgreSQL stopped, a wrong CA (`PGSSLROOTCERT`): `451 4.3.0`; after the restart the answers return after about 60 s (the `pgsql` client waits that long after a failed connection: `451` at +8 s, `250` at +70 s). Without `PGSSLMODE` in the environment the connection falls back to the default (no verification): the variables must reach the master. **Quoting and escaping:** `bind_pw`, `password` and `bind_dn` are taken literally, with `$`, `%`, `'`, `"`, `\` and `#` in them (no `$name` expansion, no `%` expansion); `search_base` expands `%` and needs `%%`; Postfix writes the key RFC 4515 escaped into the LDAP filter and `pgsql` quotes it (`x)(uid=*` gives `x\29`, no entry). **Timeout:** the `ldap:` table's `timeout` bounds the connection to an unreachable address too (`3` after 4.5 s, `5` after 6.2 s, `10` after 11 s), unlike the first measurement of row 6. The failure text of `pgsql:` names the host and port, not the password. **Not run:** the LDAP table through `proxy:`, `LDAPS` against a public CA, `require` without a CA. |
+| 23 | The rendered Dovecot configuration against OpenLDAP and PostgreSQL (3a, the directory maps) | The `dovecot.conf` and the secret files of the golden files in `dovecot/dovecot:2.4.5` (read-only root, tmpfs runtime, `/etc/dovecot-users` mounted, the LDAP lookup as the directory root); `doveconf -n` with the ConfigMap only; `doveadm auth test`, `doveadm auth login`, `doveadm user`; an LMTP dialogue from the Postfix image with and without `DATA`; the directory stopped | `doveconf -n` exits 0 with no Secret, no certificate and the `<file` files missing (both sources), and hides `ldap_auth_dn_password`. LDAP and PostgreSQL: login by `alice`, `alice@a.example` and `ALICE@A.EXAMPLE` succeeds and reports `user=alice` (and `original_user`); the alias as login fails; the disabled account (LDAP), the three guarded logins, `alice)(uid=*`, `*`, `x' OR '1'='1` and `alice' --` fail; `doveadm user` finds `alice` and `alice@a.example` with `home=/srv/mail/alice`, and not the alias or a guarded login. LMTP delivers to `alice@a.example` (Saved) and answers `550 5.1.1` for the alias and for an unknown address. The directory stopped: `doveadm auth test` is an `internal auth failure` (not `auth failed`); the LMTP `RCPT` is `451 4.3.0 Temporary internal error` (PostgreSQL at once, LDAP with an unresolvable host name after about 2.5 minutes); both recover without a restart. `ldap_starttls`, `ldaps://`, `ssl_client_ca_file` and `sslrootcert` verify against the CA; a wrong CA is an internal failure. **Escaping:** `ldap_base` and `ldap_auth_dn` take a lone `%` literally (`ou=50%`), a doubled one does not match (`ou=50%%` finds nothing), so the renderer does not double it and refuses `%{` in the base; a `#` in a value is a comment unless the value is double-quoted. The `<file` password with `$ % ' @` works for PostgreSQL. The regular expression `'^sa\\.'` in a double-quoted query reaches PostgreSQL as `'^sa\.'` (`saturn` logs in, `sa.0123456789abcdef` does not). |
+| 24 | The Dovecot 2.4.5 setting names of the directory blocks (3a, the directory maps) | `doveconf -a` and `doveconf -n` of the image for `ldap_uris`, `ldap_starttls`, `ldap_base`, `ldap_auth_dn`, `ldap_auth_dn_password`, `ssl_client_ca_file`, `passdb ldap { bind, filter, fields }`, `userdb ldap { ldap_connection_group, filter, fields }`, `sql_driver`, `pgsql <host> { parameters { host, port, user, password, dbname, sslmode, sslrootcert } }`, `passdb sql { query }`, `userdb sql { query }`; the docs of 2.4.5 for the LDAP and SQL databases | All accepted, and shown in `doveconf -n` under their 2.4 names (`ssl_client_ca_file` as `ssl_client { ca_file }`). `passdb_use_worker` is left at its default (`no`) for both drivers: the PostgreSQL and LDAP lookups run in the `auth` process, and the auth-worker limit of section 3 applies to the passwd-file only. |
+| 25 | The e2e fixtures and the directory specs (3a, the e2e fixtures) | `docker pull` of both fixture images by digest and `docker image inspect` (entrypoints, ports, users, bootstrap directories); the Docker Hub tag list of `library/postgres` for `18.6-alpine`; the full e2e suite (`go test -tags=e2e ./test/e2e/`, the Makefile's kind node image `kindest/node:v1.37.0` on a kind v0.32.0 cluster, without the Prometheus Operator CRDs) with an OpenLDAP and a PostgreSQL fixture in the data plane namespace | `postgres:18.6-alpine` and `18.6-alpine3.24` both resolve to `sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395`, the digest of row 18, so the e2e pins `postgres:18.6-alpine@sha256:123b...`. `osixia/openldap:2.6.15-rc` listens on 3890 and 6360 as user `ldap` (911), bootstraps from `.../ldif/data/custom` and takes TLS from `OPENLDAP_BOOTSTRAP_TLS` and the default certificate paths; its default access rules hide `mailAlias` and `mailEnabled` from a bound user, so the lookup account is the image's read-only account. The suite passed (41 of 41, about 15 minutes) against both directories: the `MailDirectory` probe is `Ready` and `Reachable`; valid recipient, alias and unknown address give `250`, `250` and `550 5.1.1` (LDAP: the `mailEnabled=FALSE` account `550 5.1.1`); a message for an alias lands once in the mailbox of the canonical address; SASL and IMAP accept the login name and the primary address (also in upper case) and refuse the alias; with the directory refusing connections recipients get `451 4.3.0` (known, unknown and alias) and recover (PostgreSQL after the client's wait); a server with a directory and static users is `UserSourceConflict`, keeps its pod template and answers from the directory, and serves the static users alone once the directory is removed. **Not as written elsewhere in this ADR:** with PostgreSQL refusing connections, SASL on 587 answered `535 5.7.8` (Dovecot: "Not connected to database"), not `454 4.7.0` (LDAP gave `454 4.7.0`); and after a few failed logins from one client Postfix sometimes reported "Connection lost to authentication server" (`454`) for a login that should be `535`. **Found:** the egress NetworkPolicy of the data plane blocks the directory (the fixtures need a policy of their own), and a `pgsql:` lookup against an address whose packets are dropped had not answered after the 30 seconds the test client waited (no connect timeout is set). |
+| 26 | System roots in the Postfix and Dovecot images (3a, the Postfix image) | The runtime stage of `images/postfix` before the change, rebuilt from the base with the same package list: `ls /etc/ssl/certs`. The rebuilt `cnms-postfix:3.11.7-1` (now with `ca-certificates`) and a throw-away derived image that adds a test CA with `update-ca-certificates`, on a private Docker network with OpenLDAP and PostgreSQL fixtures (row 18 images) whose certificates chain to that CA: `postmap -c <dir> -q alice@a.example ldap:<table>` with `start_tls = yes`, `tls_require_cert = yes` and **no** `tls_ca_cert_file`, and `pgsql:<table>` with `PGSSLMODE=verify-full PGSSLROOTCERT=system`, each in the image without and with the test CA. The pinned Dovecot image (`docker export`, `dpkg` status) and a Dovecot started with the LDAP and the PostgreSQL blocks of the renderer minus `ssl_client_ca_file` and with `sslrootcert = system`, `doveadm auth test`, with and without the test CA as a hashed link in `/etc/ssl/certs` (`openssl x509 -hash`, what `update-ca-certificates` links) | **Before:** the Postfix runtime image had no `/etc/ssl/certs` at all (`ca-certificates` is not installed by `--no-install-recommends`), so a directory with a public certificate and no `caSecretRef` verified against nothing and answered `451` while the operator's probe (its own image has roots) said `Reachable`. **After:** `/etc/ssl/certs/ca-certificates.crt` exists (148 roots, `ca-certificates` 20250419); without the test CA `postmap` fails (`Unable to set STARTTLS: -11: Connect error`; `SSL error: certificate verify failed`), with it both lookups return `alice@a.example`. **Dovecot 2.4.5 image:** Debian trixie with `ca-certificates` 20250419 (`/etc/ssl/certs/ca-certificates.crt` and 151 hashed links), `libpq5` 17.11 (`sslrootcert=system` needs 16 or later) and `libldap2` 2.6.10; without a CA setting both the LDAP StartTLS and the pgsql (`sslrootcert = system`, `verify-full`) lookups fail (`ldap_start_tls_s() failed: Connect error`, `certificate verify failed`, `temp_fail`) and with the test CA in the system store `doveadm auth test` succeeds for both. So no API restriction is needed: an omitted `caSecretRef` means the system roots in all three places (probe, Postfix, Dovecot). The Postfix image content changed under the unreleased tag `3.11.7-1`, which was introduced in the same pull request, so the revision is not raised. |
+| 27 | Lookup timeouts against an address that drops packets (3a, the directory maps) | The rendered `main.cf`, `master.cf` and tables of the golden files, with the directory host `10.255.255.1` (no route answers, packets are dropped), in the Postfix image with only `smtpd` and a `lmtp` virtual transport that is not used; a bash `/dev/tcp` `RCPT TO` of a recipient and its timing (read timeout 300 s); the same with the environment of the old render (no `PGCONNECT_TIMEOUT`). Dovecot 2.4.5 against a PostgreSQL fixture, then `iptables -A OUTPUT -d <fixture> -j DROP` in the shared network namespace (a container with `NET_ADMIN`) and `pg_terminate_backend` of the connection, then `doveadm auth test` timed; `doveconf -a` and the 2.4 pages on the SQL database for the settings of `pgsql` | Postfix `ldap:` with `timeout = 5`: `451 4.3.0 Temporary lookup failure` after 5 s. Postfix `pgsql:` with `PGCONNECT_TIMEOUT=5`: `451 4.3.0` after 10 s (the client connects twice). Without `PGCONNECT_TIMEOUT` the `RCPT` was not answered within 300 s. Dovecot: `doveconf -a` knows `pgsql_connection_limit`, `pgsql_host` and `pgsql_parameters` and no connect timeout for `pgsql` (`mysql_connect_timeout` exists for `mysql`); `connect_timeout = 5` in `parameters` is accepted, but a lookup with the packets dropped took about 120 s with it and without it (Dovecot logs `sqlpool(pgsql): Finished query ... Query timed out (no free connections)` after about 117 s, then answers `temp_fail`), and the first lookup after the connection was cut answers `temp_fail` at once. With `ldap_timeout` at its default Dovecot's LDAP side was not measured against dropped packets. At start with the fixture unreachable the `auth` service did not answer the handshake within 30 s with either variant (row 16). |
+| 28 | The SQL alias table joined to the users relation (3a, the directory maps) | A PostgreSQL 18.6 fixture (row 18 image) with TLS, users `alice`, `bob`, `x/../bob` (guarded) and `sa.0123456789abcdef` (reserved), aliases to `alice`, to `BOB@a.example` (upper case), to an address that is no user, to the guarded login and to the reserved one; the rendered `pgsql:` mailbox and alias tables in the Postfix image, started like row 27 with a `lmtp` transport; `RCPT TO` for each address; the same with the former alias query (`SELECT target FROM aliases WHERE lower(alias) = '%s'`) | New query: `alice@` `250`, the alias to `alice` `250`, the alias to `BOB@a.example` `250`, the alias with no user, the alias to the guarded login, the alias to the reserved login, the guarded login itself and an unknown address `550 5.1.1`. Former query, same data: the three aliases with no usable target were accepted with `250` (mail that bounces later). An alias whose target is an account of the users relation in a domain the server does not serve gets `250` too, and the message is rewritten to the target and handed to the smtp client for that domain (outbound delivery; here it bounced for want of DNS). |
+| 29 | The validation gate with an unreachable directory (3a, the directory maps) | The `validateScript` of the renderer (`postfix check`, `postmap -s`, `postconf -n`) in the Postfix image with the rendered `main.cf`, `master.cf`, `vmailbox` and the Secret of the golden files, once with the PostgreSQL tables and once with the LDAP tables pointing at `10.255.255.1`, a tmpfs queue and no network access to a directory | Exit 0 in about 1.5 s for both: the gate opens the tables but makes no lookup, so a directory that is down or unreachable neither hangs nor fails it. |
+
+
+
 
 Row 19 was added when check 1 landed and was run on 2026-11-06 against the
 Rspamd image pinned in `internal/images/images.go`.
@@ -1462,19 +1534,23 @@ with an empty password (rows 5 and 12 used one file), and the `nologin`
 alternative on 2.4.5, including whether it stops SASL; the kubelet's symlink
 swap for the live Dovecot Secret (a file replace stood in); `soft_bounce` as
 a per-service override on the `lmtp` client of Postfix 3.11.7; the use of
-`doveadm kick` in the Dovecot pod; the `NETWORK_TIMEOUT` setting in
-`ldap.conf`; that the API server accepts the two CEL rules of 4.1 and their
-cost estimate; the `postmap -s` check of the validation Job (the parse of
-each `texthash` file); whether the API server counts only the values of
-`data` toward the 1 MiB limit (the guard counts keys as well, the
-conservative reading); the LMTP reply with LDAP down and Dovecot's start
-with LDAP down; `unionmap` errors inside a daemon (only `postmap` was run);
-the `recipient_defer` table (`450 4.2.1`); a hash made by the Go Argon2id
-library read by Dovecot; the LDAP guards `(!(<login>=*/*))` and
-`(!(<login>=sa.*))` against an attribute with and without a SUBSTR rule, and a multi-valued `mail`
-attribute; a `+` in a local part; the SMTP behaviour of Dovecot's
+`doveadm kick` in the Dovecot pod; that the API server accepts the two CEL
+rules of 4.1 and their cost estimate; whether the API server counts only
+the values of `data` toward the 1 MiB limit (the guard counts keys as well,
+the conservative reading); Dovecot's start with LDAP down; `unionmap`
+errors inside a daemon (only `postmap` was run); the `recipient_defer` table
+(`450 4.2.1`); a hash made by the Go Argon2id library read by Dovecot; the
+LDAP guards `(!(<login>=*/*))` and `(!(<login>=sa.*))` against an attribute
+**without** a SUBSTR rule (rows 22 and 23 ran them on `uid`, which has one),
+and a multi-valued `mail` attribute; the `ldap:` and `pgsql:` tables of the
+Postfix pod as the manifests start them (rows 21 to 23 used the
+image entrypoint with the rendered files, not the StatefulSet), the
+`PGSSLMODE` and `PGSSLROOTCERT` of the pod environment through the master
+in a pod, `LDAPS` and `StartTLS` against a CA that is a public one, and a
+`pgsql` or `ldap` table through `proxy:`; a `+` in a local part; the SMTP behaviour of Dovecot's
 `auth_username_chars` for LMTP recipients; several `passdb`s with a file
 first and a directory second; whether error texts of Dovecot, `pgx` or
 `go-ldap` can contain credentials; the `Sender:` header (not bound, not
-looked at); the exact PostgreSQL tag for the e2e; the Postfix `-DHAS_PGSQL`
-build on the published `ghcr.io` image (only a local build).
+looked at); the Postfix `-DHAS_PGSQL`
+build for arm64 and on the published `ghcr.io` image (row 19 is a local
+amd64 build; the multi-arch build shows in CI).

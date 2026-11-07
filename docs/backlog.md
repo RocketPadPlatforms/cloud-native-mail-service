@@ -28,6 +28,19 @@ Scoped in [ADR 0015](decisions/0015-user-sources-directory-users-and-aliases.md)
 
 Not scoped (ADR 0015, "Limits" and section 4.7):
 
+- SASL during a PostgreSQL outage. With a PostgreSQL directory that refuses
+  connections, Dovecot logs "Not connected to database" and Postfix answers a
+  login with `535 5.7.8` (the e2e suite measured it), not the `454 4.7.0` of
+  ADR 0015 (row 16: a stopped container, and LDAP in the e2e suite). A client
+  may take the 535 for a wrong password. Find out why the internal failure
+  does not reach Postfix as a temporary one, and fix or document it.
+- Generate the egress allow to the directory. The default-deny egress
+  NetworkPolicy of the data plane also blocks Postfix and Dovecot from the
+  directory, so a cluster that enforces NetworkPolicies needs one of your own
+  today (found with the e2e fixtures). The target is a host name that a
+  NetworkPolicy cannot select; options: an allow for the directory port to
+  any address (broad), or a field on `MailDirectory` that lists the
+  addresses or a pod selector for an in-cluster directory.
 - OIDC directory backend for `MailDirectory` (after LDAP/SQL).
 - MySQL/MariaDB for the `sql` directory type (PostgreSQL only for now).
 - An address shared by several users, distribution lists, catch-all and

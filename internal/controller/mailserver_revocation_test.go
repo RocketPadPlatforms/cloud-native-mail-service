@@ -401,6 +401,7 @@ var _ = Describe("MailServer domain revocation", func() {
 		createUsersSecretG(ns,
 			"users:\n  - username: testuser\n    passwordHash: '$6$salt$hash'\n    mailbox: testuser@example.org\n")
 		mutateServerG(ns, func(s *cnmsv1alpha1.MailServer) {
+			s.Spec.DirectoryRef = nil
 			s.Spec.Submission = &cnmsv1alpha1.Submission{
 				InsecureStaticUsers: &cnmsv1alpha1.InsecureStaticUsers{SecretName: usersSecretName},
 			}

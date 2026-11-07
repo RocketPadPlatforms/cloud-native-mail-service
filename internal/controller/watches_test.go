@@ -104,6 +104,30 @@ func TestMapDomainServersCoversEveryClaimantsServer(t *testing.T) {
 	}
 }
 
+func TestMapDirectoryServersOnlyReachesItsServers(t *testing.T) {
+	withDirectory := func(ns, name, dir string) *cnmsv1alpha1.MailServer {
+		s := serverIn(ns, name)
+		if dir != "" {
+			s.Spec.DirectoryRef = &cnmsv1alpha1.NameReference{Name: dir}
+		}
+		return s
+	}
+	c := fake.NewClientBuilder().WithScheme(watchTestScheme(t)).
+		WithIndex(&cnmsv1alpha1.MailServer{}, mailServerDirectoryIndex, indexMailServerByDirectory).
+		WithObjects(
+			withDirectory("a", "uses", "corp-dir"),
+			withDirectory("a", "other", "other-corp-dir"),
+			withDirectory("a", "none", ""),
+			withDirectory("b", "elsewhere", "corp-dir"),
+		).Build()
+	r := &MailServerReconciler{Client: c}
+	dir := &cnmsv1alpha1.MailDirectory{ObjectMeta: metav1.ObjectMeta{Name: "corp-dir", Namespace: "a"}}
+	got := requestKeys(r.mapDirectoryServers(context.Background(), dir))
+	if want := []string{"a/uses"}; !slices.Equal(got, want) {
+		t.Errorf("mapDirectoryServers = %v, want %v", got, want)
+	}
+}
+
 func TestMapGrantServersEnqueuesEveryServer(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(watchTestScheme(t)).
 		WithObjects(serverIn("a", "s1"), serverIn("b", "s2")).Build()

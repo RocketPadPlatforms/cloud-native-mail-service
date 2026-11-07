@@ -75,9 +75,8 @@ deploys the operator (with
 `--enable-insecure-test-features`), a cert-manager
 self-signed `Issuer`, and one `MailServer` with the hostname
 `mail.e2e.example.org` (its own `MailDomainGrant`, apart from the one
-of the domain), a `MailDomain`, a `MailDirectory` (referenced only for existence in
-Phase 2; users come from the static test Secret), and the Phase 2
-static test users. The Mailpit sink (ADR 0004, decision 7) runs in
+of the domain), a `MailDomain`, and the two directory fixtures below; the
+server's only user source is the PostgreSQL directory. The Mailpit sink (ADR 0004, decision 7) runs in
 the same namespace as a plain Pod with a Service; its cluster FQDN
 (`mailpit.<ns>.svc.cluster.local`) is used as a *recipient domain*
 whose MX-then-A lookup resolves to the sink inside the cluster, so
@@ -99,7 +98,7 @@ Assertions (Phase 2):
   port 25 (postscreen) and delivered to the Dovecot maildir via
   LMTP;
 - authenticated submission over STARTTLS is accepted (SASL backend
-  is Dovecot with the static test users);
+  is Dovecot with the directory user `alice`);
 - the hostname is authorized (`HostnameAuthorized=True`), the certificate
   on port 587 has it as common name and only SAN (no apex, no domain of the
   DKIM specs, no Service name), the greeting is `220 mail.e2e.example.org
@@ -113,10 +112,12 @@ Assertions (Phase 2):
   `smtpd_relay_restrictions` and `smtpd_recipient_restrictions` —
   no open relay; the default relay restrictions would only tempfail);
 - AUTH without TLS is rejected (`smtpd_tls_auth_only`);
-- a broken spec (missing `MailDirectory`) makes the `MailServer`
+- a broken spec (a `directoryRef` to a `MailDirectory` that does not
+  exist, on a server that runs on a real one) makes the `MailServer`
   `Ready=False` with `DirectoryNotFound` **without rolling the data
-  plane** (the rendered-config hash of the pod template is unchanged
-  and all workloads stay ready);
+  plane** (the rendered-config hash of the pod template is unchanged,
+  all workloads stay ready, and the running pods still accept the
+  directory's recipients and logins);
 - a changed configuration waits for its validation Job before the
   pod template changes; a failing Job makes the `MailServer`
   `Ready=False` with `ConfigRejected`, the running pods and template
@@ -130,6 +131,72 @@ Assertions (Phase 2):
 The suite never sends real mail and never touches real DNS or
 provider APIs (testing rule); the `example.*` domain and
 documentation address ranges are used throughout.
+
+### Directories and user sources (Phase 3)
+
+`test/e2e/directoryfixtures.go` runs two directories in the data plane
+namespace, with the same accounts: **OpenLDAP** (`osixia/openldap`, MIT
+tooling around OpenLDAP, OLDAP-2.8) and **PostgreSQL** (`postgres`, PostgreSQL
+License). Both images are pinned by tag and digest in `internal/images` (ADR
+0015, section 9), and Renovate follows them there. The OpenLDAP tag is a
+pre-release (`2.6.15-rc`): the 2.6 line has no other, so a stable tag has to
+be adopted by hand. Each fixture is a Deployment with a Service (an outage
+is the Service forwarding to a port where nothing listens), a server certificate from a cert-manager CA of
+its own (the `MailDirectory` verifies against it: StartTLS and `verify-full`,
+the defaults) and a seed: an LDIF mounted over the image's `custom` bootstrap
+directory (the LDIF files load at the first start), and an initdb script for
+the two relations. The accounts: `alice` (primary address
+`alice@e2e.example.org`, alias `sales@e2e.example.org`), `bob`, and in LDAP
+`carol`, whom `mailEnabled=FALSE` and the `activeFilter` switch off. The
+lookup role has read access only (a read-only account in LDAP, `SELECT` on
+the two relations in PostgreSQL). A `NetworkPolicy` of the fixture allows the
+pods of the `MailServer` to reach the directories, which the egress policy of
+the data plane does not (see the [how-to](../how-to/directories.md)).
+
+The specs run against the PostgreSQL directory and then against the LDAP
+directory, on the **same** `MailServer`: the LDAP run switches `directoryRef`
+and the server rolls out a new, validated revision, which is cheaper than a
+second server (about seven more pods and their start-up) and covers the
+change of directory. They check, for each directory:
+
+- the `MailDirectory` is `Ready` and `Reachable` (the first probe against a
+  real OpenLDAP and PostgreSQL);
+- a valid recipient, the same in upper case, an alias and a second account get
+  `250` on port 25; an unknown address, and in LDAP the disabled account, get
+  `550 5.1.1`; so does an alias of an account the directory does not serve
+  (PostgreSQL: an alias with no account and one to a login the guard
+  refuses; LDAP: the alias of the disabled account), where mail would
+  otherwise be accepted and bounce later;
+- a message for the alias is delivered **once**, into the mailbox of the
+  canonical address (IMAP search for its subject finds one message for
+  `alice` and none for `bob`);
+- SASL on port 587 accepts the login name, the primary address and the
+  address in upper case, and refuses the alias, a wrong password, an unknown
+  login and (LDAP) the disabled account; IMAP accepts the first two forms
+  and reads the delivered message, and refuses the alias;
+- with the directory down (its Service forwards to a closed port and its pod is
+  replaced, so connections are refused; packets that are dropped make a lookup
+  much slower, see the backlog), recipients, known
+  or not, get `451 4.3.0` (never a `5xx`), a login does not succeed (`454 4.7.0` with
+  LDAP, `535 5.7.8` with PostgreSQL), and the `MailServer` stays `Ready`; with the directory back, the answers return (the PostgreSQL
+  client of Postfix waits about a minute after a failed connection).
+
+The container also covers the rule that a server has one user source
+(`UserSourceConflict`, ADR 0015, section 3): a server that gets
+`insecureStaticUsers` next to its `directoryRef` is `Ready=False` with that
+reason and an Event, keeps its pod template and keeps answering from the
+directory; removing the `directoryRef` then rolls out the static users,
+which keeps the Phase 2 static path covered (the static user logs in and
+receives, the directory's accounts do not); the next patch moves the server
+to the LDAP directory and the last one back to PostgreSQL, where the
+`MailDomain` specs expect it.
+
+The DKIM specs below submit as `alice@<domain>` for the domains the server
+serves (the header `From` check of 3a needs a served domain; the envelope
+sender binding of 3b will need addresses that `alice` owns).
+
+The conflict, its watch and its index are also covered by envtest
+(`mailserver_directory_test.go`, `watches_test.go`).
 
 ### MailDomain, DKIM and the guard (Phase 5)
 
