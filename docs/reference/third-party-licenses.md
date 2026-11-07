@@ -12,6 +12,12 @@ shown is the one `make license-check` enforces against the allow-list.
 - Source: https://pkg.go.dev/cel.dev/expr?tab=licenses
 
 
+## github.com/Azure/go-ntlmssp
+
+- License: MIT
+- Source: https://pkg.go.dev/github.com/Azure/go-ntlmssp?tab=licenses
+
+
 ## github.com/Masterminds/semver/v3
 
 - License: MIT
@@ -88,6 +94,18 @@ shown is the one `make license-check` enforces against the allow-list.
 
 - License: MIT
 - Source: https://pkg.go.dev/github.com/fxamacker/cbor/v2?tab=licenses
+
+
+## github.com/go-asn1-ber/asn1-ber
+
+- License: MIT
+- Source: https://pkg.go.dev/github.com/go-asn1-ber/asn1-ber?tab=licenses
+
+
+## github.com/go-ldap/ldap/v3
+
+- License: MIT
+- Source: https://pkg.go.dev/github.com/go-ldap/ldap/v3?tab=licenses
 
 
 ## github.com/go-logr/logr
@@ -226,6 +244,24 @@ shown is the one `make license-check` enforces against the allow-list.
 
 - License: BSD-3-Clause
 - Source: https://pkg.go.dev/github.com/grpc-ecosystem/grpc-gateway/v2?tab=licenses
+
+
+## github.com/jackc/pgpassfile
+
+- License: MIT
+- Source: https://pkg.go.dev/github.com/jackc/pgpassfile?tab=licenses
+
+
+## github.com/jackc/pgservicefile
+
+- License: MIT
+- Source: https://pkg.go.dev/github.com/jackc/pgservicefile?tab=licenses
+
+
+## github.com/jackc/pgx/v5
+
+- License: MIT
+- Source: https://pkg.go.dev/github.com/jackc/pgx/v5?tab=licenses
 
 
 ## github.com/json-iterator/go
@@ -438,10 +474,10 @@ shown is the one `make license-check` enforces against the allow-list.
 - Source: https://pkg.go.dev/go.yaml.in/yaml/v3?tab=licenses
 
 
-## golang.org/x/crypto/ed25519
+## golang.org/x/crypto
 
 - License: BSD-3-Clause
-- Source: https://pkg.go.dev/golang.org/x/crypto/ed25519?tab=licenses
+- Source: https://pkg.go.dev/golang.org/x/crypto?tab=licenses
 
 
 ## golang.org/x/exp/slices

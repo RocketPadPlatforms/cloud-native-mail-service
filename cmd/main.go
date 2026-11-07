@@ -38,6 +38,7 @@ import (
 
 	cnmsv1alpha1 "github.com/RocketPadPlatforms/cloud-native-mail-service/api/v1alpha1"
 	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/controller"
+	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/directory"
 	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/dnsrecords"
 	// +kubebuilder:scaffold:imports
 )
@@ -261,6 +262,16 @@ func main() {
 		Resolver:            resolver,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "maildomain")
+		os.Exit(1)
+	}
+	if err := (&controller.MailDirectoryReconciler{
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		APIReader: mgr.GetAPIReader(),
+		Prober:    directory.NetProber{},
+		Recorder:  mgr.GetEventRecorder("maildirectory-controller"),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "maildirectory")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder

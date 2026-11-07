@@ -235,7 +235,7 @@ var _ = Describe("API validation of MailDirectory", func() {
 		{name: "rejects a bind DN with a control character", mutate: createLDAP(func(l *cnmsv1alpha1.LDAP) {
 			dn := "cn=a\x01"
 			l.BindDN = &dn
-			l.BindSecretRef = &cnmsv1alpha1.SecretReference{Name: "bind"}
+			l.BindSecretRef = &cnmsv1alpha1.SecretReference{Name: dirBindSecret}
 		}), wantErr: "spec.ldap.bindDN"},
 		{name: "accepts an LDAP CA with StartTLS", mutate: ldapTLS("StartTLS", true)},
 		{name: "accepts an LDAP CA with LDAPS", mutate: ldapTLS("LDAPS", true)},
@@ -275,7 +275,7 @@ var _ = Describe("API validation of MailDirectory", func() {
 		{name: "rejects an attribute name with a semicolon", mutate: attrs(cnmsv1alpha1.LDAPAttributes{Mail: new("mail;binary")}), wantErr: attrMailField},
 		{name: "rejects an empty attribute name", mutate: attrs(cnmsv1alpha1.LDAPAttributes{Aliases: new("")}), wantErr: attrAliasesField},
 		{name: "rejects an over-long attribute name", mutate: attrs(cnmsv1alpha1.LDAPAttributes{Login: new("a" + strings.Repeat("b", 64))}), wantErr: attrLoginField},
-		{name: "accepts SQL relations with schemas", mutate: relations(rel("mail_users", "directory"), rel("mail_aliases", "directory"))},
+		{name: "accepts SQL relations with schemas", mutate: relations(rel("mail_users", "directory"), rel(dirAliasesRelation, "directory"))},
 		{name: "accepts SQL relations without schemas", mutate: relations(rel("v_users", ""), rel("_aliases", ""))},
 		{name: "accepts no SQL relations", mutate: relations(nil, nil)},
 		{name: "rejects an SQL relation name with a quote", mutate: relations(rel("users'--", ""), nil), wantErr: usersNameField},
@@ -326,9 +326,9 @@ var _ = Describe("Defaults of MailDirectory", func() {
 
 	It("defaults the schema of a relation", func() {
 		dir := apply(createSQL(func(s *cnmsv1alpha1.SQL) {
-			s.Aliases = &cnmsv1alpha1.SQLRelation{Name: "mail_aliases"}
+			s.Aliases = &cnmsv1alpha1.SQLRelation{Name: dirAliasesRelation}
 		}))
-		Expect(dir.Spec.SQL.Aliases).To(Equal(&cnmsv1alpha1.SQLRelation{Name: "mail_aliases", Schema: new("public")}))
+		Expect(dir.Spec.SQL.Aliases).To(Equal(&cnmsv1alpha1.SQLRelation{Name: dirAliasesRelation, Schema: new("public")}))
 	})
 })
 

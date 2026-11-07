@@ -16,7 +16,12 @@ The envtest suite installs the optional integration CRDs only on request:
 `DNSEndpoint` CRD (`hack/crds/external-dns`). CI runs the suite without
 both and with both, so every integration is exercised present and
 absent. The `MailDomain` specs use a fake clock and a fake DNS resolver;
-they never touch real DNS.
+they never touch real DNS. The `MailDirectory` specs use a fake prober
+behind the `directory.Prober` interface and never connect to a directory;
+the real LDAP and PostgreSQL probes are covered by unit tests of their
+filter, configuration and error classification; a real directory answers
+only in the e2e fixtures of
+[ADR 0015](../decisions/0015-user-sources-directory-users-and-aliases.md).
 
 ## The guard matrix
 

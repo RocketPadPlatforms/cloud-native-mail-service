@@ -29,10 +29,10 @@ Not every resource has a controller yet. `MailServer`, `MailDomain` and
 keys and lists and verifies its DNS records
 ([how-to](../how-to/dkim-keys-and-dns-records.mdx)), and the `MailServer`
 hands the active keys to Rspamd ([DKIM signing](dkim-signing.md)).
-`MailDirectory` is API only: the `MailServer`
-controller reads its existence, but nothing queries a directory and its
-status stays empty. See the [roadmap](../roadmap.md) for the phase of
-each part.
+The `MailDirectory` controller validates its configuration and probes the
+directory, but nothing renders a directory into Postfix or Dovecot yet: the
+`MailServer` controller reads only its existence. See the
+[roadmap](../roadmap.md) for the phase of each part.
 :::
 
 ### `MailDomainGrant`
@@ -141,7 +141,8 @@ Points at the external user directory (accounts are managed outside CNMS):
 `ldap` or `sql` (PostgreSQL), credentials via Secret references. It backs
 Postfix recipient validation (unknown recipients tempfail when the directory
 is down) and Dovecot authentication (submission and IMAP). `status` carries a
-`Ready` condition for reachability.
+`Ready` condition (valid configuration) and a `Reachable` condition (the last
+probe, a warning that never takes a rollout away).
 
 The API names only attributes and relations, never queries. For `ldap`,
 `attributes` gives the attribute of the login name (default `uid`), of the

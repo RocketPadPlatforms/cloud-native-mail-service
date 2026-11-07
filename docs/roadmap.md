@@ -28,8 +28,9 @@ parts of finished phases that are still open. The truth for any item is
 the code and the [status conditions](reference/status-conditions.md).
 
 - **Reconciled resources:** `MailServer`, `MailDomain` and `MailDomainGrant`.
-  `MailDirectory` is API only: the `MailServer` controller reads it, no
-  controller writes its status.
+  The `MailDirectory` controller validates the configuration and probes
+  the directory (`Ready`, `Reachable`); the `MailServer` controller reads
+  only its existence.
 - **Data plane (Phase 2):** Postfix, Rspamd, Valkey and Dovecot with
   validation Jobs and immutable, hash-named configuration, per-component
   disruption budgets and topology spread, resource requests and limits,
@@ -37,8 +38,8 @@ the code and the [status conditions](reference/status-conditions.md).
   ServiceMonitors when the Prometheus Operator CRDs exist.
 - **Users (Phase 3):** only the static test users
   (`--enable-insecure-test-features`) and a `directoryRef` existence
-  check. No directory lookups, `MailUser`, `MailServiceAccount` or
-  sender binding.
+  check. No directory lookups in Postfix or Dovecot yet, no `MailUser`,
+  `MailServiceAccount` or sender binding.
 - **Mailboxes (Phase 4):** IMAP, LMTP delivery and the maildir volume
   work with the data plane. Open: quota, Dovecot metrics, the mailbox
   format ADR, and the k8up backup and restore e2e.

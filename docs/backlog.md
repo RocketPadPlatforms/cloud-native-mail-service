@@ -18,10 +18,6 @@ Scoped in [ADR 0015](decisions/0015-user-sources-directory-users-and-aliases.md)
   the header From and get it signed (ADR 0013, section 3). The check that
   the From address is owned by the login is PR 3b (ADR 0015, section 4.4,
   check 2); the served-domain check (check 1) is done.
-- `MailDirectory` has no controller yet: the empty scaffold was removed so
-  the operator holds no write access to it. PR 3a re-scaffolds it with
-  `kubebuilder create api --group cnms --version v1alpha1 --kind MailDirectory
-  --controller --resource=false` and adds the RBAC it actually uses.
 - Directory lookup timeouts: a lookup against an unreachable LDAP server
   blocks a Postfix process for 8 to 10 s (libldap's network timeout). PR 3a
   tests `NETWORK_TIMEOUT` in `ldap.conf` (not verified) and relies on the
