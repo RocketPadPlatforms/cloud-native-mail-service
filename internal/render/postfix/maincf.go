@@ -55,8 +55,15 @@ func renderMainCF(req *render.RenderRequest, dir *directoryMaps) string {
 	// recipient restrictions run; reject permanently instead.
 	b.WriteString("smtpd_relay_restrictions = permit_mynetworks, " +
 		"permit_sasl_authenticated, reject_unauth_destination\n")
-	b.WriteString("smtpd_recipient_restrictions = permit_mynetworks, " +
-		"permit_sasl_authenticated, reject_unauth_destination\n\n")
+	recipientRestrictions := "permit_mynetworks, permit_sasl_authenticated, reject_unauth_destination"
+	if len(domains) > 0 && mailboxesEnabled(req) {
+		// The addresses that answer 450 (a conflict, an account that is
+		// suspended) are checked first: a temporary failure for an
+		// address that exists again after the fix, never a 550 (ADR 0015,
+		// sections 4.2 and 4.6).
+		recipientRestrictions = "check_recipient_access " + tablePathTexthash(recipientDeferFile) + ", " + recipientRestrictions
+	}
+	b.WriteString("smtpd_recipient_restrictions = " + recipientRestrictions + "\n\n")
 
 	switch {
 	case len(domains) == 0:
@@ -72,24 +79,23 @@ func renderMainCF(req *render.RenderRequest, dir *directoryMaps) string {
 		b.WriteString("# for a forged sender; an empty table rejects everything.\n")
 		b.WriteString("mydestination =\n")
 		fmt.Fprintf(&b, "virtual_mailbox_domains = %s\n", strings.Join(domains, ", "))
+		// The default of virtual_alias_domains is $virtual_alias_maps,
+		// which would look every domain up in the alias table (ADR 0015,
+		// section 4.3).
+		b.WriteString("virtual_alias_domains =\n")
 		if dir != nil {
 			// The directory tables (ADR 0015, section 4.3). A lookup
 			// error (directory down, bind or TLS failure) is a 451,
-			// a missing entry the only 550. The default of
-			// virtual_alias_domains is $virtual_alias_maps, which
-			// would look every domain up in the alias table.
-			b.WriteString("virtual_alias_domains =\n")
+			// a missing entry the only 550.
 			if dir.alias != "" {
 				fmt.Fprintf(&b, "virtual_alias_maps = %s\n", dir.alias)
 			}
 			fmt.Fprintf(&b, "virtual_mailbox_maps = %s\n", dir.mailbox)
-			if dir.env != nil {
-				b.WriteString("# libpq reads the TLS settings of the pgsql tables from the\n")
-				b.WriteString("# environment of the master (PGSSLMODE, PGSSLROOTCERT).\n")
-				fmt.Fprintf(&b, "import_environment = %s\n", importEnvironment)
-			}
 		} else {
-			fmt.Fprintf(&b, "virtual_mailbox_maps = texthash:/etc/postfix/%s\n", vmailboxFile)
+			// Alias to canonical address; the canonical addresses alone
+			// are valid mailboxes.
+			fmt.Fprintf(&b, "virtual_alias_maps = %s\n", tablePathTexthash(valiasFile))
+			fmt.Fprintf(&b, "virtual_mailbox_maps = %s\n", tablePathTexthash(vmailboxFile))
 		}
 		fmt.Fprintf(&b, "virtual_transport = lmtp:%s:%d\n\n",
 			render.ServiceFQDN(req.Server.Name, req.Server.Namespace, render.ComponentDovecot),
@@ -101,6 +107,12 @@ func renderMainCF(req *render.RenderRequest, dir *directoryMaps) string {
 		b.WriteString("# submission is the way in. Enable mailboxes to receive.\n")
 		b.WriteString("mydestination =\n\n")
 	}
+	if dir != nil && dir.env != nil {
+		// Recipient and sender tables alike.
+		b.WriteString("# libpq reads the TLS settings of the pgsql tables from the\n")
+		b.WriteString("# environment of the master (PGSSLMODE, PGSSLROOTCERT).\n")
+		fmt.Fprintf(&b, "import_environment = %s\n\n", importEnvironment)
+	}
 
 	if submissionEnabled(req) {
 		b.WriteString("# --- submission: Dovecot is the SASL backend (ADR 0004) ---\n")
@@ -108,7 +120,17 @@ func renderMainCF(req *render.RenderRequest, dir *directoryMaps) string {
 		fmt.Fprintf(&b, "smtpd_sasl_path = inet:%s:%d\n",
 			render.ServiceFQDN(req.Server.Name, req.Server.Namespace, render.ComponentDovecot),
 			render.PortDovecotAuth)
-		b.WriteString("smtpd_sasl_security_options = noanonymous\n\n")
+		b.WriteString("smtpd_sasl_security_options = noanonymous\n")
+		// Strict sender binding (ADR 0015, section 4.4): every owned
+		// address maps to the account name that Dovecot reports. The
+		// map is only consulted by the submission listener, whose
+		// master.cf entry carries reject_sender_login_mismatch; port 25
+		// is unaffected. A lookup error is a temporary failure.
+		senders := tablePathTexthash(senderLoginFile)
+		if dir != nil {
+			senders = dir.sender
+		}
+		fmt.Fprintf(&b, "smtpd_sender_login_maps = %s\n\n", senders)
 	}
 
 	b.WriteString("# --- TLS (ADR 0006 floor: AUTH only over TLS, TLS >= 1.2) ---\n")

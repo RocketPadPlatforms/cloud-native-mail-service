@@ -245,37 +245,37 @@ func TestDirectoryPgSQLVariants(t *testing.T) {
 	}{
 		"verify-full with a CA": {
 			env:   map[string]string{envTimeout: "5", envSSLMode: directory.SQLVerifyFull, envRootCert: caPath},
-			files: []string{caFile, pgsqlAliasFile, pgsqlMailboxFile},
+			files: []string{caFile, pgsqlAliasFile, pgsqlMailboxFile, pgsqlSenderFile},
 		},
 		"verify-full without a CA verifies against the system roots": {
 			mutate: func(s *directory.SQLTarget) { s.CA = nil },
 			env:    map[string]string{envTimeout: "5", envSSLMode: directory.SQLVerifyFull, envRootCert: "system"},
-			files:  []string{pgsqlAliasFile, pgsqlMailboxFile},
+			files:  []string{pgsqlAliasFile, pgsqlMailboxFile, pgsqlSenderFile},
 		},
 		"require with a CA checks the chain": {
 			mutate: func(s *directory.SQLTarget) { s.TLSMode = directory.SQLRequire },
 			env:    map[string]string{envTimeout: "5", envSSLMode: "require", envRootCert: caPath},
-			files:  []string{caFile, pgsqlAliasFile, pgsqlMailboxFile},
+			files:  []string{caFile, pgsqlAliasFile, pgsqlMailboxFile, pgsqlSenderFile},
 		},
 		"require without a CA": {
 			mutate: func(s *directory.SQLTarget) { s.TLSMode, s.CA = directory.SQLRequire, nil },
 			env:    map[string]string{envTimeout: "5", envSSLMode: "require"},
-			files:  []string{pgsqlAliasFile, pgsqlMailboxFile},
+			files:  []string{pgsqlAliasFile, pgsqlMailboxFile, pgsqlSenderFile},
 		},
 		"disable": {
 			mutate: func(s *directory.SQLTarget) { s.TLSMode, s.CA = directory.SQLDisable, nil },
 			env:    map[string]string{envTimeout: "5", envSSLMode: "disable"},
-			files:  []string{pgsqlAliasFile, pgsqlMailboxFile},
+			files:  []string{pgsqlAliasFile, pgsqlMailboxFile, pgsqlSenderFile},
 		},
 		"no aliases relation": {
 			mutate: func(s *directory.SQLTarget) { s.Aliases = nil },
 			env:    map[string]string{envTimeout: "5", envSSLMode: directory.SQLVerifyFull, envRootCert: caPath},
-			files:  []string{caFile, pgsqlMailboxFile},
+			files:  []string{caFile, pgsqlMailboxFile, pgsqlSenderFile},
 		},
 		"another schema": {
 			mutate: func(s *directory.SQLTarget) { s.Users = directory.Relation{Schema: "directory", Name: "mail_users"} },
 			env:    map[string]string{envTimeout: "5", envSSLMode: directory.SQLVerifyFull, envRootCert: caPath},
-			files:  []string{caFile, pgsqlAliasFile, pgsqlMailboxFile},
+			files:  []string{caFile, pgsqlAliasFile, pgsqlMailboxFile, pgsqlSenderFile},
 			want:   `FROM "directory"."mail_users" WHERE`,
 		},
 	} {
@@ -315,7 +315,7 @@ func TestDirectoryMainCF(t *testing.T) {
 		"ldap": {
 			d:      ldapSource(nil),
 			want:   []string{aliasDomains, "\nvirtual_alias_maps = ldap:/etc/postfix-secret/ldap-alias.cf\n", "\nvirtual_mailbox_maps = ldap:/etc/postfix-secret/ldap-mailbox.cf\n"},
-			absent: []string{"import_environment", "texthash"},
+			absent: []string{"import_environment", "texthash:/etc/postfix/v", "texthash:/etc/postfix/sender"},
 		},
 		"ldap without aliases": {
 			d:      ldapSource(ldapOnly),
@@ -347,15 +347,14 @@ func TestDirectoryMainCF(t *testing.T) {
 	}
 }
 
-// The directory tables are only rendered where they are read: a server
-// that receives mail for an authorized domain. A send-only server and the
-// fail-closed render have no tables and no secret.
+// The directory tables are only rendered where they are read: the
+// recipient tables by a server that receives mail for an authorized
+// domain, the sender table by one with submission (TestDirectorySenderTable).
+// The fail-closed render has no tables and no secret.
 func TestDirectoryOnlyWhereRead(t *testing.T) {
-	sendOnly := directoryRequest(t, ldapSource(nil))
-	sendOnly.Server.Spec.Mailboxes = nil
 	failClosed := directoryRequest(t, ldapSource(nil))
 	failClosed.AuthorizedDomains = nil
-	for name, req := range map[string]*render.RenderRequest{"no mailboxes": sendOnly, "fail closed": failClosed} {
+	for name, req := range map[string]*render.RenderRequest{"fail closed": failClosed} {
 		t.Run(name, func(t *testing.T) {
 			res, err := New().Render(req)
 			if err != nil {
@@ -383,7 +382,8 @@ func TestNoDirectoryRendersTheTexthash(t *testing.T) {
 	if len(res.SecretData) != 0 || len(res.Env) != 0 {
 		t.Errorf("secret %v, env %v, want none", sets.KeySet(res.SecretData), res.Env)
 	}
-	if got := res.ConfigData["main.cf"]; !strings.Contains(got, "virtual_mailbox_maps = texthash:/etc/postfix/vmailbox\n") || strings.Contains(got, "virtual_alias") {
+	if got := res.ConfigData["main.cf"]; !strings.Contains(got, "virtual_mailbox_maps = texthash:/etc/postfix/vmailbox\n") ||
+		!strings.Contains(got, "virtual_alias_maps = texthash:/etc/postfix/valias\n") {
 		t.Errorf("unexpected recipient maps in main.cf:\n%s", got)
 	}
 }

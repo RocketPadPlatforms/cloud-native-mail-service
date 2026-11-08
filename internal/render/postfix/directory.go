@@ -19,6 +19,8 @@ package postfix
 import (
 	"errors"
 	"fmt"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -32,8 +34,10 @@ import (
 const (
 	ldapMailboxFile  = "ldap-mailbox.cf"
 	ldapAliasFile    = "ldap-alias.cf"
+	ldapSenderFile   = "ldap-sender.cf"
 	pgsqlMailboxFile = "pgsql-mailbox.cf"
 	pgsqlAliasFile   = "pgsql-alias.cf"
+	pgsqlSenderFile  = "pgsql-sender.cf"
 	caFile           = "ca.crt"
 
 	// lookupTimeout bounds a connection to the directory in seconds.
@@ -57,35 +61,80 @@ const importEnvironment = "MAIL_CONFIG MAIL_DEBUG MAIL_LOGTAG TZ XAUTHORITY DISP
 // directoryMaps is the Postfix side of a directory: the map specs for
 // main.cf, the files of the Secret and the environment of the master.
 type directoryMaps struct {
-	mailbox string // virtual_mailbox_maps
+	mailbox string // virtual_mailbox_maps; empty when the server receives no mail
 	alias   string // virtual_alias_maps, empty when the directory has no aliases
+	sender  string // smtpd_sender_login_maps; empty when the server has no submission
 	secret  map[string]string
 	env     map[string]string
+}
+
+// uses says which tables a render needs: the recipient tables when the
+// server receives mail, the sender table when it has submission. A table
+// nothing reads is not rendered, so a send-only server carries no
+// recipient lookup and a server without submission no sender lookup.
+//
+// domains are the authorized domains. The sender table only answers for
+// addresses in them (its domain parameter, ldap_table(5) and
+// pgsql_table(5)): an address the directory knows in a domain the server
+// does not serve or authorize is owned by nobody (ADR 0015, section 4.4),
+// and the directory is not asked for it. domain is that list as rendered.
+type uses struct {
+	recipients, senders bool
+	domains             []string
+	domain              string
+}
+
+// domainNameRE is a domain name as the domain parameter takes it: a path
+// or a dictionary name would be read as a file or a table.
+var domainNameRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?([.][a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`)
+
+// domainList renders the sorted domains as the value of a domain
+// parameter, and refuses a name that is not a plain domain name.
+func domainList(domains []string) (string, error) {
+	list := make([]string, len(domains))
+	for i, d := range domains {
+		list[i] = strings.ToLower(d)
+		if !domainNameRE.MatchString(list[i]) {
+			return "", fmt.Errorf("%q is not a domain name", d)
+		}
+	}
+	slices.Sort(list)
+	return strings.Join(slices.Compact(list), ", "), nil
 }
 
 // renderDirectory renders the tables of a directory. Every value comes
 // from a validated API field, and the lookup key is only ever the
 // placeholder of the engine (%s), which Postfix quotes itself.
-func renderDirectory(d *render.DirectorySource) (*directoryMaps, error) {
+func renderDirectory(d *render.DirectorySource, u uses) (*directoryMaps, error) {
+	if u.senders {
+		var err error
+		if u.domain, err = domainList(u.domains); err != nil {
+			return nil, err
+		}
+		if u.domain == "" {
+			// Without a domain no address is served: no sender table.
+			return nil, errors.New("a sender table without an authorized domain")
+		}
+	}
 	switch {
 	case d.LDAP != nil:
-		return renderLDAP(d.LDAP)
+		return renderLDAP(d.LDAP, u)
 	case d.SQL != nil:
-		return renderPgSQL(d.SQL)
+		return renderPgSQL(d.SQL, u)
 	}
 	return nil, errors.New("directory without settings")
 }
 
 func tablePath(file string) string { return render.PostfixSecretDir + "/" + file }
 
-func renderLDAP(t *directory.LDAPTarget) (*directoryMaps, error) {
+func renderLDAP(t *directory.LDAPTarget, u uses) (*directoryMaps, error) {
 	if err := t.SettingsProblem(); err != nil {
 		return nil, err
 	}
 	filter := func(by directory.Lookup) (string, error) {
 		return directory.LookupFilter(t.Attributes, t.ActiveFilter, by, directory.KeyPostfix)
 	}
-	table := func(by directory.Lookup, result string) (string, error) {
+	table := func(by directory.Lookup, result, domain string) (string, error) {
 		q, err := filter(by)
 		if err != nil {
 			return "", err
@@ -112,6 +161,9 @@ func renderLDAP(t *directory.LDAPTarget) (*directoryMaps, error) {
 		b.WriteString("scope = sub\n")
 		fmt.Fprintf(&b, "query_filter = %s\n", q)
 		fmt.Fprintf(&b, "result_attribute = %s\n", result)
+		if domain != "" {
+			fmt.Fprintf(&b, "domain = %s\n", domain)
+		}
 		if t.TLSMode == directory.LDAPStartTLS {
 			b.WriteString("start_tls = yes\n")
 		} else {
@@ -128,17 +180,25 @@ func renderLDAP(t *directory.LDAPTarget) (*directoryMaps, error) {
 		return b.String(), nil
 	}
 
-	m := &directoryMaps{
-		mailbox: "ldap:" + tablePath(ldapMailboxFile),
-		secret:  map[string]string{},
-	}
+	m := &directoryMaps{secret: map[string]string{}}
 	var err error
-	if m.secret[ldapMailboxFile], err = table(directory.ByMail, t.Attributes.Mail); err != nil {
-		return nil, err
+	if u.recipients {
+		m.mailbox = "ldap:" + tablePath(ldapMailboxFile)
+		if m.secret[ldapMailboxFile], err = table(directory.ByMail, t.Attributes.Mail, ""); err != nil {
+			return nil, err
+		}
+		if t.Attributes.Aliases != "" {
+			m.alias = "ldap:" + tablePath(ldapAliasFile)
+			if m.secret[ldapAliasFile], err = table(directory.ByAlias, t.Attributes.Mail, ""); err != nil {
+				return nil, err
+			}
+		}
 	}
-	if t.Attributes.Aliases != "" {
-		m.alias = "ldap:" + tablePath(ldapAliasFile)
-		if m.secret[ldapAliasFile], err = table(directory.ByAlias, t.Attributes.Mail); err != nil {
+	if u.senders {
+		// The owner of an address is the login name, the account name
+		// Dovecot reports after a login (ADR 0015, section 4.4).
+		m.sender = "ldap:" + tablePath(ldapSenderFile)
+		if m.secret[ldapSenderFile], err = table(directory.BySender, t.Attributes.Login, u.domain); err != nil {
 			return nil, err
 		}
 	}
@@ -148,11 +208,11 @@ func renderLDAP(t *directory.LDAPTarget) (*directoryMaps, error) {
 	return m, nil
 }
 
-func renderPgSQL(t *directory.SQLTarget) (*directoryMaps, error) {
+func renderPgSQL(t *directory.SQLTarget, u uses) (*directoryMaps, error) {
 	if err := t.SettingsProblem(); err != nil {
 		return nil, err
 	}
-	table := func(query string) string {
+	table := func(query, domain string) string {
 		var b strings.Builder
 		b.WriteString("# CNMS-rendered Postfix pgsql table (ADR 0015) -- do not edit.\n")
 		// The non-URI form: a failed connection logs the URI of the
@@ -162,27 +222,43 @@ func renderPgSQL(t *directory.SQLTarget) (*directoryMaps, error) {
 		fmt.Fprintf(&b, "password = %s\n", t.Password)
 		fmt.Fprintf(&b, "dbname = %s\n", t.Database)
 		fmt.Fprintf(&b, "query = %s\n", query)
+		if domain != "" {
+			fmt.Fprintf(&b, "domain = %s\n", domain)
+		}
 		return b.String()
 	}
 	// The relation is a quoted identifier of validated fields, the
 	// columns are fixed, and the key is the quoted placeholder. The
 	// comparison is case-insensitive: Postfix folds the key to lower case.
 	m := &directoryMaps{
-		mailbox: "pgsql:" + tablePath(pgsqlMailboxFile),
-		secret: map[string]string{
-			pgsqlMailboxFile: table(fmt.Sprintf("SELECT mail FROM %s WHERE lower(mail) = '%%s' AND %s",
-				t.Users.Quoted(), directory.SQLLoginGuard)),
-		},
-		env: map[string]string{"PGSSLMODE": t.TLSMode, "PGCONNECT_TIMEOUT": strconv.Itoa(lookupTimeout)},
+		secret: map[string]string{},
+		env:    map[string]string{"PGSSLMODE": t.TLSMode, "PGCONNECT_TIMEOUT": strconv.Itoa(lookupTimeout)},
 	}
-	if t.Aliases != nil {
-		m.alias = "pgsql:" + tablePath(pgsqlAliasFile)
-		// The target must be an account that the users query would find:
-		// an alias of a removed or guarded login is no recipient (550 at
-		// RCPT, like LDAP), not mail that is accepted and bounces later.
-		m.secret[pgsqlAliasFile] = table(fmt.Sprintf(
-			"SELECT a.target FROM %s a JOIN %s u ON lower(u.mail) = lower(a.target) WHERE lower(a.alias) = '%%s' AND %s",
-			t.Aliases.Quoted(), t.Users.Quoted(), directory.SQLLoginGuardOn("u.login")))
+	if u.recipients {
+		m.mailbox = "pgsql:" + tablePath(pgsqlMailboxFile)
+		m.secret[pgsqlMailboxFile] = table(fmt.Sprintf("SELECT mail FROM %s WHERE lower(mail) = '%%s' AND %s",
+			t.Users.Quoted(), directory.SQLLoginGuard), "")
+		if t.Aliases != nil {
+			m.alias = "pgsql:" + tablePath(pgsqlAliasFile)
+			// The target must be an account that the users query would find:
+			// an alias of a removed or guarded login is no recipient (550 at
+			// RCPT, like LDAP), not mail that is accepted and bounces later.
+			m.secret[pgsqlAliasFile] = table(fmt.Sprintf(
+				"SELECT a.target FROM %s a JOIN %s u ON lower(u.mail) = lower(a.target) WHERE lower(a.alias) = '%%s' AND %s",
+				t.Aliases.Quoted(), t.Users.Quoted(), directory.SQLLoginGuardOn("u.login")), "")
+		}
+	}
+	if u.senders {
+		// The owner of an address: the login of the account whose mail
+		// column or alias is the address (the aliases of a removed or
+		// guarded login are owned by nobody, like the recipient lookup).
+		q := fmt.Sprintf("SELECT login FROM %s WHERE lower(mail) = '%%s' AND %s", t.Users.Quoted(), directory.SQLLoginGuard)
+		if t.Aliases != nil {
+			q += fmt.Sprintf(" UNION SELECT u.login FROM %s a JOIN %s u ON lower(u.mail) = lower(a.target) WHERE lower(a.alias) = '%%s' AND %s",
+				t.Aliases.Quoted(), t.Users.Quoted(), directory.SQLLoginGuardOn("u.login"))
+		}
+		m.sender = "pgsql:" + tablePath(pgsqlSenderFile)
+		m.secret[pgsqlSenderFile] = table(q, u.domain)
 	}
 	// libpq reads the root certificate from the environment; "system"
 	// (libpq 16 and later) verifies against the system roots, like the

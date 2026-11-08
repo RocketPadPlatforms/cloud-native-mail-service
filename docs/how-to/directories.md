@@ -145,11 +145,21 @@ libpq `connect_timeout` in the parameters did not shorten it).
 
 ## Limits of this version
 
-- The envelope sender of an authenticated user is not yet bound to the
-  addresses the directory returns: an authenticated user can submit mail as
-  any address of a served domain. The binding for every user source comes
-  with `MailUser` ([ADR 0015](../decisions/0015-user-sources-directory-users-and-aliases.md),
-  section 4.4).
+- An authenticated user may send only as an address the directory returns for
+  it (the envelope sender on port 587; [ADR
+  0015](../decisions/0015-user-sources-directory-users-and-aliases.md),
+  section 4.4): the `mail` attribute and the alias attribute (LDAP), or the
+  `mail` column and the aliases relation (PostgreSQL), of the entry whose
+  login is the one the user logged in with, and only in a domain the server
+  serves and authorizes (the directory is not asked for any other). Any other
+  sender, including one in
+  a served domain that nobody owns and the null sender, is refused with
+  `553 5.7.1` or `554 5.7.1`. A user whose entry has no value in the `mail`
+  attribute is not found by the directory at all and can neither log in nor
+  send. A lookup error (directory down) is `451 4.3.0`, never a refusal. The
+  header `From` of a directory user is not bound to its addresses: the user
+  can still put any address of a served domain there and have it signed (the
+  served-domain check of the guard applies).
 - A directory with an address that two accounts share (or an alias that is
   another account's address, or two values in `mail`) expands that address
   to both: keep the directory consistent. CNMS cannot see its content.

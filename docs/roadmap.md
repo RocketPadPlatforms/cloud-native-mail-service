@@ -40,8 +40,10 @@ the code and the [status conditions](reference/status-conditions.md).
   recipient validation, aliases and logins in Postfix and Dovecot; the
   static test users (`--enable-insecure-test-features`) are the only other
   source, and a server has one source (`UserSourceConflict`). The
-  `MailUser` API exists (3b), but nothing reads it yet. No
-  `MailServiceAccount` or sender binding yet.
+  `MailUser` API exists (3b), but nothing reads it yet. The envelope
+  sender of an authenticated user is bound to the addresses it owns, for
+  static users and directory users alike (3b); the header From binding for
+  operator-managed accounts and `MailServiceAccount` are not there yet.
 - **Mailboxes (Phase 4):** IMAP, LMTP delivery and the maildir volume
   work with the data plane. Open: quota, Dovecot metrics, the mailbox
   format ADR, and the k8up backup and restore e2e.

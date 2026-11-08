@@ -1,0 +1,12 @@
+# CNMS-rendered Dovecot userdb (mailboxes) -- do not edit.
+# Source: MailServer tenant1/mail (ADR 0015)
+
+# Format: user::uid:gid::home:
+alice@a.example::1000:1000::/srv/mail/alice:
+alice::1000:1000::/srv/mail/alice:
+bob@a.example::1000:1000::/srv/mail/bob:
+bob::1000:1000::/srv/mail/bob:
+carol@revoked.example::1000:1000::/srv/mail/carol:
+carol::1000:1000::/srv/mail/carol:
+testuser@a.example::1000:1000::/srv/mail/testuser:
+testuser::1000:1000::/srv/mail/testuser:

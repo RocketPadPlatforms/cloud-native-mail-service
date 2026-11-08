@@ -18,6 +18,7 @@ package render
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -43,7 +44,7 @@ func TestParseStaticUsers(t *testing.T) {
 			PasswordHash: "{SHA512-CRYPT}$6$salt$hash",
 			Address:      "testuser@example.com",
 		}}
-		if len(users) != len(want) || users[0] != want[0] {
+		if !reflect.DeepEqual(users, want) {
 			t.Fatalf("got %v, want %v", users, want)
 		}
 	})

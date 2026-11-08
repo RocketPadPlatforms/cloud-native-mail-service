@@ -9,10 +9,6 @@ committed.
 Scoped in [ADR 0015](decisions/0015-user-sources-directory-users-and-aliases.md)
 (three pull requests, see the roadmap):
 
-- Bind the submission login to the sender address (`smtpd_sender_login_maps`
-  plus `reject_sender_login_mismatch` on port 587, and the null sender): PR
-  3b. Not rendered today, so any authenticated user can use any sender
-  address.
 - Bind the header From to the login: sender-login maps check only
   `MAIL FROM`, so an authenticated user can still put any served domain in
   the header From and get it signed (ADR 0013, section 3). The check that

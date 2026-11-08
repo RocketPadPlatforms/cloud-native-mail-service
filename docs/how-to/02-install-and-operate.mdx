@@ -329,6 +329,10 @@ instead of accepting it and bouncing later, and a server without
 users rejects every recipient. Phase 3 replaces the table with the
 directory lookup.
 
+On port 587 a test user may send only as its own mailbox address (the
+envelope sender): any other address, an unknown one and the null sender are
+refused with `553 5.7.1` or `554 5.7.1`.
+
 Each user is usable with **both** the full address
 (`testuser@example.com`) and the bare username (`testuser`) for IMAP
 login; delivery (LMTP) is keyed by the full address (Dovecot 2.4 looks

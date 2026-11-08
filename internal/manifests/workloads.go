@@ -612,9 +612,9 @@ func tlsVolume(secretName string) corev1.Volume {
 // subPath staleness is fine: config changes always change the
 // pod-template hash and recreate the pods.
 func configSubPathMounts() []corev1.VolumeMount {
-	// The files of the Postfix render (the recipient table is always
-	// rendered, possibly empty).
-	files := []string{"main.cf", "master.cf", "vmailbox"}
+	// The files of the Postfix render (the table files are always
+	// rendered, possibly without a line).
+	files := append([]string{"main.cf", "master.cf"}, render.PostfixTableFiles...)
 	mounts := make([]corev1.VolumeMount, 0, len(files))
 	for _, f := range files {
 		mounts = append(mounts, corev1.VolumeMount{

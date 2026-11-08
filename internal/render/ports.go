@@ -58,9 +58,9 @@ const (
 	PortValkeyMetrics int32 = 9121 // redis_exporter sidecar (ADR-0005)
 )
 
-// DovecotUsersDir is where the Secret with the Dovecot users file is
-// mounted. It is a separate directory because a file mounted inside
-// the read-only ConfigMap mount at /etc/dovecot cannot be created.
+// DovecotUsersDir is where the Secret with the Dovecot passdb and userdb
+// files is mounted. It is a separate directory because a file mounted
+// inside the read-only ConfigMap mount at /etc/dovecot cannot be created.
 const DovecotUsersDir = "/etc/dovecot-users"
 
 // PostfixSecretDir is where the Secret with the directory tables of
@@ -99,3 +99,9 @@ func ServiceName(serverName string, c Component) string {
 func ServiceFQDN(serverName, namespace string, c Component) string {
 	return fmt.Sprintf("%s.%s.svc.cluster.local", ServiceName(serverName, c), namespace)
 }
+
+// PostfixTableFiles are the table files of the Postfix render (besides
+// main.cf and master.cf). They are always rendered, possibly without a
+// line, so the manifests mount exactly these and the validation gate
+// parses each of them.
+var PostfixTableFiles = []string{"vmailbox", "valias", "sender_login", "recipient_defer", "null_sender"}

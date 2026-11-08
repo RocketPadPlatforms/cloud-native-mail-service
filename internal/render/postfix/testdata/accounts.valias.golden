@@ -1,0 +1,5 @@
+# CNMS-rendered Postfix alias table (virtual_alias_maps) -- do not edit.
+# Source: MailServer tenant1/mail
+alice@b.example alice@a.example
+bobby@b.example bob@a.example
+sales@b.example alice@a.example

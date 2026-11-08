@@ -53,12 +53,22 @@ service auth {
     port = 12345
   }
 }
-# Phase 2 test source: the passwd-file rendered into this same
-# tree (users, from insecureStaticUsers). Phase 3 replaces it
-# with the directory (MailDirectory).
+# User source: the accounts, two passwd-files of the users Secret
+# (ADR 0015, section 3, point 5). The passdb lists who may log in,
+# the userdb where the mail goes: a disabled account is only in
+# the second, so it cannot log in and still receives.
+# A password hash is checked in an auth worker (verified on 2.4.5:
+# the passwd-file passdb honours passdb_use_worker), and the
+# workers are limited to 4: a memory-hard hash needs memory per
+# verification, and anyone can start one (ADR 0015, section 3,
+# point 4). Excess logins queue instead of using more memory.
 passdb passwd-file {
-  passwd_file_path = /etc/dovecot-users/users
+  passwd_file_path = /etc/dovecot-users/passdb
+  passdb_use_worker = yes
 }
 userdb passwd-file {
-  passwd_file_path = /etc/dovecot-users/users
+  passwd_file_path = /etc/dovecot-users/userdb
+}
+service auth-worker {
+  process_limit = 4
 }

@@ -161,31 +161,6 @@ func TestRenderMasterCF(t *testing.T) {
 	}
 }
 
-func TestRenderVMailbox(t *testing.T) {
-	tests := []struct {
-		name  string
-		users []render.Account
-	}{
-		{name: "no-users"},
-		{
-			// Sorted, lower-cased and de-duplicated.
-			name: "multi-user",
-			users: []render.Account{
-				{Name: "zed", Address: "Zed@" + domainB},
-				{Name: "amy", Address: "amy@" + domainA},
-				{Name: "amy2", Address: "AMY@" + domainA},
-			},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := testRequest(t, nil)
-			req.Accounts = tt.users
-			checkGolden(t, tt.name+".vmailbox", renderVMailbox(req))
-		})
-	}
-}
-
 func TestRenderErrors(t *testing.T) {
 	tests := []struct {
 		name string

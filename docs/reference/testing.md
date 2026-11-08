@@ -10,6 +10,25 @@ realism:
 | Guard matrix | Docker + `rspamc` (`make test-rspamd-guard`) | The never-unsigned guard and DKIM signing in the pinned Rspamd image, with the configuration the renderer produces |
 | E2E | kind + swaks + Mailpit + CoreDNS (`make test-e2e`) | The full data plane in a cluster: mail actually flows through Postfix, Rspamd and Dovecot |
 
+The renderer golden files (`internal/render/*/testdata`, regenerated with
+`go test -update`) cover, besides the engine configuration:
+
+- Postfix: the five table files of the accounts (`accounts.vmailbox`,
+  `valias`, `sender_login`, `recipient_defer`, `null_sender`) for accounts
+  with aliases in two domains, a disabled account, an account whose primary
+  domain is not authorized and a conflicted address; `accounts.maincf` and
+  `accounts.mastercf` (the strict sender binding on the submission listener,
+  `soft_bounce` on the `lmtp` service); the directory tables, including the
+  sender table of an LDAP and a PostgreSQL directory;
+- Dovecot: `accounts.passdb` and `accounts.userdb` (the login files and the
+  delivery files differ for a disabled and a suspended account) and the
+  directory blocks.
+
+Unit tests check the decision behind them (`render.PlanAccounts`: logins,
+mailboxes, aliases, owners of senders, deferred addresses, refusals) and that
+no unsafe value (a blank, a newline, a colon, a `+`, `..`) reaches a table
+file.
+
 The envtest suite installs the optional integration CRDs only on request:
 `PROMETHEUS_CRDS=1` adds a minimal `ServiceMonitor` CRD
 (`hack/crds/prometheus-operator`) and `DNSENDPOINT_CRDS=1` a minimal
@@ -191,9 +210,15 @@ receives, the directory's accounts do not); the next patch moves the server
 to the LDAP directory and the last one back to PostgreSQL, where the
 `MailDomain` specs expect it.
 
-The DKIM specs below submit as `alice@<domain>` for the domains the server
-serves (the header `From` check of 3a needs a served domain; the envelope
-sender binding of 3b will need addresses that `alice` owns).
+The DKIM specs below submit with the envelope sender `alice@e2e.example.org`,
+the address `alice` owns in the directory fixtures (the envelope sender
+binding of [ADR 0015](../decisions/0015-user-sources-directory-users-and-aliases.md),
+section 4.4, refuses every other address), and set the **header `From`** to
+`alice@<domain>` for the domain under test (`swaks --h-From`). Rspamd signs by
+the domain of the header `From` and the guard needs a served domain there, so
+the specs still prove signing by that domain and the `451 4.7.1` deferral of
+a domain without a key. The header `From` of a directory user is not bound to
+its addresses.
 
 The conflict, its watch and its index are also covered by envtest
 (`mailserver_directory_test.go`, `watches_test.go`).

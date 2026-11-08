@@ -51,6 +51,15 @@ func renderMasterCF(req *render.RenderRequest) string {
 		// Marks the mail as originating for the milter (the
 		// MILTER_README submission recipe).
 		b.WriteString("  -o milter_macro_daemon_name=ORIGINATING\n")
+		// Strict sender binding (ADR 0015, section 4.4), on this
+		// listener only: the null sender is refused first, because
+		// reject_sender_login_mismatch lets it through; the mismatch
+		// check then refuses a sender that another account owns and one
+		// that nobody owns. A value with blanks must use the braces form:
+		// without it the service fails to start, and `postfix check` does
+		// not notice (verified on 3.11.7, ADR 0015 verification).
+		b.WriteString("  -o { smtpd_sender_restrictions = check_sender_access " + tablePathTexthash(nullSenderFile) +
+			", reject_non_fqdn_sender, reject_sender_login_mismatch }\n")
 	}
 	b.WriteString("pickup    unix  n       -       n       60      1       pickup\n")
 	b.WriteString("cleanup   unix  n       -       n       -       0       cleanup\n")
@@ -73,6 +82,14 @@ func renderMasterCF(req *render.RenderRequest) string {
 	b.WriteString("local     unix  -       n       n       -       -       local\n")
 	b.WriteString("virtual   unix  -       n       n       -       -       virtual\n")
 	b.WriteString("lmtp      unix  -       -       n       -       -       lmtp\n")
+	// The users of Dovecot (a Secret that the kubelet projects) and the
+	// tables of Postfix (a validated rollout) change at different times,
+	// so Dovecot can answer a permanent 550 for mail that Postfix has
+	// accepted. soft_bounce turns that into a deferral: the mail stays
+	// queued and is retried (ADR 0015, section 4.7, cost 2). It is set
+	// for this service only; the SMTP server still rejects unknown
+	// recipients permanently.
+	b.WriteString("  -o soft_bounce=yes\n")
 	b.WriteString("anvil     unix  -       -       n       -       1       anvil\n")
 	b.WriteString("scache    unix  -       -       n       -       1       scache\n")
 	b.WriteString("postlog   unix-dgram n  -       n       -       1       postlogd\n")

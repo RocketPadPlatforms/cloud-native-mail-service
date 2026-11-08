@@ -16,7 +16,7 @@ mynetworks = 127.0.0.0/8
 smtpd_helo_required = yes
 smtpd_sender_restrictions = reject_non_fqdn_sender
 smtpd_relay_restrictions = permit_mynetworks, permit_sasl_authenticated, reject_unauth_destination
-smtpd_recipient_restrictions = permit_mynetworks, permit_sasl_authenticated, reject_unauth_destination
+smtpd_recipient_restrictions = check_recipient_access texthash:/etc/postfix/recipient_defer, permit_mynetworks, permit_sasl_authenticated, reject_unauth_destination
 
 # --- delivery routing: mailboxes enabled ---
 # Recipients of the authorized domains are delivered to
@@ -25,6 +25,8 @@ smtpd_recipient_restrictions = permit_mynetworks, permit_sasl_authenticated, rej
 # for a forged sender; an empty table rejects everything.
 mydestination =
 virtual_mailbox_domains = a.example, b.example
+virtual_alias_domains =
+virtual_alias_maps = texthash:/etc/postfix/valias
 virtual_mailbox_maps = texthash:/etc/postfix/vmailbox
 virtual_transport = lmtp:mail-dovecot.tenant1.svc.cluster.local:24
 
@@ -32,6 +34,7 @@ virtual_transport = lmtp:mail-dovecot.tenant1.svc.cluster.local:24
 smtpd_sasl_type = dovecot
 smtpd_sasl_path = inet:mail-dovecot.tenant1.svc.cluster.local:12345
 smtpd_sasl_security_options = noanonymous
+smtpd_sender_login_maps = texthash:/etc/postfix/sender_login
 
 # --- TLS (ADR 0006 floor: AUTH only over TLS, TLS >= 1.2) ---
 # Inbound on port 25 is opportunistic (STARTTLS offered,

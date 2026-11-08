@@ -1,4 +1,6 @@
 # CNMS-rendered Postfix recipient table (virtual_mailbox_maps) -- do not edit.
 # Source: MailServer tenant1/mail
-amy@a.example OK
-zed@b.example OK
+alice@a.example OK
+bob@a.example OK
+dave@a.example OK
+testuser@a.example OK
