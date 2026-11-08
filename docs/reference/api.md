@@ -13,7 +13,26 @@ Package v1alpha1 contains API Schema definitions for the cnms v1alpha1 API group
 - [MailDomain](#maildomain)
 - [MailDomainGrant](#maildomaingrant)
 - [MailServer](#mailserver)
+- [MailUser](#mailuser)
 
+
+
+#### AddressKind
+
+_Underlying type:_ _string_
+
+AddressKind says whether an address is the primary (canonical)
+address of a MailUser or one of its aliases.
+
+
+
+_Appears in:_
+- [MailUserAddressStatus](#mailuseraddressstatus)
+
+| Field | Description |
+| --- | --- |
+| `primary` | AddressKindPrimary is the canonical address: `<name>@<domain>`.<br /> |
+| `alias` | AddressKindAlias is an address from spec.aliases.<br /> |
 
 
 #### Availability
@@ -636,6 +655,110 @@ _Appears in:_
 | `records` _[DNSRecord](#dnsrecord) array_ | Records lists the DNS records of the hostname and whether a<br />lookup verified them: an A or AAAA record for every address of<br />the inbound LoadBalancer Service, and the SPF record of the<br />hostname from spec.spf (omitted while a MailDomain of the<br />hostname itself carries it). The records are reported and<br />verified, not published, and the verification never feeds into<br />Ready. Empty while the hostname is not authorized. The list is<br />atomic: one name holds several records of the same type. |  | MaxItems: 64 <br />Optional: \{\} <br /> |
 
 
+#### MailUser
+
+
+
+MailUser is the Schema for the cnms mail users.
+
+
+
+
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `cnms.rpp.gmbh/v1alpha1` | | |
+| `kind` _string_ | `MailUser` | | |
+| `kind` _string_ | Kind is a string value representing the REST resource this object represents.<br />Servers may infer this from the endpoint the client submits requests to.<br />Cannot be updated.<br />In CamelCase.<br />More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds |  | Optional: \{\} <br /> |
+| `apiVersion` _string_ | APIVersion defines the versioned schema of this representation of an object.<br />Servers should convert recognized schemas to the latest internal value, and<br />may reject unrecognized values.<br />More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources |  | Optional: \{\} <br /> |
+| `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  | Optional: \{\} <br /> |
+| `spec` _[MailUserSpec](#mailuserspec)_ | spec defines the desired state of the MailUser |  | Required: \{\} <br /> |
+| `status` _[MailUserStatus](#mailuserstatus)_ | status defines the observed state of the MailUser |  | Optional: \{\} <br /> |
+
+
+#### MailUserAddressStatus
+
+
+
+MailUserAddressStatus is the outcome for one address of a MailUser.
+
+
+
+_Appears in:_
+- [MailUserStatus](#mailuserstatus)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `address` _string_ | Address is `<local part>@<domain>`, lower case. |  | MaxLength: 318 <br />Required: \{\} <br /> |
+| `kind` _[AddressKind](#addresskind)_ | Kind of the address: the primary address or an alias. |  | Enum: [primary alias] <br />Required: \{\} <br /> |
+| `served` _boolean_ | Served is true when mail for the address is accepted and the<br />account may send as it. |  | Required: \{\} <br /> |
+| `reason` _string_ | Reason is Served, or why the address is not: AliasDomainNotFound,<br />AliasDomainNotServed, AliasDomainNotAuthorized or AddressConflict. |  | MaxLength: 64 <br />Required: \{\} <br /> |
+
+
+#### MailUserAlias
+
+
+
+MailUserAlias is one alias address of a MailUser.
+
+
+
+_Appears in:_
+- [MailUserSpec](#mailuserspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `localPart` _string_ | LocalPart of the address: lower-case ASCII letters, digits and<br />"." "_" "-", starting and ending with a letter or digit, no<br />"..". No "+": plus-addressing is not supported. |  | MaxLength: 64 <br />Pattern: `^[a-z0-9]([a-z0-9._-]\{0,62\}[a-z0-9])?$` <br />Required: \{\} <br /> |
+| `domainRef` _[NameReference](#namereference)_ | DomainRef references the MailDomain in the same namespace of the<br />address. The domain must be served by the same server as the<br />account and authorized for it; an alias that fails a check is<br />dropped and reported in status.addresses. |  | Required: \{\} <br /> |
+
+
+#### MailUserSpec
+
+
+
+MailUserSpec defines the desired state of a MailUser.
+
+A MailUser is an operator-managed account for environments without a
+directory service (ADR 0008, ADR 0015). The name of the object is the
+login and the local part of the primary address. The mailbox is
+keyed by the name. A MailServer has either a directory or MailUsers,
+not both.
+
+
+
+_Appears in:_
+- [MailUser](#mailuser)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `serverRef` _[NameReference](#namereference)_ | ServerRef references the MailServer in the same namespace that<br />hosts the account. The server need not exist yet. |  | Required: \{\} <br /> |
+| `domainRef` _[NameReference](#namereference)_ | DomainRef references the MailDomain in the same namespace of the<br />primary address, `<name>@<domain>`. The domain must be served by<br />the same server as the account and authorized for it; the<br />controller checks both, CEL cannot. |  | Required: \{\} <br /> |
+| `aliases` _[MailUserAlias](#mailuseralias) array_ | Aliases are further addresses that deliver into the mailbox of<br />the account and that the account may send as. Aliases are not<br />login names. At most 32. |  | MaxItems: 32 <br />Optional: \{\} <br /> |
+| `disabled` _boolean_ | Disabled removes the login and the right to send. Inbound mail<br />keeps being delivered to the mailbox. Defaults to false. | false | Optional: \{\} <br /> |
+| `passwordSecretRef` _[SecretReference](#secretreference)_ | PasswordSecretRef references a Secret in the same namespace with<br />the plaintext password under the key "password" (at least 12<br />characters). Unset means the operator generates a password and<br />keeps it in the credential Secret of the account. A generated<br />password is lost with the credential Secret; in production use a<br />Secret from GitOps or an external secret store. |  | Optional: \{\} <br /> |
+
+
+#### MailUserStatus
+
+
+
+MailUserStatus defines the observed state of a MailUser.
+
+
+
+_Appears in:_
+- [MailUser](#mailuser)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `observedGeneration` _integer_ | ObservedGeneration is the generation of the spec last applied. |  | Optional: \{\} <br /> |
+| `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#condition-v1-meta) array_ | Conditions represent the current state of the MailUser. The<br />"Ready" condition is true when the account works. |  | Optional: \{\} <br /> |
+| `address` _string_ | Address is the canonical (primary) address, `<name>@<domain>`.<br />Unset while the domain is not resolved. |  | MaxLength: 318 <br />Optional: \{\} <br /> |
+| `addresses` _[MailUserAddressStatus](#mailuseraddressstatus) array_ | Addresses lists the primary address and every alias with the<br />outcome of each, at most 33 entries. |  | MaxItems: 33 <br />Optional: \{\} <br /> |
+| `credentialSecretName` _string_ | CredentialSecretName is the name of the Secret with the<br />operator-owned credential of the account. |  | MaxLength: 253 <br />Optional: \{\} <br /> |
+| `credentialRevision` _string_ | CredentialRevision is the resourceVersion of the credential<br />Secret after the last write that changed the password hash. It<br />is not secret; its change tells the MailServer to pick up the<br />new hash. |  | MaxLength: 253 <br />Optional: \{\} <br /> |
+
+
 #### Mailboxes
 
 
@@ -670,6 +793,8 @@ _Appears in:_
 - [DirectOutbound](#directoutbound)
 - [MailDomainSpec](#maildomainspec)
 - [MailServerSpec](#mailserverspec)
+- [MailUserAlias](#mailuseralias)
+- [MailUserSpec](#mailuserspec)
 - [RelayOutbound](#relayoutbound)
 
 | Field | Description | Default | Validation |
@@ -868,6 +993,7 @@ SecretReference references a Secret in the same namespace.
 _Appears in:_
 - [LDAP](#ldap)
 - [LDAPTLS](#ldaptls)
+- [MailUserSpec](#mailuserspec)
 - [SQL](#sql)
 - [SQLTLS](#sqltls)
 

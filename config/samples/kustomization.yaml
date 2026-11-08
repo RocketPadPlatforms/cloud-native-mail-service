@@ -13,6 +13,10 @@
 # The MailDomain variants cnms_v1alpha1_maildomain-byo-keys.yaml and
 # cnms_v1alpha1_maildomain-ed25519.yaml claim the same domain as
 # cnms_v1alpha1_maildomain.yaml and are not listed here either.
+# The MailUser sample cnms_v1alpha1_mailuser.yaml is not listed either: a
+# server has a directory or MailUsers, not both, and the MailServer above
+# has a directory. It references a second MailDomain (maildomain-net-sample,
+# example.net) that you create like cnms_v1alpha1_maildomain.yaml.
 # The draft scenario in full-setup/ is a separate kustomization (names and
 # domains differ from the samples above, so both can be applied):
 #   kubectl create namespace mail-full-setup
