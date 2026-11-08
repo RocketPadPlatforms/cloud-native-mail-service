@@ -157,6 +157,9 @@ type MailUserAddressStatus struct {
 
 	// Reason is Served, or why the address is not: AliasDomainNotFound,
 	// AliasDomainNotServed, AliasDomainNotAuthorized or AddressConflict.
+	// On the primary address, and on an alias of a suspended account, it
+	// is the cause on the primary domain: DomainNotFound, DomainNotServed
+	// or DomainNotAuthorized.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MaxLength=64
 	Reason string `json:"reason"`

@@ -692,7 +692,7 @@ _Appears in:_
 | `address` _string_ | Address is `<local part>@<domain>`, lower case. |  | MaxLength: 318 <br />Required: \{\} <br /> |
 | `kind` _[AddressKind](#addresskind)_ | Kind of the address: the primary address or an alias. |  | Enum: [primary alias] <br />Required: \{\} <br /> |
 | `served` _boolean_ | Served is true when mail for the address is accepted and the<br />account may send as it. |  | Required: \{\} <br /> |
-| `reason` _string_ | Reason is Served, or why the address is not: AliasDomainNotFound,<br />AliasDomainNotServed, AliasDomainNotAuthorized or AddressConflict. |  | MaxLength: 64 <br />Required: \{\} <br /> |
+| `reason` _string_ | Reason is Served, or why the address is not: AliasDomainNotFound,<br />AliasDomainNotServed, AliasDomainNotAuthorized or AddressConflict.<br />On the primary address, and on an alias of a suspended account, it<br />is the cause on the primary domain: DomainNotFound, DomainNotServed<br />or DomainNotAuthorized. |  | MaxLength: 64 <br />Required: \{\} <br /> |
 
 
 #### MailUserAlias
