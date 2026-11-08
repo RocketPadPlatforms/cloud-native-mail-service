@@ -68,6 +68,7 @@ module.exports = {
         'decisions/never-unsigned-guard',
         'decisions/domain-server-binding-and-hostname',
         'decisions/user-sources-directory-users-and-aliases',
+        'decisions/mailbox-format-and-storage',
       ],
     },
     { type: 'doc', id: 'roadmap' },

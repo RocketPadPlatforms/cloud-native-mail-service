@@ -36,4 +36,5 @@ See [TEMPLATE.md](TEMPLATE.md).
 | [0013](0013-never-unsigned-guard.md) | Never-unsigned guard | Accepted (partially amended by 0014 and 0015) |
 | [0014](0014-domain-server-binding-and-hostname.md) | Domain-to-server binding and server hostname | Accepted (partially amended by 0015) |
 | [0015](0015-user-sources-directory-users-and-aliases.md) | User sources, directory users and addresses | Accepted |
+| [0016](0016-mailbox-format-and-storage.md) | Mailbox format and storage | Proposed |
 
