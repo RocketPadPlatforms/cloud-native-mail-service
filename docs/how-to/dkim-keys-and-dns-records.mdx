@@ -262,8 +262,8 @@ The certificate of the server carries the hostname as its only name. The
 domains are not on it, so submission and IMAP clients connect to the
 hostname (not to `mail.<domain>`, unless that is the hostname) or verify
 it. Applications in the cluster connect to the Service and verify the
-hostname; the credential Secret of a `MailServiceAccount` will carry it as
-`tlsServerName` (ADR 0008, Phase 3).
+hostname; the credential Secret of a `MailServiceAccount` carries it as
+`tlsServerName` ([service accounts](service-accounts.md)).
 
 A public CA cannot validate the hostname with the HTTP-01 challenge: the
 mail load balancer serves no HTTP. Use an issuer with the **DNS-01
