@@ -39,6 +39,11 @@ const (
 // login and the local part of the primary address. The mailbox is
 // keyed by the name. A MailServer has either a directory or MailUsers,
 // not both.
+//
+// The mailbox of an account stays on the volume when the MailUser is
+// deleted, and a MailUser created later with the same name uses it,
+// with the old mail. Purge it before the name is reused (purge runbook,
+// docs/operations/index.md#purge-a-mailbox).
 type MailUserSpec struct {
 	// ServerRef references the MailServer in the same namespace that
 	// hosts the account. The server need not exist yet.
@@ -179,7 +184,8 @@ type MailUserAddressStatus struct {
 // +kubebuilder:validation:XValidation:rule="!self.metadata.name.startsWith('sa.')",message="names that start with 'sa.' are reserved for service accounts"
 // +kubebuilder:validation:XValidation:rule="!has(self.spec.aliases) || !self.spec.aliases.exists(a, a.localPart == self.metadata.name && a.domainRef.name == self.spec.domainRef.name)",message="an alias must not be the primary address"
 
-// MailUser is the Schema for the cnms mail users.
+// MailUser is the Schema for the cnms mail users. Its mailbox outlives it:
+// a MailUser created later with the same name uses the old mailbox.
 type MailUser struct {
 	metav1.TypeMeta `json:",inline"`
 
@@ -187,7 +193,11 @@ type MailUser struct {
 	// +optional
 	metav1.ObjectMeta `json:"metadata,omitzero"`
 
-	// spec defines the desired state of the MailUser
+	// spec defines the desired state of the MailUser. The mailbox of an
+	// account stays on the volume when the MailUser is deleted, and a
+	// MailUser created later with the same name uses it, with the old mail.
+	// Purge it before the name is reused (purge runbook,
+	// docs/operations/index.md#purge-a-mailbox).
 	// +required
 	Spec MailUserSpec `json:"spec"`
 
