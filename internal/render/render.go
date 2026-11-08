@@ -22,6 +22,7 @@ package render
 
 import (
 	cnmsv1alpha1 "github.com/RocketPadPlatforms/cloud-native-mail-service/api/v1alpha1"
+	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/addresses"
 	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/directory"
 )
 
@@ -44,19 +45,29 @@ const (
 // shortcut: no send-only flag yet; the service accounts of 3c add it.
 type Account struct {
 	// Name is the account name: the login, and the mailbox directory.
-	Name         string
+	Name string
+	// PasswordHash is the hash of the login. An account without one has
+	// no login (its credential is missing), and still receives mail.
 	PasswordHash string
 	// Address is the primary (canonical) address.
 	Address string
-	// Aliases are the further addresses the account owns: mail to them
-	// is delivered to the mailbox of Address and the account may send as
-	// them. The caller passes only the aliases that passed the checks of
-	// ADR 0015, section 4.1; PlanAccounts drops those in a domain that is
-	// not authorized.
-	Aliases []string
 	// Disabled removes the login and the right to send; mail keeps being
 	// delivered (ADR 0015, section 3, point 5).
 	Disabled bool
+
+	// Verdict is what addresses.Decide decided for the account: whether
+	// it is suspended and one row per address (served, deferred, may
+	// send). PlanAccounts only applies it, so that the status of a
+	// MailUser and the tables that are rendered cannot differ. The
+	// MailServer controller sets it from the MailUsers of the server.
+	Verdict addresses.UserResult
+
+	// Aliases are the further addresses of an account that has no
+	// Verdict, named by DNS domain (the static test users, which have no
+	// MailDomain objects): DecideAccounts feeds them to addresses.Decide
+	// together with the primary address. They are ignored when Verdict is
+	// set.
+	Aliases []string
 }
 
 // DirectorySource is the external user directory of a MailServer (a
@@ -87,8 +98,9 @@ type RenderRequest struct {
 	// name the server presents, see ServerHostname.
 	Hostname string
 
-	// Accounts are the operator-managed accounts, today the parsed
-	// users of spec.submission.insecureStaticUsers (empty when unset).
+	// Accounts are the operator-managed accounts: the MailUsers of the
+	// server, with their verdict, or the parsed users of
+	// spec.submission.insecureStaticUsers (empty when unset).
 	Accounts []Account
 	// Directory is the external user directory, or nil. It replaces
 	// the accounts as the user source of Postfix and Dovecot.
@@ -131,10 +143,16 @@ type RenderResult struct {
 	ConfigData map[string]string
 
 	// SecretData holds rendered files that must not live in a
-	// ConfigMap (the Dovecot users with their password hashes). The
-	// controller places them in an immutable Secret that is mounted
-	// next to the ConfigMap. Empty for most components.
+	// ConfigMap (the directory password and CA). The controller places
+	// them in an immutable Secret that is mounted next to the ConfigMap.
+	// Empty for most components.
 	SecretData map[string]string
+	// LiveData holds the files that the engine re-reads while it runs: the
+	// passdb and userdb of Dovecot (ADR 0015, section 4.7). They go to one
+	// Secret with a stable name that the controller updates in place, and
+	// they are not part of the config hash, so a changed user is no new
+	// revision and no restart. Empty for most components.
+	LiveData map[string]string
 	// SecretDigest is the keyed digest of SecretData that names the Secret
 	// and enters the config hash. manifests.Build sets it; the renderers
 	// leave it empty.

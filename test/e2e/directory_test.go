@@ -36,7 +36,7 @@ const imapURL = "imaps://mail-dovecot." + e2eNamespace + ".svc.cluster.local"
 var (
 	// rcptReplyRe finds the reply to the RCPT TO of a swaks transcript;
 	// authReplyRe the reply to its AUTH.
-	rcptReplyRe = regexp.MustCompile(`(?s)-> RCPT TO:<[^>\n]*>\s*\n\s*<[-*~]+\s+(\d{3}(?: \d\.\d+\.\d+)?)`)
+	rcptReplyRe = regexp.MustCompile(`(?s)[-~]> RCPT TO:<[^>\n]*>\s*\n\s*<[-*~]+\s+(\d{3}(?: \d\.\d+\.\d+)?)([^\n]*)`)
 	authReplyRe = regexp.MustCompile(`(?s)[-~]> AUTH [^\n]*\n\s*<[-*~]+\s+(\d{3}(?: \d\.\d+\.\d+)?)`)
 )
 
@@ -216,6 +216,8 @@ func registerDirectorySpecs() {
 				deadAliases: []string{"carol-alias@" + e2eDomain},
 			})
 		})
+
+		registerMailUserSpecs() // mailuser_test.go
 
 		Context("back on PostgreSQL", func() {
 			It("returns the server to the PostgreSQL directory", func() {

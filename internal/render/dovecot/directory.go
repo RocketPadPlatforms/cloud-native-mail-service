@@ -26,7 +26,7 @@ import (
 )
 
 // The files of the directory secrets, in the Secret that is mounted at
-// render.DovecotUsersDir. Dovecot reads a setting from a file with `<`
+// render.DovecotSecretDir. Dovecot reads a setting from a file with `<`
 // (verified on 2.4.5), so no secret value is in the ConfigMap and
 // `doveconf -n` still validates the whole structure.
 const (
@@ -35,7 +35,7 @@ const (
 	caFile           = "ca.crt"
 )
 
-func secretPath(file string) string { return render.DovecotUsersDir + "/" + file }
+func secretPath(file string) string { return render.DovecotSecretDir + "/" + file }
 
 // quote writes a setting value as a double-quoted string: a value with a
 // "#" would be cut off as a comment, and a backslash or a quote would

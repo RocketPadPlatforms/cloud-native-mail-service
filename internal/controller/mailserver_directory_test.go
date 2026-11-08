@@ -120,12 +120,12 @@ var _ = Describe("MailServer with a MailDirectory", func() {
 		Expect(postfixFiles).To(HaveKey("ldap-mailbox.cf"))
 		Expect(postfixFiles["ldap-mailbox.cf"]).To(ContainSubstring("\nbind_pw = " + bindPassword + "\n"))
 		Expect(postfixFiles).To(HaveKey("ca.crt"))
-		dovecotFiles := mountedSecret("dovecot", "users")
+		dovecotFiles := mountedSecret("dovecot", "directory")
 		Expect(dovecotFiles).To(HaveKeyWithValue("ldap-password", bindPassword))
 		Expect(dovecotFiles).NotTo(HaveKey("users"))
 
 		// The secret values are in no ConfigMap.
-		for _, component := range []string{"postfix", "dovecot", "rspamd", "valkey"} {
+		for _, component := range dataPlaneComponents {
 			for _, cm := range configMapsG(ns, component) {
 				for k, v := range cm.Data {
 					Expect(v).NotTo(ContainSubstring(bindPassword), "%s/%s", cm.Name, k)
@@ -158,7 +158,7 @@ var _ = Describe("MailServer with a MailDirectory", func() {
 		reconcileServerG(r, ns, testServerName)
 		Expect(postfixHash()).NotTo(Equal(before))
 		Expect(mountedSecret("postfix", "directory")["ldap-mailbox.cf"]).To(ContainSubstring("bind_pw = bind-secret-value-2\n"))
-		Expect(mountedSecret("dovecot", "users")).To(HaveKeyWithValue("ldap-password", "bind-secret-value-2"))
+		Expect(mountedSecret("dovecot", "directory")).To(HaveKeyWithValue("ldap-password", "bind-secret-value-2"))
 	})
 
 	It("rolls a changed MailDirectory out as a new revision", func() {

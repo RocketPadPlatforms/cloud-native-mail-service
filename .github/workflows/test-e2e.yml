@@ -12,7 +12,7 @@ jobs:
     permissions:
       contents: read
     name: "Run e2e tests on kind (prometheus CRDs: ${{ matrix.prometheus-crds }})"
-    timeout-minutes: 45
+    timeout-minutes: 60
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

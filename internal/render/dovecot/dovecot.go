@@ -49,25 +49,26 @@ func (r *Renderer) Render(req *render.RenderRequest) (*render.RenderResult, erro
 	if err != nil {
 		return nil, err
 	}
-	if req.Directory == nil {
-		plan, err := render.PlanAccounts(req.Accounts, req.AuthorizedDomains, req.ConflictedAddresses)
-		if err != nil {
-			return nil, err
-		}
-		secret = map[string]string{
-			passdbFile: renderPassdb(req, plan),
-			userdbFile: renderUserdb(req, plan),
-		}
+	plan, err := render.PlanAccounts(req.Accounts, req.AuthorizedDomains, req.ConflictedAddresses)
+	if err != nil {
+		return nil, err
+	}
+	// The users files are the live data of ADR 0015, section 4.7, whichever user
+	// source the server has: a directory leaves them without a line.
+	live := map[string]string{
+		passdbFile: renderPassdb(req, plan),
+		userdbFile: renderUserdb(req, plan),
 	}
 	return &render.RenderResult{
 		ConfigData: map[string]string{
 			"dovecot.conf": conf,
 		},
-		// The password hashes (the passdb file) and the userdb file, or
-		// the directory password and CA, go to a Secret, not a
-		// ConfigMap. A directory without a bind password and CA has
-		// none.
+		// The directory password and CA go to a Secret, not a ConfigMap.
+		// A directory without a bind password and CA has none.
 		SecretData: secret,
+		// The password hashes (the passdb file) and the userdb file go to
+		// the live Secret, outside the config hash.
+		LiveData: live,
 		// `doveconf -n` validates the rendered configuration before
 		// rollout (D4: a bad config must never replace a working
 		// one). Verified against the running 2.4.5 image: unknown

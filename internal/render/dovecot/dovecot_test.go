@@ -165,8 +165,11 @@ func TestRenderResultCommands(t *testing.T) {
 	if _, ok := res.ConfigData["passdb"]; ok {
 		t.Error("the users file (password hashes) must not be in the ConfigMap data")
 	}
-	if _, ok := res.SecretData["passdb"]; !ok {
-		t.Error("missing passdb in secret data")
+	if _, ok := res.LiveData["passdb"]; !ok {
+		t.Error("missing passdb in the live data")
+	}
+	if _, ok := res.SecretData["passdb"]; ok {
+		t.Error("the users files are the live data, not the hash-named Secret")
 	}
 }
 

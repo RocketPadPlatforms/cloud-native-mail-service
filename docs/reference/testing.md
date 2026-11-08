@@ -226,8 +226,30 @@ reason and an Event, keeps its pod template and keeps answering from the
 directory; removing the `directoryRef` then rolls out the static users,
 which keeps the Phase 2 static path covered (the static user logs in and
 receives, the directory's accounts do not); the next patch moves the server
-to the LDAP directory and the last one back to PostgreSQL, where the
-`MailDomain` specs expect it.
+to the LDAP directory, the specs of the `MailUser`s follow (below), and the last
+patch returns it to PostgreSQL, where the `MailDomain` specs expect it.
+
+The `MailUser` specs (ADR 0015, 3b) first show that `MailUser`s on a server with
+a directory are refused (`UserSourceConflict`, the running revision stays), then
+remove the directory and check, with two domains: delivery to all addresses of
+one account into the one mailbox (read over IMAP by name and by address, in no
+other mailbox); login by name and by primary address, not by alias; sending as
+each owned address (a message reaches the Mailpit sink), and the refusals
+(`553 5.7.1` for another account's address, an unowned address and a foreign
+domain, `554 5.7.1` for the null sender); a disabled account that cannot log in
+over SASL or IMAP and still receives (it reads the message once re-enabled); an
+account added, changed and removed with no restart of the Dovecot pod (its UID
+and restart count are compared) and the latency of each change; and the
+revocation of the alias domain, which ends its addresses while the account keeps
+its primary address. The envtest specs (`mailserver_users_test.go`) cover the
+rendering: the Postfix maps, the live Secret (same name, new `resourceVersion`,
+unchanged pod-template hash for a changed account), disabled, suspended and
+conflicting accounts, a missing or foreign credential hash, the second user
+source, the last account removed, a revoked domain, the cleanup of the earlier
+scheme, and the wake-up of the server by a new `status.credentialRevision`
+without waiting for the safety requeue. The e2e suite takes 19 to 21 minutes
+(the MailUser block about five of them), against the 45-minute timeout of
+`make test-e2e` (60 minutes for the CI job).
 
 The DKIM specs below submit with the envelope sender `alice@e2e.example.org`,
 the address `alice` owns in the directory fixtures (the envelope sender

@@ -91,7 +91,7 @@ var _ = Describe("MailServer object ownership", func() {
 			// controller resolves it: Postfix reads its sender table, so
 			// its configuration depends on it, and holds a Secret.
 			src := userSource{directory: &render.DirectorySource{LDAP: &directory.LDAPTarget{
-				Host: "ldap.example.org", BaseDN: "dc=example,dc=org", TLSMode: directory.LDAPStartTLS,
+				Host: "ldap.example.org", BaseDN: exampleBaseDN, TLSMode: directory.LDAPStartTLS,
 				Attributes: directory.Attributes{Login: directory.DefaultLogin, Mail: directory.DefaultMail},
 			}}}
 			plane, err = renderDataPlane(server, []string{domain}, server.Spec.Hostname, src, nil,

@@ -78,10 +78,10 @@ pgsql sql.example.com {
     host = sql.example.com
     port = 5432
     user = mailro
-    password = </etc/dovecot-users/sql-password
+    password = </etc/dovecot-secret/sql-password
     dbname = maildir
     sslmode = verify-full
-    sslrootcert = /etc/dovecot-users/ca.crt
+    sslrootcert = /etc/dovecot-secret/ca.crt
   }
 }
 passdb sql {

@@ -23,7 +23,7 @@ import (
 
 func TestActiveKeys(t *testing.T) {
 	req := &RenderRequest{
-		AuthorizedDomains: []string{"a.example", "b.example"},
+		AuthorizedDomains: []string{"a.example", domB},
 		DKIMKeys: []DomainKeys{
 			{Domain: "a.example", Keys: []DKIMKey{{Selector: "s2"}, {Selector: "s1"}}},
 			{Domain: "revoked.example", Keys: []DKIMKey{{Selector: "x"}}},

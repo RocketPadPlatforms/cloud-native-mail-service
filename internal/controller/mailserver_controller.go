@@ -51,6 +51,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/recorder"
 
 	cnmsv1alpha1 "github.com/RocketPadPlatforms/cloud-native-mail-service/api/v1alpha1"
+	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/addresses"
 	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/dnsrecords"
 	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/manifests"
 	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/render"
@@ -227,14 +228,17 @@ func (r *MailServerReconciler) now() time.Time {
 // +kubebuilder:rbac:groups=cnms.rpp.gmbh,resources=mailservers/status,verbs=patch
 // +kubebuilder:rbac:groups=cnms.rpp.gmbh,resources=mailservers/finalizers,verbs=update
 // +kubebuilder:rbac:groups=cnms.rpp.gmbh,resources=maildomains,verbs=get;list;watch
+// +kubebuilder:rbac:groups=cnms.rpp.gmbh,resources=mailusers,verbs=get;list;watch
 // +kubebuilder:rbac:groups=cnms.rpp.gmbh,resources=maildirectories,verbs=get;list;watch
 // +kubebuilder:rbac:groups=cnms.rpp.gmbh,resources=maildomaingrants,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=services;persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
-// ConfigMaps and Secrets of the data plane are immutable: created and deleted, never updated.
+// ConfigMaps and Secrets of the data plane are immutable: created and deleted, never updated,
+// except the live users Secret of Dovecot (ADR 0015, section 4.7), which is updated in place.
 // Secrets are never watched or cached: the TLS and users Secrets are read by name, and
-// the operator's own are listed (by label) for the cleanup of superseded ones.
+// the operator's own are listed (by label) for the cleanup of superseded ones and for the
+// credential Secrets of the MailUsers.
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;delete
-// +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;create;delete
+// +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;create;update;delete
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;delete
 // +kubebuilder:rbac:groups=apps,resources=statefulsets;deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=get;list;watch;create;update;patch;delete
@@ -282,7 +286,7 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	// Domain authorization (ADR 0003) is evaluated first and on every
 	// reconcile: no tenant-controlled check below may keep a revoked
 	// domain from reaching the data plane.
-	auth, domains, err := r.authorize(ctx, server)
+	auth, domains, ev, err := r.authorize(ctx, server)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -299,7 +303,7 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	// revoked domain, so it gets the fail-closed render instead (no
 	// domains, no users; fixed content that depends on no tenant
 	// input beyond the server itself).
-	blocked, src, err := r.preflight(ctx, server, len(auth.domains) > 0)
+	blocked, src, err := r.preflight(ctx, server, len(auth.domains) > 0, domains, ev)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -307,6 +311,7 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		blocked = &blockedBy{authReason, authMessage}
 	}
 	setDomainsStatus(server, auth, blocked)
+	r.setAddressesCondition(server, src.verdict)
 	renderDomains, renderSrc := auth.domains, src
 	failClosed := false
 	if blocked != nil {
@@ -321,7 +326,7 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			// version put on it). A hostname change never fails the
 			// domains closed (ADR 0014).
 			if exists {
-				if err := r.reapplyCertificate(ctx, server, auth.hostname); err != nil {
+				if err := r.keepRunning(ctx, server, auth.hostname, blocked); err != nil {
 					return block(r.reportApplyFailure(ctx, server, prevReady, err), err.Error())
 				}
 			}
@@ -354,6 +359,11 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	prevValidated := meta.FindStatusCondition(*conds, ConditionConfigValidated)
 	prevValidated = prevValidated.DeepCopy()
 	g, rolloutWant, err := r.applyGuarded(ctx, server, renderDomains, auth.hostname, renderSrc, keys.keys, certCRDs, failClosed)
+	if stderrors.Is(err, errLiveUsersRaced) {
+		// Somebody wrote the live users Secret between our read and our write
+		// (a second replica): nothing failed, read again. Ready is not touched.
+		return ctrl.Result{RequeueAfter: liveUsersRetry}, nil
+	}
 	if err != nil {
 		return block(r.reportApplyFailure(ctx, server, prevReady, err), err.Error())
 	}
@@ -411,22 +421,23 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 // HostnameAuthorized conditions and returns them with the MailDomains it
 // read. The hostname is judged on its own: a failure leaves the domains
 // alone.
-func (r *MailServerReconciler) authorize(ctx context.Context, server *cnmsv1alpha1.MailServer) (authorization, *cnmsv1alpha1.MailDomainList, error) {
+func (r *MailServerReconciler) authorize(ctx context.Context, server *cnmsv1alpha1.MailServer) (authorization, *cnmsv1alpha1.MailDomainList, *authorizationEvaluator, error) {
 	grants, domains, err := listAuthorizationInput(ctx, r)
 	if err != nil {
-		return authorization{}, nil, err
+		return authorization{}, nil, nil, err
 	}
 	servers := &cnmsv1alpha1.MailServerList{}
 	if err := r.List(ctx, servers); err != nil {
-		return authorization{}, nil, err
+		return authorization{}, nil, nil, err
 	}
-	auth := (&authorizationEvaluator{
+	ev := &authorizationEvaluator{
 		server:  server,
 		grants:  grantRefs(grants),
 		claims:  domainClaims(domains),
 		servers: serverClaims(servers),
 		mode:    r.DomainAuthorization,
-	}).Evaluate()
+	}
+	auth := ev.Evaluate()
 	conds, generation := &server.Status.Conditions, server.Generation
 
 	reason, message := auth.condition()
@@ -438,7 +449,7 @@ func (r *MailServerReconciler) authorize(ctx context.Context, server *cnmsv1alph
 	prev = meta.FindStatusCondition(*conds, ConditionHostnameAuthorized).DeepCopy()
 	setCondition(conds, generation, ConditionHostnameAuthorized, hostStatus, hostReason, hostMessage)
 	r.emitHostnameEvent(server, prev, hostStatus, hostReason, hostMessage)
-	return auth, domains, nil
+	return auth, domains, ev, nil
 }
 
 // reportApplyFailure logs a failed apply and returns the reason of the
@@ -472,10 +483,12 @@ func (r *MailServerReconciler) setAuxiliaryConditions(ctx context.Context, serve
 // applyGuarded applies the render for domains and users. If the
 // workloads were not replaced (the new render is still validating or
 // was rejected) while they serve a domain that is no longer
-// authorized, it applies the fail-closed render instead of waiting.
+// authorized, it applies the fail-closed render instead of waiting. That
+// fallback does not write the live users Secret: the users of the domains that
+// are still authorized keep their logins (ADR 0015, section 4.6).
 // The returned map holds the revision the rollout check waits for.
 func (r *MailServerReconciler) applyGuarded(ctx context.Context, server *cnmsv1alpha1.MailServer, domains []string, hostname string, src userSource, keys []render.DomainKeys, certCRDs, failClosed bool) (*gate, map[string]string, error) {
-	g, err := r.applyDataPlane(ctx, server, domains, hostname, src, keys, certCRDs)
+	g, err := r.applyDataPlane(ctx, server, domains, hostname, src, keys, certCRDs, true)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -486,7 +499,7 @@ func (r *MailServerReconciler) applyGuarded(ctx context.Context, server *cnmsv1a
 	if err != nil || !need {
 		return g, nil, err
 	}
-	closed, err := r.applyDataPlane(ctx, server, nil, hostname, userSource{}, nil, certCRDs)
+	closed, err := r.applyDataPlane(ctx, server, nil, hostname, userSource{}, nil, certCRDs, false)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -500,11 +513,15 @@ type blockedBy struct{ reason, message string }
 // non-nil blockedBy means the normal render must not be applied. The
 // static users are only loaded when needed (a fail-closed render has
 // none).
-func (r *MailServerReconciler) preflight(ctx context.Context, server *cnmsv1alpha1.MailServer, needUsers bool) (*blockedBy, userSource, error) {
+func (r *MailServerReconciler) preflight(ctx context.Context, server *cnmsv1alpha1.MailServer, needUsers bool, domains *cnmsv1alpha1.MailDomainList, ev *authorizationEvaluator) (*blockedBy, userSource, error) {
 	var src userSource
 	staticUsers := server.Spec.Submission != nil && server.Spec.Submission.InsecureStaticUsers != nil
+	mailUsers, err := r.serverMailUsers(ctx, server)
+	if err != nil {
+		return nil, src, err
+	}
 	// A server has one user source: never pick one silently.
-	if sources := userSourceNames(server); len(sources) > 1 {
+	if sources := userSourceNames(server, len(mailUsers) > 0); len(sources) > 1 {
 		return &blockedBy{ReasonUserSourceConflict, fmt.Sprintf(
 			"the server configures more than one user source (%s); keep exactly one",
 			strings.Join(sources, ", "))}, src, nil
@@ -535,11 +552,11 @@ func (r *MailServerReconciler) preflight(ctx context.Context, server *cnmsv1alph
 			}
 			src.directory = &render.DirectorySource{LDAP: target.ldap, SQL: target.sql}
 		}
-	} else if !staticUsers {
-		// shortcut: MailUser is not counted as a user source, add it
-		// together with the MailUser controller (ADR 0008).
+	} else if !staticUsers && len(mailUsers) == 0 {
+		// No directory, no static users and no MailUser (ADR 0015, section
+		// 3, point 7). shortcut: the service accounts of 3c will count too.
 		return &blockedBy{ReasonNoUserSource,
-			"spec.directoryRef is not set and no other user source exists; set directoryRef"}, src, nil
+			"spec.directoryRef is not set and no other user source exists; set directoryRef or create a MailUser"}, src, nil
 	}
 	// Outbound modes not implemented yet (fail closed).
 	switch {
@@ -563,19 +580,27 @@ func (r *MailServerReconciler) preflight(ctx context.Context, server *cnmsv1alph
 		return &blockedBy{reason, message}, userSource{}, nil
 	}
 	src.accounts = users
+	if len(mailUsers) > 0 {
+		if src, err = r.mailUserSource(ctx, server, mailUsers, domains, ev); err != nil {
+			return nil, src, err
+		}
+	}
 	return nil, src, nil
 }
 
-// userSourceNames lists the user sources the spec configures, for the
-// UserSourceConflict check. MailUsers join the list with their
-// controller (ADR 0015, 3b).
-func userSourceNames(server *cnmsv1alpha1.MailServer) []string {
+// userSourceNames lists the user sources of the server, for the
+// UserSourceConflict check: the ones the spec configures, and the MailUsers
+// that name it (ADR 0015, section 3, point 7).
+func userSourceNames(server *cnmsv1alpha1.MailServer, mailUsers bool) []string {
 	var names []string
 	if server.Spec.DirectoryRef != nil {
 		names = append(names, "directoryRef")
 	}
 	if server.Spec.Submission != nil && server.Spec.Submission.InsecureStaticUsers != nil {
 		names = append(names, "submission.insecureStaticUsers")
+	}
+	if mailUsers {
+		names = append(names, "MailUsers")
 	}
 	return names
 }
@@ -585,6 +610,12 @@ func userSourceNames(server *cnmsv1alpha1.MailServer) []string {
 type userSource struct {
 	accounts  []render.Account
 	directory *render.DirectorySource
+	// conflicted are the addresses that lost a conflict between the
+	// accounts (addresses.Result.Conflicted).
+	conflicted []string
+	// verdict is the decision for the MailUsers of the server; nil for
+	// any other user source.
+	verdict *addresses.Result
 }
 
 // needsFailClosed reports whether the running data plane must be
@@ -602,6 +633,20 @@ func (r *MailServerReconciler) needsFailClosed(ctx context.Context, server *cnms
 		return exists, exists, nil
 	}
 	return slices.ContainsFunc(served, func(d string) bool { return !slices.Contains(authorized, d) }), exists, nil
+}
+
+// keepRunning is what a blocked render still does to the running data
+// plane: the Certificate loses names that are no longer authorized, and,
+// when the last MailUser is gone (no user source), a removed account loses
+// its login while the Postfix revision stays.
+func (r *MailServerReconciler) keepRunning(ctx context.Context, server *cnmsv1alpha1.MailServer, hostname string, blocked *blockedBy) error {
+	if err := r.reapplyCertificate(ctx, server, hostname); err != nil {
+		return err
+	}
+	if blocked.reason == ReasonNoUserSource {
+		return r.revokeLogins(ctx, server)
+	}
+	return nil
 }
 
 // reapplyCertificate applies the Certificate alone, with the authorized
@@ -1035,6 +1080,11 @@ func (r *MailServerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return b.
 		Watches(&cnmsv1alpha1.MailDomain{}, handler.EnqueueRequestsFromMapFunc(r.mapDomainServers)).
 		Watches(&cnmsv1alpha1.MailDirectory{}, handler.EnqueueRequestsFromMapFunc(r.mapDirectoryServers)).
+		// The accounts of the server. No generation predicate: a status write,
+		// such as a new credentialRevision (a changed password), must reach the
+		// server, which cannot see the Secrets change (ADR 0015, section 7).
+		// The request waits mailUserDebounce so that a burst is one reconcile.
+		Watches(&cnmsv1alpha1.MailUser{}, debounced(r.mapUserServer, mailUserDebounce)).
 		Watches(&cnmsv1alpha1.MailDomainGrant{}, handler.EnqueueRequestsFromMapFunc(r.mapGrantServers)).
 		// The hostname is unique across namespaces: a server that takes
 		// it, renames or goes away blocks or frees the other claimants.

@@ -115,8 +115,8 @@ func createDirectoryG(ns string) {
 		Spec: cnmsv1alpha1.MailDirectorySpec{
 			Type: cnmsv1alpha1.DirectoryTypeLDAP,
 			LDAP: &cnmsv1alpha1.LDAP{
-				Host:   "ldap.example.org",
-				BaseDN: "dc=example,dc=org",
+				Host:   ldapTestHost,
+				BaseDN: exampleBaseDN,
 			},
 		},
 	}
@@ -531,7 +531,7 @@ var _ = Describe("MailServer controller", func() {
 			getStatefulSetG(ns, "mail-dovecot")
 			getDeploymentG(ns, "mail-rspamd")
 			getDeploymentG(ns, "mail-valkey")
-			for _, c := range []string{"postfix", "rspamd", "dovecot", "valkey"} {
+			for _, c := range dataPlaneComponents {
 				cms := configMapsG(ns, c)
 				Expect(cms).To(HaveLen(1))
 				Expect(*cms[0].Immutable).To(BeTrue())
@@ -763,14 +763,15 @@ var _ = Describe("MailServer controller", func() {
 			_, readyReason, _ := serverConditionG(ns, "mail", conditionReady)
 			Expect(readyReason).ToNot(Equal(ReasonStaticUsersInvalid))
 			Expect(readyReason).ToNot(Equal(ReasonInsecureStaticUsersDisabled))
-			// The password hashes live in an immutable Secret, not in
-			// the ConfigMap.
-			secrets := secretsG(ns, "dovecot")
+			// The password hashes live in the mutable live Secret, not in
+			// the ConfigMap and not in a revisioned Secret.
+			secrets := secretsG(ns, dovecotComponent)
 			Expect(secrets).To(HaveLen(1))
-			Expect(*secrets[0].Immutable).To(BeTrue())
+			Expect(secrets[0].Name).To(Equal("mail-dovecot-users"))
+			Expect(secrets[0].Immutable).To(BeNil())
 			Expect(string(secrets[0].Data["passdb"])).To(ContainSubstring("testuser"))
 			Expect(string(secrets[0].Data["userdb"])).To(ContainSubstring("testuser"))
-			for _, cm := range configMapsG(ns, "dovecot") {
+			for _, cm := range configMapsG(ns, dovecotComponent) {
 				Expect(cm.Data).ToNot(HaveKey("users"))
 			}
 		})
@@ -787,7 +788,7 @@ var _ = Describe("MailServer controller", func() {
 
 			_, readyReason, _ := serverConditionG(ns, "mail", conditionReady)
 			Expect(readyReason).ToNot(Equal(ReasonNoUserSource))
-			Expect(secretsG(ns, "dovecot")).To(HaveLen(1))
+			Expect(secretsG(ns, dovecotComponent)).To(HaveLen(1))
 		})
 
 		It("is not ready without any user source", func() {

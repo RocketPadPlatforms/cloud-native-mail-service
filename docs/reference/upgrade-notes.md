@@ -357,8 +357,7 @@ the new CRDs reject or prune the old field names.
   `secrets` before this version starts, and `update` on
   `mailusers/finalizers` (for the owner reference of the credential Secret
   where the OwnerReferencesPermissionEnforcement plugin is on). Nothing else
-  changes for a cluster without `MailUser`s: creating one only writes its
-  status and its credential Secret, and the `MailServer` does not read it yet.
+  changes for a cluster without `MailUser`s.
   The password hash is computed inside the operator (Argon2id, 19 MiB per
   hash, one at a time), so the memory limit of the manager container is
   raised from 128Mi to 192Mi and the container gets `GOMEMLIMIT=160MiB`
@@ -367,6 +366,25 @@ the new CRDs reject or prune the old field names.
   garbage per hash.
   The hardening that limits the verb to Secrets with the managed-by label (a
   `ValidatingAdmissionPolicy`) is in the [backlog](../backlog.md).
+- **The Dovecot users are a live Secret, outside the config hash** ([ADR
+  0015](../decisions/0015-user-sources-directory-users-and-aliases.md),
+  section 4.7). The passdb and userdb files are no longer in the
+  hash-named Secret `<server>-dovecot-<hash>`; they are two keys of the
+  Secret `<server>-dovecot-users`, which the operator creates and updates
+  in place, and which the pod mounts as a directory at `/etc/dovecot-users`.
+  The first reconcile after the upgrade changes the Dovecot pod template (a
+  new volume, and for a server with a directory the directory password and CA
+  move to a mount at `/etc/dovecot-secret`, which changes the rendered
+  `dovecot.conf`), so every server gets **one validated rollout of Dovecot
+  (one restart)**. After that a changed, added or removed account is no
+  rollout. The superseded Secrets of the old scheme are removed by the
+  cleanup of the rollout. Postfix and Rspamd are not affected by the
+  move. The Secret is owned by the `MailServer`; a Secret of that name that
+  it does not own is never overwritten (`OwnershipConflict`). The `MailServer`
+  role gains the verbs
+  `update` on `secrets` (already above) and `list` on `mailusers`; an
+  operator with a `ClusterRole` of its own needs them too. The live Secret is
+  not watched: a deleted one is written again by the next reconcile.
 - **The operator no longer renders `cnms-no-port25-egress`.** Port-25
   egress for other pods is denied by an admin-owned
   `CiliumClusterwideNetworkPolicy`; start from the example in

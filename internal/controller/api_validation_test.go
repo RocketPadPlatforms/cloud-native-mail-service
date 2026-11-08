@@ -960,7 +960,7 @@ var _ = Describe("API validation of MailUser", func() {
 		{name: "accepts a 64 character name", mutate: named(strings.Repeat("a", 64))},
 		{name: "accepts a password Secret", mutate: func(ns string) error {
 			_, err := createUser(ns, apiUserName, func(u *cnmsv1alpha1.MailUser) {
-				u.Spec.PasswordSecretRef = &cnmsv1alpha1.SecretReference{Name: "alice-password"}
+				u.Spec.PasswordSecretRef = &cnmsv1alpha1.SecretReference{Name: userSecret}
 			})
 			return err
 		}},

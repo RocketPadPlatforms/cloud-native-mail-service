@@ -206,7 +206,8 @@ func TestBuildObjectSet(t *testing.T) {
 			t.Errorf("missing %s %q", wk.kind, wk.name)
 		}
 	}
-	// Four hash-named ConfigMaps and the Dovecot users Secret.
+	// Four hash-named ConfigMaps; the Dovecot users Secret is the live one,
+	// outside the object set of the revision.
 	configs := 0
 	for _, o := range objs {
 		if k := kindOf(o); k == kindConfigMap || k == kindSecret {
@@ -216,8 +217,8 @@ func TestBuildObjectSet(t *testing.T) {
 			}
 		}
 	}
-	if configs != 5 {
-		t.Errorf("config objects = %d, want 5", configs)
+	if configs != 4 {
+		t.Errorf("config objects = %d, want 4", configs)
 	}
 	if len(objs) != len(want)+configs {
 		t.Errorf("object count = %d, want %d", len(objs), len(want)+configs)
@@ -930,46 +931,44 @@ func TestConfigObjectsAreContentNamed(t *testing.T) {
 	}
 }
 
-func TestDovecotUsersLiveInAnImmutableSecret(t *testing.T) {
+func TestDovecotUsersLiveInAMutableSecret(t *testing.T) {
 	user := render.Account{Name: "u", PasswordHash: testCryptHash, Address: "u@" + domainA}
 	dp := buildPlane(t, nil, []render.Account{user})
-	var sec *corev1.Secret
 	for _, o := range dp.Configs {
-		if s, ok := o.(*corev1.Secret); ok {
-			sec = s
+		if _, isSecret := o.(*corev1.Secret); isSecret {
+			t.Errorf("Secret %s is hash-named: the users are not in the revision", o.GetName())
 		}
 		if cm, ok := o.(*corev1.ConfigMap); ok {
-			if _, leaked := cm.Data["users"]; leaked {
+			if _, leaked := cm.Data["passdb"]; leaked {
 				t.Errorf("ConfigMap %s carries the users file", cm.Name)
 			}
 		}
 	}
+	sec := dp.LiveUsers
 	if sec == nil {
-		t.Fatal("no users Secret")
+		t.Fatal("no live users Secret")
 	}
-	if sec.Immutable == nil || !*sec.Immutable || !configNameRE.MatchString(sec.Name) {
-		t.Errorf("users Secret %q must be immutable and hash-named", sec.Name)
+	// Stable name, mutable, no content hash (ADR 0015, section 4.7).
+	if sec.Name != testName+"-dovecot-users" || sec.Immutable != nil {
+		t.Errorf("live users Secret %q (immutable %v) must have a stable name and be mutable", sec.Name, sec.Immutable)
 	}
-	if !strings.Contains(string(sec.Data["passdb"]), "{SHA512-CRYPT}x") {
-		t.Error("users Secret misses the passdb file")
+	if !strings.Contains(string(sec.Data["passdb"]), "{SHA512-CRYPT}x") || len(sec.Data["userdb"]) == 0 {
+		t.Error("the live users Secret misses the passdb or the userdb file")
 	}
 
 	sts := mustFind[*appsv1.StatefulSet](t, find(t, dp.Workloads, kindStatefulSet, testName+"-dovecot"), "sts")
 	pod := sts.Spec.Template.Spec
-	var usersVol *corev1.Volume
-	for i := range pod.Volumes {
-		if pod.Volumes[i].Name == usersVolumeName {
-			usersVol = &pod.Volumes[i]
-		}
-	}
+	usersVol := volumeByName(pod.Volumes, usersVolumeName)
 	if usersVol == nil || usersVol.Secret == nil || usersVol.Secret.SecretName != sec.Name {
 		t.Fatalf("dovecot pod must mount the users Secret %q: %v", sec.Name, usersVol)
 	}
-	if !hasMount(pod.Containers[0].VolumeMounts, usersVolumeName, render.DovecotUsersDir) {
-		t.Error("dovecot container misses the users mount")
+	// A whole directory: the kubelet never updates a subPath mount.
+	m := mountByName(pod.Containers[0].VolumeMounts, usersVolumeName)
+	if m == nil || m.MountPath != render.DovecotUsersDir || m.SubPath != "" || !m.ReadOnly {
+		t.Errorf("users mount = %+v, want the read-only directory %s with no subPath", m, render.DovecotUsersDir)
 	}
-	if m := usersVol.Secret.DefaultMode; m == nil || *m != 0o440 {
-		t.Errorf("users Secret mode = %v, want 0440", m)
+	if mode := usersVol.Secret.DefaultMode; mode == nil || *mode != 0o440 {
+		t.Errorf("users Secret mode = %v, want 0440", mode)
 	}
 	// The cert-reload sidecar gets the certificate and the runtime
 	// directory only, not the password hashes.
@@ -984,22 +983,25 @@ func TestDovecotUsersLiveInAnImmutableSecret(t *testing.T) {
 		}
 	}
 
-	// A user change changes the Secret name and the pod-template hash,
-	// but not the ConfigMap name.
+	// A user change changes neither the pod-template hash nor any
+	// object name: it is no revision (no Job, no rollout, no restart).
 	other := buildPlane(t, nil, []render.Account{{Name: "v", PasswordHash: "{SHA512-CRYPT}y", Address: "v@" + domainA}})
 	osts := mustFind[*appsv1.StatefulSet](t, find(t, other.Workloads, kindStatefulSet, testName+"-dovecot"), "sts")
-	if osts.Spec.Template.Annotations[ConfigHashAnnotation] == sts.Spec.Template.Annotations[ConfigHashAnnotation] {
-		t.Error("a user change must change the pod-template hash")
+	if osts.Spec.Template.Annotations[ConfigHashAnnotation] != sts.Spec.Template.Annotations[ConfigHashAnnotation] {
+		t.Error("a user change must not change the pod-template hash")
 	}
-	var otherSecret *corev1.Secret
-	for _, o := range other.Configs {
-		if s, ok := o.(*corev1.Secret); ok {
-			otherSecret = s
+	if other.LiveUsers.Name != sec.Name || string(other.LiveUsers.Data["passdb"]) == string(sec.Data["passdb"]) {
+		t.Error("a user change must change the content of the live Secret and keep its name")
+	}
+	// The Postfix maps do change (a revision, behind the validation Job); the
+	// Dovecot, Rspamd and Valkey configuration does not.
+	for i := range dp.Validations {
+		if c := dp.Validations[i].Component; c != render.ComponentPostfix && dp.Validations[i].Hash != other.Validations[i].Hash {
+			t.Errorf("%s: a user change gives a new validation Job", c)
 		}
 	}
-	if otherSecret.Name == sec.Name {
-		t.Error("a user change must give a new Secret name")
-	}
+	// No password hash is in the config hash, so no hash key is needed for
+	// the users alone (TestBuildNeedsAHashKey).
 }
 
 func TestValidationJobs(t *testing.T) {

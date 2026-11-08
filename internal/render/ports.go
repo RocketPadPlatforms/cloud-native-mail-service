@@ -58,10 +58,18 @@ const (
 	PortValkeyMetrics int32 = 9121 // redis_exporter sidecar (ADR-0005)
 )
 
-// DovecotUsersDir is where the Secret with the Dovecot passdb and userdb
-// files is mounted. It is a separate directory because a file mounted
-// inside the read-only ConfigMap mount at /etc/dovecot cannot be created.
+// DovecotUsersDir is where the live Secret with the Dovecot passdb and
+// userdb files is mounted, as a whole directory (ADR 0015, section 4.7):
+// the kubelet updates it in place, which a subPath mount would not get. It
+// is a separate directory because a file mounted inside the read-only
+// ConfigMap mount at /etc/dovecot cannot be created.
 const DovecotUsersDir = "/etc/dovecot-users"
+
+// DovecotSecretDir is where the immutable, hash-named Secret with the
+// directory password and CA of Dovecot is mounted (ADR 0015, section 4.8,
+// point 6). It is not the live users directory: those files change without
+// a rollout, these only with a validated revision.
+const DovecotSecretDir = "/etc/dovecot-secret"
 
 // PostfixSecretDir is where the Secret with the directory tables of
 // Postfix is mounted (they carry the bind password).

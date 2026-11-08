@@ -69,7 +69,7 @@ type MailServerSpec struct {
 	// Directory used for recipient validation and user authentication.
 	// References a MailDirectory in the same namespace. Optional: a
 	// server without a directory needs another user source, which is
-	// MailUser accounts (ADR 0008, not implemented yet) or, for tests,
+	// MailUser accounts (ADR 0015) or, for tests,
 	// submission.insecureStaticUsers. Without any user source the
 	// server is not Ready (reason NoUserSource).
 	// +optional
