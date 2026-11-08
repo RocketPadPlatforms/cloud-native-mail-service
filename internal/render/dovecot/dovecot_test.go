@@ -127,6 +127,31 @@ func TestAuthOnlyHasNoLMTP(t *testing.T) {
 	}
 }
 
+// The layout is exactly maildir++ with mailboxes and absent without.
+// `doveconf -n` accepts an unknown value such as maildirpp, and it is
+// all the validation gate runs (ADR 0016, S1); only the first use of a
+// mailbox fails on it. This test and the golden files are the guard.
+func TestMailboxLayoutIsPinned(t *testing.T) {
+	const want = "\nmailbox_list_layout = maildir++\n"
+	on, err := New().Render(testRequest(t, func(s *v1alpha1.MailServer) {
+		s.Spec.Mailboxes = &v1alpha1.Mailboxes{Enabled: new(true)}
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if conf := on.ConfigData["dovecot.conf"]; strings.Count(conf, "mailbox_list_layout") != 1 ||
+		!strings.Contains(conf, want) {
+		t.Errorf("mailboxes: want exactly one %q in\n%s", strings.TrimSpace(want), conf)
+	}
+	off, err := New().Render(testRequest(t, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if conf := off.ConfigData["dovecot.conf"]; strings.Contains(conf, "mailbox_list_layout") {
+		t.Errorf("auth-only configuration sets a mailbox layout:\n%s", conf)
+	}
+}
+
 func TestRenderErrors(t *testing.T) {
 	tests := []struct {
 		name string

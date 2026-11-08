@@ -28,6 +28,8 @@ mail_gid = vmail
 # on the first delivery into a not-yet-existing maildir.
 mail_driver = maildir
 mail_path = ~/mail
+# Maildir++ layout, pinned: a new default must not move folders.
+mailbox_list_layout = maildir++
 # TLS floor (ADR 0006): all login protocols require TLS.
 # The imaps listener does implicit TLS; AUTH on the imap
 # listener is only possible after STARTTLS.

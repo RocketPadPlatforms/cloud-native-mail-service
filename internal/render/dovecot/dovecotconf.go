@@ -87,6 +87,10 @@ func renderDovecotConf(req *render.RenderRequest) (conf string, dirSecret map[st
 	b.WriteString("# on the first delivery into a not-yet-existing maildir.\n")
 	b.WriteString("mail_driver = maildir\n")
 	b.WriteString("mail_path = ~/mail\n")
+	if mailboxesEnabled(req) {
+		b.WriteString("# Maildir++ layout, pinned: a new default must not move folders.\n")
+		b.WriteString("mailbox_list_layout = maildir++\n")
+	}
 	b.WriteString("# TLS floor (ADR 0006): all login protocols require TLS.\n")
 	b.WriteString("# The imaps listener does implicit TLS; AUTH on the imap\n")
 	b.WriteString("# listener is only possible after STARTTLS.\n")
