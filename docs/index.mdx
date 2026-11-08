@@ -31,7 +31,7 @@ mail from a CNMS server yet.
 - **Mail servers as custom resources.** Declare a `MailServer` and CNMS runs
   the full data plane — Postfix, Rspamd, Valkey and Dovecot — with
   production-grade defaults: TLS, rate limits and recipient validation
-  (against the static test users until the directory phase), and DKIM
+  (against a `MailDirectory`, `MailUser`s or the static test users), and DKIM
   signing with the keys of the `MailDomain`.
 - **Reputation isolation.** Every `MailServer` owns its workloads, queues,
   sending addresses, DKIM keys and HELO names, so several mail systems on
