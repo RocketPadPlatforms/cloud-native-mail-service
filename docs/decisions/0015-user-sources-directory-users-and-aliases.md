@@ -10,7 +10,8 @@
   limits of section 4.7 are enforced; the Rspamd check 2 (header `From`) is
   done; the load test of section 3, point 4 (cgroup `memory.peak`, delivery
   during the flood) is not);
-  3c is not
+  3c has started with the API (the `MailServiceAccount` resource and
+  `allowedNamespaces`); its controller is not there
 - **Date:** 2026-11-06
 
 ## Context
@@ -1206,7 +1207,13 @@ Aliases and senders come from the directory through the **same contract** as
    consented namespace gets its own `senderDomains`**, with no domain in two
    of them: that is the documented mitigation of the cross-tenant denial in
    4.2, point 2. What stays open is the local part inside a granted domain
-   (a local-part grant is in the backlog).
+   (a local-part grant is in the backlog). **`senderDomains` holds DNS
+   names** (the `spec.domain` of the `MailDomain`s), not object names: object
+   names are per namespace, DNS names match `spec.sender` without a lookup
+   and survive a `MailDomain` being deleted and created again. An empty list
+   is refused at admission (`MinItems=1`): unset means every served domain,
+   so `[]` would read as "no domains" and mean "all"; to allow nothing, leave
+   the namespace out of `allowedNamespaces`.
 
 #### 4.10 Not handled in Phase 3
 

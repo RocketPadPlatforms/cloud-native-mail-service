@@ -487,7 +487,7 @@ var _ = Describe("API validation of DKIM keys", func() {
 		{name: "accepts a signing key and a published one", mutate: keys(key("s2026a", new(true)), key("s2027a", new(false)))},
 		{name: "accepts eight keys", mutate: keys(many[:8]...)},
 		{name: "rejects nine keys", mutate: keys(many...), wantErr: keysField},
-		{name: "rejects duplicate selectors", mutate: keys(key("s2026a", nil), key("s2026a", new(false))), wantErr: "Duplicate value"},
+		{name: "rejects duplicate selectors", mutate: keys(key("s2026a", nil), key("s2026a", new(false))), wantErr: duplicateMsg},
 		{name: "rejects keys that do not sign", mutate: keys(key("s2026a", new(false)), key("s2027a", new(false))), wantErr: signingMsg},
 		{name: "rejects keys with rotation", mutate: dkim(cnmsv1alpha1.DKIM{Keys: []cnmsv1alpha1.DKIMKey{key("s2026a", nil)}, Rotation: rotation}), wantErr: excludesMsg},
 		{name: "rejects keys with ed25519 false", mutate: dkim(cnmsv1alpha1.DKIM{Keys: []cnmsv1alpha1.DKIMKey{key("s2026a", nil)}, Ed25519: new(false)}), wantErr: excludesMsg},
@@ -718,7 +718,7 @@ var _ = Describe("API validation of references", func() {
 	}
 	runAPICases([]apiCase{
 		{name: "accepts a server reference with dots", mutate: serverRef("mail.example")},
-		{name: "rejects a MailDomain without a server reference", mutate: noServerRef, wantErr: "spec.serverRef"},
+		{name: "rejects a MailDomain without a server reference", mutate: noServerRef, wantErr: serverRefObj},
 		{name: "rejects a server reference with an upper-case letter", mutate: serverRef("Mail"), wantErr: serverRefField},
 		{name: "rejects a server reference with an empty label", mutate: serverRef("mail..example"), wantErr: serverRefField},
 		{name: "rejects a server reference ending in a dot", mutate: serverRef("mail."), wantErr: serverRefField},
@@ -993,7 +993,7 @@ var _ = Describe("API validation of MailUser", func() {
 		{name: "rejects a local part that is not ASCII", mutate: localPart("jürgen"), wantErr: userAliasField},
 		{name: "rejects a user without a server reference", mutate: raw(func(s map[string]any) {
 			delete(s, serverRefKey)
-		}), wantErr: "spec.serverRef"},
+		}), wantErr: serverRefObj},
 		{name: "rejects a user without a domain reference", mutate: raw(func(s map[string]any) {
 			delete(s, domainRefKey)
 		}), wantErr: "spec.domainRef"},
@@ -1044,5 +1044,250 @@ var _ = Describe("MailUser printer columns", func() {
 		_, err := createUser(ns, apiUserName, nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(printerCell(ns, "mailusers", apiUserName, "Server")).To(Equal(apiServerName))
+	})
+})
+
+// Names shared by the MailServiceAccount and allowedNamespaces cases.
+const (
+	apiAccountName   = "app"
+	apiAppNamespace  = "example-app"
+	apiSender        = "app@example.org"
+	senderField      = "spec.sender"
+	allowedNSField   = "spec.serviceAccounts.allowedNamespaces"
+	senderDomainsKey = "spec.serviceAccounts.allowedNamespaces[0].senderDomains"
+	serverNSField    = "spec.serverRef.namespace"
+	serverRefObj     = "spec.serverRef"
+	duplicateMsg     = "Duplicate value"
+	apiServerNS      = "mail-system"
+)
+
+// validAccount is a MailServiceAccount called name in ns that the API
+// server accepts.
+func validAccount(ns, name string) *cnmsv1alpha1.MailServiceAccount {
+	return &cnmsv1alpha1.MailServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+		Spec: cnmsv1alpha1.MailServiceAccountSpec{
+			ServerRef: cnmsv1alpha1.NamespacedNameReference{Name: apiServerName},
+			Sender:    apiSender,
+		},
+	}
+}
+
+// createAccount creates a valid MailServiceAccount in ns after applying
+// mutate, and returns it with the create error.
+func createAccount(ns string, mutate func(*cnmsv1alpha1.MailServiceAccount)) (*cnmsv1alpha1.MailServiceAccount, error) {
+	a := validAccount(ns, apiAccountName)
+	if mutate != nil {
+		mutate(a)
+	}
+	return a, k8sClient.Create(ctx, a)
+}
+
+var _ = Describe("API validation of MailServiceAccount", func() {
+	withSender := func(s string) func(string) error {
+		return func(ns string) error {
+			_, err := createAccount(ns, func(a *cnmsv1alpha1.MailServiceAccount) { a.Spec.Sender = s })
+			return err
+		}
+	}
+	withServer := func(ref cnmsv1alpha1.NamespacedNameReference) func(string) error {
+		return func(ns string) error {
+			_, err := createAccount(ns, func(a *cnmsv1alpha1.MailServiceAccount) { a.Spec.ServerRef = ref })
+			return err
+		}
+	}
+	// raw sends a valid account as unstructured data after edit changed
+	// its spec, so a missing or unknown field reaches the API server.
+	raw := func(edit func(spec map[string]any)) func(string) error {
+		return func(ns string) error {
+			typed, err := runtime.DefaultUnstructuredConverter.ToUnstructured(validAccount(ns, apiAccountName))
+			Expect(err).NotTo(HaveOccurred())
+			a := &unstructured.Unstructured{Object: typed}
+			a.SetGroupVersionKind(cnmsv1alpha1.GroupVersion.WithKind("MailServiceAccount"))
+			edit(a.Object[specKey].(map[string]any))
+			return k8sClient.Create(ctx, a, client.FieldValidation("Strict"))
+		}
+	}
+	named := func(name string) func(string) error {
+		return func(ns string) error {
+			a := validAccount(ns, name)
+			return k8sClient.Create(ctx, a)
+		}
+	}
+	label63 := strings.Repeat("a", 63)
+	longDomain := func(lastLabel int) string {
+		return strings.Join([]string{label63, label63, label63, strings.Repeat("a", lastLabel)}, ".")
+	}
+
+	runAPICases([]apiCase{
+		{name: "accepts a minimal account", mutate: withSender(apiSender)},
+		{name: "accepts a 63 character name", mutate: named(strings.Repeat("a", 63))},
+		{name: "rejects a 64 character name", mutate: named(strings.Repeat("a", 64)), wantErr: "at most 63 characters"},
+		{name: "accepts a server in another namespace", mutate: withServer(cnmsv1alpha1.NamespacedNameReference{
+			Name: apiServerName, Namespace: apiServerNS,
+		})},
+		{name: "accepts dots, underscores and hyphens in the local part", mutate: withSender("no-reply.app_1@example.org")},
+		{name: "accepts a subdomain", mutate: withSender("app@mail.eu.example.org")},
+		{name: "accepts a 64 character local part and a 253 character domain", mutate: withSender(
+			strings.Repeat("a", 64) + "@" + longDomain(61))},
+		{name: "rejects a 65 character local part", mutate: withSender(strings.Repeat("a", 65) + "@example.org"), wantErr: senderField},
+		{name: "rejects a 254 character domain", mutate: withSender("a@" + longDomain(62)), wantErr: "at most 253 characters"},
+		{name: "rejects an upper-case local part", mutate: withSender("App@example.org"), wantErr: senderField},
+		{name: "rejects an upper-case domain", mutate: withSender("app@Example.org"), wantErr: senderField},
+		{name: "rejects a sender without an at sign", mutate: withSender("app.example.org"), wantErr: senderField},
+		{name: "rejects a sender with two at signs", mutate: withSender("app@x@example.org"), wantErr: senderField},
+		{name: "rejects a blank in the sender", mutate: withSender("a pp@example.org"), wantErr: senderField},
+		{name: "rejects a trailing blank", mutate: withSender("app@example.org "), wantErr: senderField},
+		{name: "rejects an empty sender", mutate: withSender(""), wantErr: senderField},
+		{name: "rejects an empty local part", mutate: withSender("@example.org"), wantErr: senderField},
+		{name: "rejects a local part with a plus", mutate: withSender("app+tag@example.org"), wantErr: senderField},
+		{name: "rejects a local part with two dots", mutate: withSender("a..b@example.org"), wantErr: "two consecutive dots"},
+		{name: "rejects a local part starting with a dot", mutate: withSender(".app@example.org"), wantErr: senderField},
+		{name: "rejects a local part ending with a dot", mutate: withSender("app.@example.org"), wantErr: senderField},
+		{name: "rejects a local part that is not ASCII", mutate: withSender("jürgen@example.org"), wantErr: senderField},
+		{name: "rejects a sender with a display name", mutate: withSender("App <app@example.org>"), wantErr: senderField},
+		{name: "rejects a domain with one label", mutate: withSender("app@org"), wantErr: senderField},
+		{name: "rejects a domain with a trailing dot", mutate: withSender("app@example.org."), wantErr: senderField},
+		{name: "rejects an IP address as the domain", mutate: withSender("app@203.0.113.1"), wantErr: senderField},
+		{name: "rejects an address literal as the domain", mutate: withSender("app@[203.0.113.1]"), wantErr: senderField},
+		{name: "rejects an account without a sender", mutate: raw(func(s map[string]any) { delete(s, "sender") }), wantErr: senderField},
+		{name: "rejects an account without a server reference", mutate: raw(func(s map[string]any) {
+			delete(s, serverRefKey)
+		}), wantErr: serverRefObj},
+		{name: "rejects a server reference without a name", mutate: raw(func(s map[string]any) {
+			s[serverRefKey] = map[string]any{refNSKey: apiServerNS}
+		}), wantErr: serverRefField},
+		{name: "rejects a server reference with an empty name", mutate: withServer(cnmsv1alpha1.NamespacedNameReference{}), wantErr: serverRefField},
+		{name: "rejects a server namespace in upper case", mutate: withServer(cnmsv1alpha1.NamespacedNameReference{
+			Name: apiServerName, Namespace: "Mail",
+		}), wantErr: serverNSField},
+		{name: "rejects a server namespace of 64 characters", mutate: withServer(cnmsv1alpha1.NamespacedNameReference{
+			Name: apiServerName, Namespace: strings.Repeat("a", 64),
+		}), wantErr: serverNSField},
+		{name: "rejects a server namespace with a dot", mutate: withServer(cnmsv1alpha1.NamespacedNameReference{
+			Name: apiServerName, Namespace: "my.mail",
+		}), wantErr: serverNSField},
+		{name: "rejects an unknown field", mutate: raw(func(s map[string]any) {
+			s["password"] = "secret"
+		}), wantErr: "password"},
+	})
+})
+
+var _ = Describe("API validation of MailServiceAccount status", func() {
+	status := func(c ...metav1.Condition) func(string) error {
+		return func(ns string) error {
+			a, err := createAccount(ns, nil)
+			Expect(err).NotTo(HaveOccurred())
+			a.Status.ObservedGeneration = a.Generation
+			a.Status.Conditions = c
+			return k8sClient.Status().Update(ctx, a)
+		}
+	}
+	ready := func(s metav1.ConditionStatus) metav1.Condition {
+		return metav1.Condition{
+			Type: conditionReady, Status: s, Reason: conditionReady, Message: "ok", LastTransitionTime: metav1.Now(),
+		}
+	}
+	runAPICases([]apiCase{
+		{name: "accepts a Ready condition", mutate: status(ready(metav1.ConditionTrue))},
+		{name: "rejects a condition with an unknown status", mutate: status(ready("Maybe")), wantErr: "status.conditions[0].status"},
+		{name: "rejects the same condition type twice", mutate: status(ready(metav1.ConditionTrue), ready(metav1.ConditionFalse)), wantErr: "status.conditions"},
+	})
+})
+
+var _ = Describe("MailServiceAccount printer columns", func() {
+	It("shows the sender, the server and readiness of an account", func() {
+		ns := newAPINamespace()
+		a, err := createAccount(ns, nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(printerCell(ns, "mailserviceaccounts", apiAccountName, "Sender")).To(Equal(apiSender))
+		Expect(printerCell(ns, "mailserviceaccounts", apiAccountName, "Server")).To(Equal(apiServerName))
+
+		a.Status.Conditions = []metav1.Condition{{
+			Type: conditionReady, Status: metav1.ConditionTrue, Reason: conditionReady, Message: "ok", LastTransitionTime: metav1.Now(),
+		}}
+		Expect(k8sClient.Status().Update(ctx, a)).To(Succeed())
+		Expect(printerCell(ns, "mailserviceaccounts", apiAccountName, "Ready")).To(Equal("True"))
+
+		b := validAccount(ns, "other")
+		b.Spec.ServerRef.Namespace = apiServerNS
+		Expect(k8sClient.Create(ctx, b)).To(Succeed())
+		Expect(printerCell(ns, "mailserviceaccounts", "other", "Server Namespace")).To(Equal(apiServerNS))
+	})
+})
+
+var _ = Describe("API validation of MailServer allowedNamespaces", func() {
+	allowed := func(n ...cnmsv1alpha1.AllowedNamespace) func(string) error {
+		return createServer(func(ms *cnmsv1alpha1.MailServer) {
+			ms.Spec.ServiceAccounts = &cnmsv1alpha1.ServerServiceAccounts{AllowedNamespaces: n}
+		})
+	}
+	named := func(name string) func(string) error {
+		return allowed(cnmsv1alpha1.AllowedNamespace{Name: name})
+	}
+	domains := func(d ...string) func(string) error {
+		return allowed(cnmsv1alpha1.AllowedNamespace{Name: apiAppNamespace, SenderDomains: d})
+	}
+	many := func(n int) func(string) error {
+		list := make([]cnmsv1alpha1.AllowedNamespace, n)
+		for i := range list {
+			list[i] = cnmsv1alpha1.AllowedNamespace{Name: fmt.Sprintf("app-%d", i)}
+		}
+		return allowed(list...)
+	}
+	manyDomains := func(n int) func(string) error {
+		list := make([]string, n)
+		for i := range list {
+			list[i] = fmt.Sprintf("d%d.example.org", i)
+		}
+		return domains(list...)
+	}
+
+	// emptyDomains sends senderDomains: [] as unstructured data: the
+	// typed client drops an empty slice (omitempty).
+	emptyDomains := func(ns string) error {
+		ms := validMailServer(apiServerName)
+		ms.Namespace = ns
+		typed, err := runtime.DefaultUnstructuredConverter.ToUnstructured(ms)
+		Expect(err).NotTo(HaveOccurred())
+		u := &unstructured.Unstructured{Object: typed}
+		u.SetGroupVersionKind(cnmsv1alpha1.GroupVersion.WithKind("MailServer"))
+		Expect(unstructured.SetNestedSlice(u.Object, []any{map[string]any{
+			refNameKey: apiAppNamespace, "senderDomains": []any{},
+		}}, specKey, "serviceAccounts", "allowedNamespaces")).To(Succeed())
+		return k8sClient.Create(ctx, u)
+	}
+
+	runAPICases([]apiCase{
+		{name: "rejects an empty senderDomains", mutate: emptyDomains, wantErr: senderDomainsKey},
+		{name: "accepts a server without serviceAccounts", mutate: createServer(func(*cnmsv1alpha1.MailServer) {})},
+		{name: "accepts an empty serviceAccounts", mutate: allowed()},
+		{name: "accepts a namespace without senderDomains", mutate: named(apiAppNamespace)},
+		{name: "accepts a namespace with senderDomains", mutate: domains(testDomain, "mail.example.net")},
+		{name: "accepts two namespaces", mutate: allowed(
+			cnmsv1alpha1.AllowedNamespace{Name: "app-a", SenderDomains: []string{testDomain}},
+			cnmsv1alpha1.AllowedNamespace{Name: "app-b", SenderDomains: []string{"example.net"}},
+		)},
+		{name: "accepts 64 namespaces", mutate: many(64)},
+		{name: "accepts 32 senderDomains", mutate: manyDomains(32)},
+		{name: "accepts a namespace name of 63 characters", mutate: named(strings.Repeat("a", 63))},
+		{name: "rejects the same namespace twice", mutate: allowed(
+			cnmsv1alpha1.AllowedNamespace{Name: apiAppNamespace, SenderDomains: []string{testDomain}},
+			cnmsv1alpha1.AllowedNamespace{Name: apiAppNamespace},
+		), wantErr: duplicateMsg},
+		{name: "rejects 65 namespaces", mutate: many(65), wantErr: allowedNSField},
+		{name: "rejects an empty namespace name", mutate: named(""), wantErr: allowedNSField + "[0].name"},
+		{name: "rejects an upper-case namespace name", mutate: named("App"), wantErr: allowedNSField + "[0].name"},
+		{name: "rejects a namespace name of 64 characters", mutate: named(strings.Repeat("a", 64)), wantErr: allowedNSField + "[0].name"},
+		{name: "rejects a namespace name with a dot", mutate: named("my.app"), wantErr: allowedNSField + "[0].name"},
+		{name: "rejects a namespace name starting with a hyphen", mutate: named("-app"), wantErr: allowedNSField + "[0].name"},
+		{name: "rejects 33 senderDomains", mutate: manyDomains(33), wantErr: senderDomainsKey},
+		{name: "rejects the same sender domain twice", mutate: domains(testDomain, testDomain), wantErr: duplicateMsg},
+		{name: "rejects an upper-case sender domain", mutate: domains("Example.org"), wantErr: senderDomainsKey},
+		{name: "rejects a sender domain with one label", mutate: domains("org"), wantErr: senderDomainsKey},
+		{name: "rejects a sender domain with a trailing dot", mutate: domains("example.org."), wantErr: senderDomainsKey},
+		{name: "rejects an IP address as a sender domain", mutate: domains("203.0.113.1"), wantErr: senderDomainsKey},
+		{name: "rejects an address as a sender domain", mutate: domains("app@example.org"), wantErr: senderDomainsKey},
+		{name: "rejects an empty sender domain", mutate: domains(""), wantErr: senderDomainsKey},
 	})
 })

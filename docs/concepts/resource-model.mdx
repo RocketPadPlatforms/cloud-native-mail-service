@@ -4,14 +4,17 @@ import ServerSample from '../../config/samples/full-setup/mailserver.yaml';
 import DomainSample from '../../config/samples/full-setup/maildomain.yaml';
 import DirectorySample from '../../config/samples/full-setup/maildirectory.yaml';
 import UserSample from '../../config/samples/cnms_v1alpha1_mailuser.yaml';
+import ServiceAccountSample from '../../config/samples/cnms_v1alpha1_mailserviceaccount.yaml';
 
 # Resource model
 
-CNMS v1alpha1 (API group `cnms.rpp.gmbh`) currently defines five resources.
-Four of them are namespace-scoped: a tenant's mail system lives in one
+CNMS v1alpha1 (API group `cnms.rpp.gmbh`) currently defines six resources.
+Five of them are namespace-scoped: a tenant's mail system lives in one
 namespace, and every reference between CNMS resources stays inside that
-namespace (name-only references, no cross-namespace RBAC). The fifth,
-`MailDomainGrant`, is cluster-scoped and admin-owned.
+namespace (name-only references, no cross-namespace RBAC), with one
+exception, the `serverRef` of a `MailServiceAccount`, which needs the consent
+of the server. The sixth, `MailDomainGrant`, is cluster-scoped and
+admin-owned.
 
 The full API reference is [generated from the Go types](../reference/api.md)
 (`make api-ref`). Design decisions are recorded in
@@ -35,7 +38,9 @@ keys and lists and verifies its DNS records
 hands the active keys to Rspamd ([DKIM signing](dkim-signing.md)).
 The `MailDirectory` controller validates its configuration and probes the
 directory, but nothing renders a directory into Postfix or Dovecot yet: the
-`MailServer` controller reads only its existence. See the
+`MailServer` controller reads only its existence. The `MailServiceAccount`
+API is defined and admitted, but its controller does nothing yet: no
+credential, no status and no check of `serverRef` or `sender`. See the
 [roadmap](../roadmap.md) for the phase of each part.
 :::
 
@@ -89,6 +94,13 @@ Key spec fields:
   with the DKIM keys of the `MailDomain`. `status.domains` lists them, with
   `served` and the `reason`; a server without any `MailDomain` is not ready
   (`NoDomains`).
+- `serviceAccounts.allowedNamespaces` — the namespaces whose
+  `MailServiceAccount`s may reference the server: a list of objects with a
+  `name` and optional `senderDomains` (domain names of the server's domains
+  that the namespace may send from; unset means every served domain, and an
+  empty list is refused). Unset or empty, no other namespace may; accounts of
+  the namespace of the server need no entry. The list is accepted and
+  validated, but nothing evaluates it yet.
 - `tls` — the cert-manager issuer the server certificate comes from.
 - `submission`, `mailboxes` — enable submission (on by default) and Dovecot
   mail storage (off by default). With submission on and mailboxes off,
@@ -189,8 +201,33 @@ Secret, and the `MailServer` renders the accounts. A `MailServer` has either a
 
 <CodeBlock language="yaml" title="config/samples/cnms_v1alpha1_mailuser.yaml">{UserSample}</CodeBlock>
 
-The files above, except the `MailUser`, are part of the draft scenario in
-`config/samples/full-setup/`; the
+### `MailServiceAccount`
+
+The sending credential of an application
+([ADR 0008](../decisions/0008-user-sources-and-service-accounts.md),
+[ADR 0015](../decisions/0015-user-sources-directory-users-and-aliases.md),
+section 4.9). It lives in the namespace of the application; its name is at
+most 63 characters. `serverRef` names
+the `MailServer` and may carry a `namespace`; without one it is a server of
+the namespace of the account. A server of another namespace takes effect only
+when that server lists the namespace in `serviceAccounts.allowedNamespaces`.
+`sender` is the one address the application may send as: a lower-case
+address whose local part has the rules of an alias (up to 64 characters of
+ASCII letters, digits and `.` `_` `-`, starting and ending with a letter or
+digit, no `..`, no `+`) and whose domain follows the rule of
+`MailDomain.spec.domain`. That the domain is served by the server and
+authorized for the namespace cannot be checked by the API server; the
+controller will.
+
+`status` has the `observedGeneration` and the conditions. No controller writes
+them yet, so a `MailServiceAccount` stays without a status, and without a
+credential Secret and NetworkPolicy, until the controller arrives
+(Phase 3c).
+
+<CodeBlock language="yaml" title="config/samples/cnms_v1alpha1_mailserviceaccount.yaml">{ServiceAccountSample}</CodeBlock>
+
+The files above, except the `MailUser` and the `MailServiceAccount`, are
+part of the draft scenario in `config/samples/full-setup/`; the
 [install and operate guide](../how-to/02-install-and-operate.mdx#example-scenario)
 shows how to apply it.
 
@@ -202,6 +239,8 @@ MailServer ──references──> MailDirectory   (auth + recipient validation)
 MailDomain ──serverRef──> MailServer       (DKIM signing, submission domains)
 MailUser ──serverRef──> MailServer         (account of a server without directory)
 MailUser ──domainRef──> MailDomain         (primary address and aliases)
+MailServiceAccount ──serverRef──> MailServer   (application credential; another
+                                                namespace needs allowedNamespaces)
 MailDomain ─── publishes ──> DNS records   (DKIM/SPF/DMARC/MTA-STS/TLS-RPT)
 MailDomain ─── MX ───> MailServer hostname (reported and verified; the hostname
                                             carries A/AAAA and SPF records)

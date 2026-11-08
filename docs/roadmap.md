@@ -44,8 +44,10 @@ the code and the [status conditions](reference/status-conditions.md).
   and aliases (3b). The envelope
   sender of an authenticated user is bound to the addresses it owns, for
   static users and directory users alike (3b); the header From is bound to the
-  login as well for `MailUser`s and the static users (3b); `MailServiceAccount`
-  is not there yet.
+  login as well for `MailUser`s and the static users (3b). The
+  `MailServiceAccount` API and `MailServer.spec.serviceAccounts.allowedNamespaces`
+  are defined (3c), but the `MailServiceAccount` controller does nothing yet: no
+  credential Secret, NetworkPolicy, status or sender check.
 - **Mailboxes (Phase 4):** IMAP, LMTP delivery and the maildir volume
   work with the data plane. Open: quota, Dovecot metrics, the mailbox
   format ADR, and the k8up backup and restore e2e.

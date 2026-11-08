@@ -13,6 +13,7 @@ Package v1alpha1 contains API Schema definitions for the cnms v1alpha1 API group
 - [MailDomain](#maildomain)
 - [MailDomainGrant](#maildomaingrant)
 - [MailServer](#mailserver)
+- [MailServiceAccount](#mailserviceaccount)
 - [MailUser](#mailuser)
 
 
@@ -33,6 +34,24 @@ _Appears in:_
 | --- | --- |
 | `primary` | AddressKindPrimary is the canonical address: `<name>@<domain>`.<br /> |
 | `alias` | AddressKindAlias is an address from spec.aliases.<br /> |
+
+
+#### AllowedNamespace
+
+
+
+AllowedNamespace is a namespace that may use a MailServer through
+MailServiceAccounts.
+
+
+
+_Appears in:_
+- [ServerServiceAccounts](#serverserviceaccounts)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `name` _string_ | Name of the namespace. |  | MaxLength: 63 <br />Pattern: `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$` <br />Required: \{\} <br /> |
+| `senderDomains` _string array_ | SenderDomains limits the namespace to the sender addresses of<br />these domains, which are domain names of the MailDomains of the<br />namespace of the server (the rule of MailDomain.spec.domain).<br />Unset means every domain the server serves; an empty list is<br />refused, so that nobody writes it to mean "no domains" and gets<br />all of them (leave the namespace out of allowedNamespaces<br />instead). Give every namespace its own domains: the account of a<br />namespace that shares a domain can take an address from another<br />namespace's account, and when two accounts claim one address<br />both lose it (ADR 0015, section 4.2). At most 32, a limit on the<br />size of the object. |  | MaxItems: 32 <br />MinItems: 1 <br />items:MaxLength: 253 <br />items:Pattern: `^([a-z0-9]([a-z0-9-]\{0,61\}[a-z0-9])?[.])+[a-z]([a-z0-9-]\{0,61\}[a-z0-9])?$` <br />Optional: \{\} <br /> |
 
 
 #### Availability
@@ -628,6 +647,7 @@ _Appears in:_
 | `inbound` _[Inbound](#inbound)_ | Inbound mail (port 25) service settings. |  | Optional: \{\} <br /> |
 | `submission` _[Submission](#submission)_ | Submission (port 587) settings. |  | Optional: \{\} <br /> |
 | `mailboxes` _[Mailboxes](#mailboxes)_ | Mailboxes configures Dovecot mail storage (IMAP, LMTP delivery).<br />When disabled while submission is enabled, Dovecot runs in<br />auth-only mode. |  | Optional: \{\} <br /> |
+| `serviceAccounts` _[ServerServiceAccounts](#serverserviceaccounts)_ | ServiceAccounts configures which namespaces may use the server<br />through a MailServiceAccount (ADR 0008, ADR 0015). |  | Optional: \{\} <br /> |
 | `postfix` _[Postfix](#postfix)_ | Postfix workload settings. |  | Optional: \{\} <br /> |
 | `rspamd` _[Rspamd](#rspamd)_ | Rspamd workload settings. |  | Optional: \{\} <br /> |
 | `valkey` _[Valkey](#valkey)_ | Valkey (Rspamd state) settings. |  | Optional: \{\} <br /> |
@@ -653,6 +673,68 @@ _Appears in:_
 | `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#condition-v1-meta) array_ | Conditions represent the current state of the MailServer. The<br />"Ready" condition is true when all managed workloads are<br />running with validated configuration. |  | Optional: \{\} <br /> |
 | `domains` _[ServerDomainStatus](#serverdomainstatus) array_ | Domains lists the MailDomains of the namespace that reference<br />this MailServer in spec.serverRef: those that are not served<br />first, then by name, at most 128 entries (the DomainsListed<br />condition says when the list is cut). It is derived from the<br />MailDomains and holds no state of its own. |  | MaxItems: 128 <br />Optional: \{\} <br /> |
 | `records` _[DNSRecord](#dnsrecord) array_ | Records lists the DNS records of the hostname and whether a<br />lookup verified them: an A or AAAA record for every address of<br />the inbound LoadBalancer Service, and the SPF record of the<br />hostname from spec.spf (omitted while a MailDomain of the<br />hostname itself carries it). The records are reported and<br />verified, not published, and the verification never feeds into<br />Ready. Empty while the hostname is not authorized. The list is<br />atomic: one name holds several records of the same type. |  | MaxItems: 64 <br />Optional: \{\} <br /> |
+
+
+#### MailServiceAccount
+
+
+
+MailServiceAccount is the Schema for the cnms mail service accounts.
+
+
+
+
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `cnms.rpp.gmbh/v1alpha1` | | |
+| `kind` _string_ | `MailServiceAccount` | | |
+| `kind` _string_ | Kind is a string value representing the REST resource this object represents.<br />Servers may infer this from the endpoint the client submits requests to.<br />Cannot be updated.<br />In CamelCase.<br />More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds |  | Optional: \{\} <br /> |
+| `apiVersion` _string_ | APIVersion defines the versioned schema of this representation of an object.<br />Servers should convert recognized schemas to the latest internal value, and<br />may reject unrecognized values.<br />More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources |  | Optional: \{\} <br /> |
+| `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  | Optional: \{\} <br /> |
+| `spec` _[MailServiceAccountSpec](#mailserviceaccountspec)_ | spec defines the desired state of the MailServiceAccount |  | Required: \{\} <br /> |
+| `status` _[MailServiceAccountStatus](#mailserviceaccountstatus)_ | status defines the observed state of the MailServiceAccount |  | Optional: \{\} <br /> |
+
+
+#### MailServiceAccountSpec
+
+
+
+MailServiceAccountSpec defines the desired state of a
+MailServiceAccount.
+
+A MailServiceAccount is the sending credential of an application. It
+lives in the namespace of the application and may reference a
+MailServer of another namespace, which has to consent to it (ADR 0008,
+ADR 0015).
+
+
+
+_Appears in:_
+- [MailServiceAccount](#mailserviceaccount)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `serverRef` _[NamespacedNameReference](#namespacednamereference)_ | ServerRef references the MailServer the application sends<br />through. Without a namespace it is a MailServer of the namespace<br />of the account. A MailServer of another namespace takes effect<br />only when that server lists the namespace of the account in<br />spec.serviceAccounts.allowedNamespaces. The server need not<br />exist yet. |  | Required: \{\} <br /> |
+| `sender` _string_ | Sender is the single address the application may send as:<br />`<local part>@<domain>`, lower case. The local part holds<br />lower-case ASCII letters, digits and "." "_" "-", starts and ends<br />with a letter or digit, has no ".." and is at most 64 characters<br />(no "+": plus-addressing is not supported). The domain follows<br />the rule of MailDomain.spec.domain and must be served by the<br />server and authorized for it; the controller checks both, CEL<br />cannot. |  | MaxLength: 318 <br />Pattern: `^[a-z0-9]([a-z0-9._-]\{0,62\}[a-z0-9])?@([a-z0-9]([a-z0-9-]\{0,61\}[a-z0-9])?[.])+[a-z]([a-z0-9-]\{0,61\}[a-z0-9])?$` <br />Required: \{\} <br /> |
+
+
+#### MailServiceAccountStatus
+
+
+
+MailServiceAccountStatus defines the observed state of a
+MailServiceAccount.
+
+
+
+_Appears in:_
+- [MailServiceAccount](#mailserviceaccount)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `observedGeneration` _integer_ | ObservedGeneration is the generation of the spec last applied. |  | Optional: \{\} <br /> |
+| `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#condition-v1-meta) array_ | Conditions represent the current state of the MailServiceAccount.<br />The "Ready" condition is true when the credential works. |  | Optional: \{\} <br /> |
 
 
 #### MailUser
@@ -800,6 +882,26 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `name` _string_ | Name of the referenced resource. |  | MaxLength: 253 <br />Pattern: `^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$` <br />Required: \{\} <br /> |
+
+
+#### NamespacedNameReference
+
+
+
+NamespacedNameReference references a CNMS resource in the same
+namespace or, when namespace is set, in another one. It is a request,
+not an authorization: the namespace that owns the referenced resource
+has to consent to it (ADR 0008).
+
+
+
+_Appears in:_
+- [MailServiceAccountSpec](#mailserviceaccountspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `name` _string_ | Name of the referenced resource. |  | MaxLength: 253 <br />Pattern: `^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$` <br />Required: \{\} <br /> |
+| `namespace` _string_ | Namespace of the referenced resource. Defaults to the namespace<br />of the referencing resource. |  | MaxLength: 63 <br />Pattern: `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$` <br />Optional: \{\} <br /> |
 
 
 #### Observability
@@ -1037,6 +1139,23 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `ip4` _string array_ | IPv4 addresses or CIDR ranges allowed to send for the server<br />(ip4: mechanisms). |  | MaxItems: 16 <br />items:MaxLength: 64 <br />Optional: \{\} <br /> |
 | `ip6` _string array_ | IPv6 addresses or CIDR ranges allowed to send for the server<br />(ip6: mechanisms). |  | MaxItems: 16 <br />items:MaxLength: 64 <br />Optional: \{\} <br /> |
+
+
+#### ServerServiceAccounts
+
+
+
+ServerServiceAccounts holds the consent of a MailServer to the
+MailServiceAccounts of other namespaces.
+
+
+
+_Appears in:_
+- [MailServerSpec](#mailserverspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `allowedNamespaces` _[AllowedNamespace](#allowednamespace) array_ | AllowedNamespaces lists the namespaces whose MailServiceAccounts<br />may reference the server. Unset or empty: no other namespace<br />does; the MailServiceAccounts of the namespace of the server need<br />no entry. Removing a namespace revokes its accounts. At most 64:<br />a limit on the size of the object, far above the number of<br />tenant namespaces that share one mail server. |  | MaxItems: 64 <br />Optional: \{\} <br /> |
 
 
 #### Submission

@@ -29,6 +29,25 @@ type NameReference struct {
 	Name string `json:"name"`
 }
 
+// NamespacedNameReference references a CNMS resource in the same
+// namespace or, when namespace is set, in another one. It is a request,
+// not an authorization: the namespace that owns the referenced resource
+// has to consent to it (ADR 0008).
+type NamespacedNameReference struct {
+	// Name of the referenced resource.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`
+	Name string `json:"name"`
+
+	// Namespace of the referenced resource. Defaults to the namespace
+	// of the referencing resource.
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
+}
+
 // SecretReference references a Secret in the same namespace.
 type SecretReference struct {
 	// Name of the Secret.

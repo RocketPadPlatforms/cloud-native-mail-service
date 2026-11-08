@@ -308,6 +308,59 @@ spec:
                     minimum: 1
                     type: integer
                 type: object
+              serviceAccounts:
+                description: |-
+                  ServiceAccounts configures which namespaces may use the server
+                  through a MailServiceAccount (ADR 0008, ADR 0015).
+                properties:
+                  allowedNamespaces:
+                    description: |-
+                      AllowedNamespaces lists the namespaces whose MailServiceAccounts
+                      may reference the server. Unset or empty: no other namespace
+                      does; the MailServiceAccounts of the namespace of the server need
+                      no entry. Removing a namespace revokes its accounts. At most 64:
+                      a limit on the size of the object, far above the number of
+                      tenant namespaces that share one mail server.
+                    items:
+                      description: |-
+                        AllowedNamespace is a namespace that may use a MailServer through
+                        MailServiceAccounts.
+                      properties:
+                        name:
+                          description: Name of the namespace.
+                          maxLength: 63
+                          pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                          type: string
+                        senderDomains:
+                          description: |-
+                            SenderDomains limits the namespace to the sender addresses of
+                            these domains, which are domain names of the MailDomains of the
+                            namespace of the server (the rule of MailDomain.spec.domain).
+                            Unset means every domain the server serves; an empty list is
+                            refused, so that nobody writes it to mean "no domains" and gets
+                            all of them (leave the namespace out of allowedNamespaces
+                            instead). Give every namespace its own domains: the account of a
+                            namespace that shares a domain can take an address from another
+                            namespace's account, and when two accounts claim one address
+                            both lose it (ADR 0015, section 4.2). At most 32, a limit on the
+                            size of the object.
+                          items:
+                            maxLength: 253
+                            pattern: ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?[.])+[a-z]([a-z0-9-]{0,61}[a-z0-9])?$
+                            type: string
+                          maxItems: 32
+                          minItems: 1
+                          type: array
+                          x-kubernetes-list-type: set
+                      required:
+                      - name
+                      type: object
+                    maxItems: 64
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                type: object
               spf:
                 description: |-
                   SPF lists the sending sources of the server. The sources are
