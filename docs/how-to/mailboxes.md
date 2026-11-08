@@ -94,11 +94,11 @@ spec:
 ```
 
 Do not copy the CNMS labels (`cnms.rpp.gmbh/managed-by`,
-`app.kubernetes.io/managed-by`) onto your Service. The ingress NetworkPolicy `<server>-ingress` of the server
-already allows the IMAP container ports (31143 and 31993) from any source, so the
-Service needs no policy of its own. Point the DNS name `spec.hostname` at the
-address of the Service. That the Service works with your load balancer is yours
-to check; this page has not run it.
+`app.kubernetes.io/managed-by`) onto your Service. The ingress NetworkPolicy
+`<server>-ingress` of the server already allows the IMAP container ports (31143
+and 31993) from any source, so the Service needs no policy of its own. Point the
+DNS name `spec.hostname` at the address of the Service. That the Service works
+with your load balancer is yours to check; this page has not run it.
 
 ## Quota
 

@@ -107,10 +107,15 @@ next delivery.
      securityContext:
        runAsUser: 1000
        runAsGroup: 1000
+       runAsNonRoot: true
+       seccompProfile: {type: RuntimeDefault}
      containers:
        - name: purge
          image: <image from above>
          command: ["sh", "-c", "rm -rf /srv/mail/alice && ls /srv/mail"]
+         securityContext:
+           allowPrivilegeEscalation: false
+           capabilities: {drop: ["ALL"]}
          volumeMounts:
            - {name: mail, mountPath: /srv/mail}
      volumes:
@@ -119,8 +124,13 @@ next delivery.
            claimName: mail-<server>-dovecot-0
    ```
 
-   Write the login out in the command (`alice` here); do not build it from a
-   variable that can be empty. `kubectl wait pod/purge-alice -n <ns>
+   The pod sets the fields that a namespace enforcing the `restricted` Pod
+   Security level asks for (`runAsNonRoot`, no privilege escalation, all
+   capabilities dropped, a seccomp profile); a pod without them is rejected
+   there. The container test ran without these fields, and `rm` by the owner of
+   the files needs no capability, so they are expected to work; that is **not
+   verified**. Write the login out in the command (`alice` here); do not build it
+   from a variable that can be empty. `kubectl wait pod/purge-alice -n <ns>
    --for=jsonpath='{.status.phase}'=Succeeded --timeout=120s` and `kubectl logs
    purge-alice -n <ns>` show the homes that are left.
 4. **Delete the pod**: `kubectl delete pod purge-alice -n <ns>`.
@@ -138,8 +148,9 @@ next delivery.
    kubectl exec -n <ns> <server>-postfix-<n> -c postfix -- postsuper -d <queue id>
    ```
 
-   Mail to an alias of the account is queued under the primary address.
-   This step is **not verified on a cluster**.
+   `postqueue -p` prints a `*` (active) or `!` (on hold) after the queue ID;
+   `postsuper -d` needs the ID without it. Mail to an alias of the account is
+   queued under the primary address. This step is **not verified on a cluster**.
 
 To check the result, the log of step 3 no longer lists the login. If the account
 is created again once no deferred mail for the old account is left in the queues,
@@ -167,11 +178,12 @@ kubectl exec -n <ns> <server>-dovecot-0 -c dovecot -- doveadm kick <account name
 
 with the account name (the object name of the `MailUser`). On kind, `doveadm who`
 and a `kick` of an account without a session answered through `kubectl exec` in
-the pod. `kick` ended an open IMAP session in a plain container with the pinned
-image ([ADR 0016](../decisions/0016-mailbox-format-and-storage.md), S3); that it
-ends one through `kubectl exec` in a pod is **not verified**. If the session stays
-open, restart the Dovecot pod, which ends every session and interrupts IMAP, LMTP
-and submission login for a moment (mail waits in the Postfix queue):
+the pod. In a container test with the pinned image ([ADR
+0016](../decisions/0016-mailbox-format-and-storage.md)), `kick` ended an open
+IMAP session; that it ends one through `kubectl exec` in a pod is **not
+verified**. If the session stays open, restart the Dovecot pod, which ends every
+session and interrupts IMAP, LMTP and submission login for a moment (mail waits
+in the Postfix queue):
 
 ```sh
 kubectl rollout restart statefulset/<server>-dovecot -n <ns>

@@ -114,13 +114,13 @@ kubectl exec -n <ns> <server>-dovecot-0 -c dovecot -- doveadm kick <account name
 ```
 
 On kind, `doveadm who` and a `kick` of an account without a session answered
-through `kubectl exec` in the pod. `kick` ended an open IMAP session in a plain
-container with the pinned image ([ADR
-0016](../decisions/0016-mailbox-format-and-storage.md), S3); that it ends one
-through `kubectl exec` in a pod is **not verified**. If the session stays open, restart the
-Dovecot pod, which ends every session: `kubectl rollout restart
-statefulset/<server>-dovecot`. The operator cannot run `doveadm` itself (it has
-no `pods/exec`); a sidecar that kicks revoked accounts is in the backlog.
+through `kubectl exec` in the pod. In a container test with the pinned image
+([ADR 0016](../decisions/0016-mailbox-format-and-storage.md)), `kick` ended an
+open IMAP session; that it ends one through `kubectl exec` in a pod is **not
+verified**. If the session stays open, restart the Dovecot pod, which ends
+every session: `kubectl rollout restart statefulset/<server>-dovecot`. The
+operator cannot run `doveadm` itself (it has no `pods/exec`); a sidecar that
+kicks revoked accounts is in the backlog.
 
 ## Sending
 
