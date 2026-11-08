@@ -30,7 +30,8 @@ import (
 // and vmailGID are the vmail account of the official 2.4.5 image.
 const (
 	tlsMountPath = "/etc/dovecot/ssl"
-	usersPath    = render.DovecotUsersDir + "/users"
+	passdbPath   = render.DovecotUsersDir + "/" + passdbFile
+	userdbPath   = render.DovecotUsersDir + "/" + userdbFile
 	mailRoot     = "/srv/mail"
 	vmailUID     = 1000
 	vmailGID     = 1000
@@ -138,14 +139,24 @@ func renderDovecotConf(req *render.RenderRequest) (conf string, dirSecret map[st
 		b.WriteString(dir)
 		return b.String(), secret, nil
 	}
-	b.WriteString("# Phase 2 test source: the passwd-file rendered into this same\n")
-	b.WriteString("# tree (users, from insecureStaticUsers). Phase 3 replaces it\n")
-	b.WriteString("# with the directory (MailDirectory).\n")
+	b.WriteString("# User source: the accounts, two passwd-files of the users Secret\n")
+	b.WriteString("# (ADR 0015, section 3, point 5). The passdb lists who may log in,\n")
+	b.WriteString("# the userdb where the mail goes: a disabled account is only in\n")
+	b.WriteString("# the second, so it cannot log in and still receives.\n")
+	b.WriteString("# A password hash is checked in an auth worker (verified on 2.4.5:\n")
+	b.WriteString("# the passwd-file passdb honours passdb_use_worker), and the\n")
+	b.WriteString("# workers are limited to 4: a memory-hard hash needs memory per\n")
+	b.WriteString("# verification, and anyone can start one (ADR 0015, section 3,\n")
+	b.WriteString("# point 4). Excess logins queue instead of using more memory.\n")
 	b.WriteString("passdb passwd-file {\n")
-	fmt.Fprintf(&b, "  passwd_file_path = %s\n", usersPath)
+	fmt.Fprintf(&b, "  passwd_file_path = %s\n", passdbPath)
+	b.WriteString("  passdb_use_worker = yes\n")
 	b.WriteString("}\n")
 	b.WriteString("userdb passwd-file {\n")
-	fmt.Fprintf(&b, "  passwd_file_path = %s\n", usersPath)
+	fmt.Fprintf(&b, "  passwd_file_path = %s\n", userdbPath)
+	b.WriteString("}\n")
+	b.WriteString("service auth-worker {\n")
+	b.WriteString("  process_limit = 4\n")
 	b.WriteString("}\n")
 	return b.String(), nil, nil
 }

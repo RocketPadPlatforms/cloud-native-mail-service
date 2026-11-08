@@ -50,15 +50,23 @@ func (r *Renderer) Render(req *render.RenderRequest) (*render.RenderResult, erro
 		return nil, err
 	}
 	if req.Directory == nil {
-		secret = map[string]string{"users": renderUsers(req)}
+		plan, err := render.PlanAccounts(req.Accounts, req.AuthorizedDomains, req.ConflictedAddresses)
+		if err != nil {
+			return nil, err
+		}
+		secret = map[string]string{
+			passdbFile: renderPassdb(req, plan),
+			userdbFile: renderUserdb(req, plan),
+		}
 	}
 	return &render.RenderResult{
 		ConfigData: map[string]string{
 			"dovecot.conf": conf,
 		},
-		// The password hashes (the users file) or the directory
-		// password and CA go to a Secret, not a ConfigMap. A directory
-		// without a bind password and CA has none.
+		// The password hashes (the passdb file) and the userdb file, or
+		// the directory password and CA, go to a Secret, not a
+		// ConfigMap. A directory without a bind password and CA has
+		// none.
 		SecretData: secret,
 		// `doveconf -n` validates the rendered configuration before
 		// rollout (D4: a bad config must never replace a working

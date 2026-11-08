@@ -31,7 +31,9 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	cnmsv1alpha1 "github.com/RocketPadPlatforms/cloud-native-mail-service/api/v1alpha1"
+	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/directory"
 	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/manifests"
+	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/render"
 )
 
 // foreignSelector is the selector of a tenant's own Service.
@@ -85,7 +87,15 @@ var _ = Describe("MailServer object ownership", func() {
 			server := &cnmsv1alpha1.MailServer{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testServerName, Namespace: ns}, server)).To(Succeed())
 			var err error
-			plane, err = renderDataPlane(server, []string{domain}, server.Spec.Hostname, userSource{}, nil, noHashKey)
+			// The directory of the fixture (createDirectoryG), as the
+			// controller resolves it: Postfix reads its sender table, so
+			// its configuration depends on it, and holds a Secret.
+			src := userSource{directory: &render.DirectorySource{LDAP: &directory.LDAPTarget{
+				Host: "ldap.example.org", BaseDN: "dc=example,dc=org", TLSMode: directory.LDAPStartTLS,
+				Attributes: directory.Attributes{Login: directory.DefaultLogin, Mail: directory.DefaultMail},
+			}}}
+			plane, err = renderDataPlane(server, []string{domain}, server.Spec.Hostname, src, nil,
+				func() ([]byte, error) { return make([]byte, 32), nil })
 			Expect(err).ToNot(HaveOccurred())
 		})
 
@@ -103,7 +113,15 @@ var _ = Describe("MailServer object ownership", func() {
 		}
 
 		It("does not accept a foreign validation Job as the result", func() {
-			want := plane.Validations[0].Job
+			// The Job of Rspamd: its name does not depend on the hash key
+			// of the secret files, which the controller creates itself.
+			var want *batchv1.Job
+			for _, v := range plane.Validations {
+				if v.Component == render.ComponentRspamd {
+					want = v.Job
+				}
+			}
+			Expect(want).ToNot(BeNil())
 			foreign := &batchv1.Job{
 				ObjectMeta: metav1.ObjectMeta{Name: want.Name, Namespace: ns},
 				Spec:       *want.Spec.DeepCopy(),

@@ -198,6 +198,49 @@ the new CRDs reject or prune the old field names.
 
 ### Data plane
 
+- **The envelope sender of an authenticated user is bound to the addresses
+  it owns** ([ADR 0015](../decisions/0015-user-sources-directory-users-and-aliases.md),
+  section 4.4). On port 587 Postfix now refuses a `MAIL FROM` that the
+  logged-in account does not own (`553 5.7.1`), one that nobody owns (a
+  served domain, an unknown local part, a foreign domain) and the null sender
+  (`554 5.7.1`; a bounce or a disposition notice cannot be submitted on 587).
+  Before, any authenticated user could send as any address. Owned means: for
+  a static test user its mailbox address, if its domain is authorized; for a
+  directory user the addresses the directory returns for it (`mail` and the
+  alias attribute for LDAP, the `mail` column and the aliases relation for
+  PostgreSQL) in an authorized domain, so a directory user without a value in
+  the `mail` attribute cannot send, and an application that sends as an
+  address its login does not own is refused: check the `From` of your
+  applications before the Postfix pods roll. A lookup error in the directory
+  is `451 4.3.0`. Port 25 is not affected. Every Postfix StatefulSet rolls
+  once on this upgrade, because the new tables and settings change the
+  configuration hash of every server. Rendering: the
+  Postfix pods mount four more table files (`valias`, `sender_login`,
+  `recipient_defer`, `null_sender`; `main.cf` sets `smtpd_sender_login_maps`
+  and the `587` entry carries the restrictions in the braces form),
+  `virtual_alias_domains` is set to empty for a server with static users
+  too, and a server with a directory and submission but no mailboxes gets the
+  sender table of the directory. The `lmtp` service gets
+  `-o soft_bounce=yes`: a permanent reply of Dovecot to mail that Postfix
+  accepted is now a deferral, so the mail stays queued and is retried
+  instead of bouncing. The price is that any permanent LMTP error, for
+  example a mailbox that is missing for another reason, is retried until the
+  queue lifetime (5 days) ends and only then bounces ([ADR
+  0015](../decisions/0015-user-sources-directory-users-and-aliases.md),
+  section 4.7). Postfix still refuses an unknown recipient at `RCPT` with a
+  permanent `550 5.1.1`.
+- **Dovecot's static users are two files.** The Secret of a server with
+  `insecureStaticUsers` has the keys `passdb` and `userdb` instead of
+  `users`, mounted at `/etc/dovecot-users`; `dovecot.conf` points the
+  passwd-file passdb and userdb at them, checks hashes in an auth worker
+  (`passdb_use_worker = yes`) and limits the workers to four
+  (`service auth-worker { process_limit = 4 }`). The passdb lines carry
+  `user=<username>`, so a login by address and by username is the same
+  account. The Dovecot pod rolls once. A static user whose mailbox domain is
+  not an authorized domain of the server can no longer log in or send (it is
+  suspended: it still has its userdb line, so mail that is already accepted
+  is delivered), and while no domain is authorized no static user can log in.
+  Before, Dovecot rendered every static user whatever its domain.
 - **A `MailServer` with a `directoryRef` now uses the directory** ([ADR
   0015](../decisions/0015-user-sources-directory-users-and-aliases.md),
   [how-to](../how-to/directories.md)). Before, the `MailDirectory` was

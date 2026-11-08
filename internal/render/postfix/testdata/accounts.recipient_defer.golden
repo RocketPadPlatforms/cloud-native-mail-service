@@ -1,0 +1,4 @@
+# CNMS-rendered Postfix deferred recipients (check_recipient_access) -- do not edit.
+# Source: MailServer tenant1/mail
+carol@a.example 450 4.2.1 The address is temporarily not available
+shared@b.example 450 4.2.1 The address is temporarily not available

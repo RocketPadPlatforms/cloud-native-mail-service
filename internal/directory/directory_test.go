@@ -85,9 +85,10 @@ func TestLookupFilter(t *testing.T) {
 		key  string
 		want string
 	}{
-		"mail, Postfix":  {ByMail, KeyPostfix, "(&" + active + "(mail=%s)" + guards},
-		"alias, Postfix": {ByAlias, KeyPostfix, "(&" + active + "(mailAlias=%s)" + guards},
-		"login, Dovecot": {ByLogin, KeyDovecot, "(&" + active + "(|(uid=%{user})(mail=%{user}))" + guards},
+		"mail, Postfix":   {ByMail, KeyPostfix, "(&" + active + "(mail=%s)" + guards},
+		"alias, Postfix":  {ByAlias, KeyPostfix, "(&" + active + "(mailAlias=%s)" + guards},
+		"login, Dovecot":  {ByLogin, KeyDovecot, "(&" + active + "(|(uid=%{user})(mail=%{user}))" + guards},
+		"sender, Postfix": {BySender, KeyPostfix, "(&" + active + "(|(mail=%s)(mailAlias=%s))" + guards},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got, err := LookupFilter(attrs, active, tc.by, tc.key)
@@ -472,5 +473,17 @@ func TestProbesAgainstLoopbackServers(t *testing.T) {
 	ldapT.Port = closedPort(t)
 	if got := (NetProber{}).ProbeLDAP(t.Context(), ldapT); got != Unreachable {
 		t.Errorf("a closed LDAPS port = %q", got)
+	}
+}
+
+// Without an alias attribute the owner of an address is found by the mail
+// attribute alone.
+func TestLookupFilterSenderWithoutAliases(t *testing.T) {
+	got, err := LookupFilter(Attributes{Login: DefaultLogin, Mail: DefaultMail}, "", BySender, KeyPostfix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "(&(mail=%s)(uid=*)(mail=*)(!(uid=.*))(!(uid=*/*))(!(uid=sa.*)))"; got != want {
+		t.Errorf("filter = %q, want %q", got, want)
 	}
 }

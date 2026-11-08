@@ -402,9 +402,13 @@ var _ = Describe("MailServer hash key", func() {
 	})
 
 	It("creates no key for a server without secret files", func() {
-		// No mailboxes and an anonymous directory: nothing to key.
+		// No mailboxes, no submission and an anonymous directory: nothing
+		// to key. (With submission, Postfix reads the sender table of the
+		// directory, a Secret with the directory settings.)
 		other, _ := grantFixture()
-		createServerG(other, testServerName, nil)
+		createServerG(other, testServerName, func(s *cnmsv1alpha1.MailServer) {
+			s.Spec.Submission = &cnmsv1alpha1.Submission{Enabled: new(false)}
+		})
 		createTLSSecretG(other)
 		deployG(newReconcilerG(AuthorizationAllowlist, true), other, testServerName)
 		err := k8sClient.Get(ctx, types.NamespacedName{Name: testServerName + "-hash-key", Namespace: other}, &corev1.Secret{})

@@ -99,13 +99,19 @@ func applyOwnKeySecret(value string) {
 	})
 }
 
-// submitFromDomain sends one message from the e2e user, with a sender
-// address in domain, through the authenticated submission port to the
-// Mailpit sink. It returns the swaks transcript.
+// submitFromDomain sends one message from the e2e user, with a header
+// From in domain, through the authenticated submission port to the
+// Mailpit sink. It returns the swaks transcript. The envelope sender is
+// the mailbox the user owns in the directory: Postfix binds it to the
+// login (ADR 0015, section 4.4), while Rspamd signs by the domain of the
+// header From (allow_hdrfrom_mismatch) and the guard needs only a served
+// domain there. swaks takes the header From from --h-From and the
+// envelope sender from --from.
 func submitFromDomain(domain, subject string) string {
 	return swaks(
 		"--to", "sink@"+e2eMailpitSink,
-		"--from", e2eUser+"@"+domain,
+		"--from", e2eMailbox,
+		"--h-From", e2eUser+"@"+domain,
 		"--server", e2ePostfixSVC+":587",
 		"--tls",
 		"--auth", "PLAIN",

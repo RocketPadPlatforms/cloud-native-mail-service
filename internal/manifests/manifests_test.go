@@ -275,7 +275,7 @@ func TestPostfixStatefulSet(t *testing.T) {
 	if main.Image != images.Postfix {
 		t.Errorf("postfix image = %q", main.Image)
 	}
-	for _, want := range []string{"main.cf", "master.cf", "vmailbox"} {
+	for _, want := range []string{"main.cf", "master.cf", "vmailbox", "valias", "sender_login", "recipient_defer", "null_sender"} {
 		if !hasMount(main.VolumeMounts, configVolumeName, "/etc/postfix/"+want) {
 			t.Errorf("postfix main container misses subPath mount %s", want)
 		}
@@ -950,8 +950,8 @@ func TestDovecotUsersLiveInAnImmutableSecret(t *testing.T) {
 	if sec.Immutable == nil || !*sec.Immutable || !configNameRE.MatchString(sec.Name) {
 		t.Errorf("users Secret %q must be immutable and hash-named", sec.Name)
 	}
-	if !strings.Contains(string(sec.Data["users"]), "{SHA512-CRYPT}x") {
-		t.Error("users Secret misses the users file")
+	if !strings.Contains(string(sec.Data["passdb"]), "{SHA512-CRYPT}x") {
+		t.Error("users Secret misses the passdb file")
 	}
 
 	sts := mustFind[*appsv1.StatefulSet](t, find(t, dp.Workloads, kindStatefulSet, testName+"-dovecot"), "sts")
@@ -1346,3 +1346,25 @@ var testHashKey = bytes.Repeat([]byte{7}, 32)
 
 // testCryptHash stands in for the password hash of a test account.
 const testCryptHash = "{SHA512-CRYPT}x"
+
+// Every file the Postfix renderer produces is mounted into the pod and
+// the validation Job: a table that main.cf names but that is not mounted
+// would stop Postfix at its start.
+func TestEveryPostfixFileIsMounted(t *testing.T) {
+	req := &render.RenderRequest{
+		Server:            testServer(t, nil),
+		AuthorizedDomains: []string{domainA},
+		Hostname:          testHostname,
+		HashKey:           testHashKey,
+	}
+	res, err := postfix.New().Render(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mounts := configSubPathMounts()
+	for file := range res.ConfigData {
+		if !hasMount(mounts, configVolumeName, "/etc/postfix/"+file) {
+			t.Errorf("the rendered Postfix file %s is not mounted", file)
+		}
+	}
+}

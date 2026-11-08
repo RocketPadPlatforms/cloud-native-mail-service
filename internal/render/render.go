@@ -41,15 +41,22 @@ const (
 // docs) is one producer of accounts. PasswordHash is a crypt(3) hash,
 // never a plaintext password.
 //
-// shortcut: only what the renderers read today. Aliases, the disabled
-// and send-only flags of the MailUser accounts are added by the commit
-// that renders them.
+// shortcut: no send-only flag yet; the service accounts of 3c add it.
 type Account struct {
 	// Name is the account name: the login, and the mailbox directory.
 	Name         string
 	PasswordHash string
 	// Address is the primary (canonical) address.
 	Address string
+	// Aliases are the further addresses the account owns: mail to them
+	// is delivered to the mailbox of Address and the account may send as
+	// them. The caller passes only the aliases that passed the checks of
+	// ADR 0015, section 4.1; PlanAccounts drops those in a domain that is
+	// not authorized.
+	Aliases []string
+	// Disabled removes the login and the right to send; mail keeps being
+	// delivered (ADR 0015, section 3, point 5).
+	Disabled bool
 }
 
 // DirectorySource is the external user directory of a MailServer (a
@@ -86,6 +93,11 @@ type RenderRequest struct {
 	// Directory is the external user directory, or nil. It replaces
 	// the accounts as the user source of Postfix and Dovecot.
 	Directory *DirectorySource
+	// ConflictedAddresses are the addresses that lost a conflict between
+	// accounts (ADR 0015, section 4.2): they are served by nobody and
+	// answer a temporary failure. The controller decides conflicts; the
+	// renderers only apply the verdict.
+	ConflictedAddresses []string
 
 	// DKIMKeys are the active signing keys of the authorized domains
 	// (ADR 0011). A domain without an entry has no key: it is still

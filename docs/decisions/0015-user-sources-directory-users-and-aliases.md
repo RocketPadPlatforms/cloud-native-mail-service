@@ -219,21 +219,22 @@ spec:
      page](https://doc.dovecot.org/2.4.5/installation/upgrade/2.3-to-2.4.html)
      (a table of changed defaults with `service/auth-worker/process_limit`
      going from 1 to 30, and `auth_worker_max_count` replaced by "the
-     service-specific process limit"). **Not run on the pinned 2.4.5**: the
-     validation Job (`doveconf -n`) rejects an unknown setting, and 3b
-     confirms the name there. **Fallback**, if the gate rejects the name or
+     service-specific process limit"). **Run on the pinned 2.4.5 (row 33):**
+     `service auth-worker { process_limit = 4 }` is accepted by
+     `doveconf -n`, which rejects an unknown setting. **Fallback**, if the gate rejects the name or
      the load test below fails: first lower the limit (2 workers), then lower
      `m` (for example to the OWASP profile `m=12288,t=3,p=1`, 12 MiB, listed
      on the cheat sheet above), and keep `p=1`; if no worker limit exists
      at all, set `passdb_use_worker = no` so that hashing is serialized in
      the auth process (one verification at a time, 19 MiB), and accept that a
-     login flood queues behind it. That the passwd-file passdb honours
-     `passdb_use_worker` is **not verified** (upstream, [passdb
-     page](https://doc.dovecot.org/2.4.5/core/config/auth/passdb.html): "only
-     used by some of the passdb drivers"); if it does not, the hashing runs
-     one at a time in the auth process, memory is 19 MiB and the limit is
-     moot, but a
-     login flood queues behind it. 3b adds a **load test** as a done
+     login flood queues behind it. The upstream [passdb
+     page](https://doc.dovecot.org/2.4.5/core/config/auth/passdb.html) says
+     the setting is "only used by some of the passdb drivers"; that the
+     passwd-file passdb honours `passdb_use_worker` **was run (row 33)**: an
+     auth worker process appears only with the setting. (Had it not, the
+     hashing would run one at a time in the auth process, memory would be
+     19 MiB and the limit moot, but a login flood would queue behind it.)
+     3b adds a **load test** as a done
      criterion: 50 parallel failing logins for a minute must keep the
      container's peak memory (cgroup `memory.peak`) under half of its limit
      and keep mail delivery working; the measured numbers go into the docs.
@@ -267,7 +268,7 @@ spec:
    keeps working, so queued and incoming mail is delivered and not
    bounced. Both files change in one Secret update, which the kubelet
    projects as one unit, so the passdb and userdb never disagree with each
-   other. **Not verified on 2.4.5:** two separate passwd-files, a passdb file
+   other. **Verified on 2.4.5 (row 32):** two separate passwd-files, a passdb file
    whose uid, gid and home fields are empty, and the userdb file with an
    empty password field; the e2e test of 3b is the check: a disabled user
    cannot log in by IMAP **and** by SASL on 587 and still receives mail.
@@ -499,7 +500,7 @@ smtpd_sender_restrictions = check_sender_access texthash:/etc/postfix/null_sende
   nor `postconf -n` notices it (verified). The renderer uses braces or
   space-free values, and the e2e suite starts the listener.
 - Lookup errors of `smtpd_sender_login_maps` end in `451 4.3.0` (verified
-  for `pgsql:`; for `ldap:` **inferred** from the recipient maps, not run).
+  for `pgsql:`; for `ldap:` verified in row 34).
 - Address-to-login lookups are case-insensitive (verified).
 
 Header `From` (Rspamd). The envelope check does not bind the header: an
@@ -584,7 +585,7 @@ the authenticated user is always `alice`. Postfix then sees
 lines per user without `user=`; 3b adds the field to the two lines of the
 passdb file (and the userdb file gets the same two keys: the lookup after
 a login is by the account name, LMTP's by the address). The check ran with
-one passwd-file; the two-file form is **not verified** (section 3, point
+one passwd-file; the two-file form is verified in row 32 (section 3, point
 5). Aliases are not in the passdb, so `doveadm auth test alice@b.example`
 fails (verified for passwd-file, LDAP and PostgreSQL). `auth_username_format`
 keeps its default `%{user | lower}`.
@@ -697,7 +698,7 @@ passwd-files an explicit exception:
   `-o soft_bounce=yes` under it; `main.cf` does not change). Postfix then
   turns a permanent reply of the LMTP delivery into a deferral: the mail
   stays in the queue and is retried until the Secret has been projected, or
-  until the queue lifetime ends. **Not verified on Postfix 3.11.7**: that
+  until the queue lifetime ends. **Verified on Postfix 3.11.7 (row 31):** that
   the parameter is honoured as a per-service `-o` override for the `lmtp`
   client, and what `postqueue -p` and the log show; 3b verifies it with
   exactly that setup (a `550` from a stub LMTP server must give a deferral,
@@ -944,7 +945,7 @@ Aliases and senders come from the directory through the **same contract** as
    `u.login`, so an alias of a removed or guarded account is `550` at
    `RCPT` as with LDAP, and not accepted and bounced later; row 28), a mailbox table (`mail=%s`), and, in
    3b, a sender table (`(|(mail=%s)(mailAlias=%s))` returning the login;
-   **the LDAP sender table was not run**, inferred from the other two). All
+   run in row 34; it also carries `domain = <authorized domains>`, row 38). All
    three with the active restriction.
 4. **Dovecot:** `passdb ldap` with `bind = yes`: the directory verifies the
    password, hashes never leave it, and the filter is
@@ -1503,6 +1504,15 @@ written down from its result, so anyone can repeat it.
 | 27 | Lookup timeouts against an address that drops packets (3a, the directory maps) | The rendered `main.cf`, `master.cf` and tables of the golden files, with the directory host `10.255.255.1` (no route answers, packets are dropped), in the Postfix image with only `smtpd` and a `lmtp` virtual transport that is not used; a bash `/dev/tcp` `RCPT TO` of a recipient and its timing (read timeout 300 s); the same with the environment of the old render (no `PGCONNECT_TIMEOUT`). Dovecot 2.4.5 against a PostgreSQL fixture, then `iptables -A OUTPUT -d <fixture> -j DROP` in the shared network namespace (a container with `NET_ADMIN`) and `pg_terminate_backend` of the connection, then `doveadm auth test` timed; `doveconf -a` and the 2.4 pages on the SQL database for the settings of `pgsql` | Postfix `ldap:` with `timeout = 5`: `451 4.3.0 Temporary lookup failure` after 5 s. Postfix `pgsql:` with `PGCONNECT_TIMEOUT=5`: `451 4.3.0` after 10 s (the client connects twice). Without `PGCONNECT_TIMEOUT` the `RCPT` was not answered within 300 s. Dovecot: `doveconf -a` knows `pgsql_connection_limit`, `pgsql_host` and `pgsql_parameters` and no connect timeout for `pgsql` (`mysql_connect_timeout` exists for `mysql`); `connect_timeout = 5` in `parameters` is accepted, but a lookup with the packets dropped took about 120 s with it and without it (Dovecot logs `sqlpool(pgsql): Finished query ... Query timed out (no free connections)` after about 117 s, then answers `temp_fail`), and the first lookup after the connection was cut answers `temp_fail` at once. With `ldap_timeout` at its default Dovecot's LDAP side was not measured against dropped packets. At start with the fixture unreachable the `auth` service did not answer the handshake within 30 s with either variant (row 16). |
 | 28 | The SQL alias table joined to the users relation (3a, the directory maps) | A PostgreSQL 18.6 fixture (row 18 image) with TLS, users `alice`, `bob`, `x/../bob` (guarded) and `sa.0123456789abcdef` (reserved), aliases to `alice`, to `BOB@a.example` (upper case), to an address that is no user, to the guarded login and to the reserved one; the rendered `pgsql:` mailbox and alias tables in the Postfix image, started like row 27 with a `lmtp` transport; `RCPT TO` for each address; the same with the former alias query (`SELECT target FROM aliases WHERE lower(alias) = '%s'`) | New query: `alice@` `250`, the alias to `alice` `250`, the alias to `BOB@a.example` `250`, the alias with no user, the alias to the guarded login, the alias to the reserved login, the guarded login itself and an unknown address `550 5.1.1`. Former query, same data: the three aliases with no usable target were accepted with `250` (mail that bounces later). An alias whose target is an account of the users relation in a domain the server does not serve gets `250` too, and the message is rewritten to the target and handed to the smtp client for that domain (outbound delivery; here it bounced for want of DNS). |
 | 29 | The validation gate with an unreachable directory (3a, the directory maps) | The `validateScript` of the renderer (`postfix check`, `postmap -s`, `postconf -n`) in the Postfix image with the rendered `main.cf`, `master.cf`, `vmailbox` and the Secret of the golden files, once with the PostgreSQL tables and once with the LDAP tables pointing at `10.255.255.1`, a tmpfs queue and no network access to a directory | Exit 0 in about 1.5 s for both: the gate opens the tables but makes no lookup, so a directory that is down or unreachable neither hangs nor fails it. |
+| 30 | The CEL rules and the cost estimate of 4.1 on the API server (3b, the MailUser API) | envtest (`make test`, the API server of the Kubernetes 1.37 envtest assets), `internal/controller/api_validation_test.go` | The CRD installs. A `MailUser` with **no** `aliases`, one with 32 aliases in two domains and names with dots are admitted; a duplicate alias, an alias equal to the primary address, 33 aliases and a name that starts with `sa.` are refused. The numeric cost estimate was not read out: the API server accepted both rules at 32 items. |
+| 31 | `soft_bounce` as a per-service override on the `lmtp` entry (3b, the account tables) | `docker build -t cnms-postfix-3b:test images/postfix` (the Dockerfile of `3.11.7-1`, Postfix 3.11.7, a local tag); the `accounts` golden files of the Postfix renderer (`main.cf`, `master.cf` and the five tables) with three test-only changes (no milters, `smtpd` in place of `postscreen`, LMTP to the listener port 31024), Dovecot 2.4.5 with the rendered `dovecot.conf` and users files behind the network alias of the Service, published ports, `swaks`; a message to `dave@a.example`, which is in `vmailbox` and not in the Dovecot userdb; then the same `master.cf` without the `-o soft_bounce=yes` line; then the user added to the userdb file (appended in place) and `postqueue -f` | With the override: `RCPT` is accepted, Dovecot answers `550 5.1.1 User doesn't exist` to the LMTP `RCPT`, and Postfix logs `dsn=4.1.1, status=SOFTBOUNCE`; the message stays in the queue (`postqueue -p`). Without it: `dsn=5.1.1, status=bounced`, the queue is empty. With it set, an unknown recipient is still `550 5.1.1` at the SMTP `RCPT` (the override is for the `lmtp` service alone). After the user line was appended and the queue flushed, the message was delivered (`status=sent`), and Dovecot had read the appended file without a reload. **Not run:** the retry timing (`postqueue -f` stood in), and the kubelet's own projection. |
+| 32 | Two passwd-files, the `user=` field and the login forms (3b, the account tables) | The `accounts.passdb` and `accounts.userdb` golden files (hashes replaced by a real `{SHA512-CRYPT}` hash from `doveadm pw`) in `dovecot/dovecot:2.4.5` (read-only root, tmpfs runtime), `doveadm auth test`, `doveadm auth login`, `doveadm user`; the same files behind Postfix (row 36) | The passdb file with empty uid, gid and home fields and the extra field `user=<name>` works: `alice` and `alice@a.example` (also in upper case) succeed and report `user=alice`; the alias, the disabled `bob`, the suspended `carol` and a wrong password fail. The userdb file without a password field works: `doveadm user` finds `alice`, the disabled `bob@a.example` and `bob`, the suspended `carol@revoked.example`, all with the home `/srv/mail/<name>`, and not the alias `alice@b.example`. LMTP delivered to the disabled `bob` (through the alias `bobby@b.example`) and a SASL login of `bob` through Postfix was `535 5.7.8`. |
+| 33 | The auth worker settings of 2.4.5 (3b, the account tables) | `doveconf -n` of the rendered `dovecot.conf` with `passdb_use_worker = yes` inside the `passdb passwd-file` block and `service auth-worker { process_limit = 4 }`; the same with an invented setting in the service block (negative control); `docker top` of the running container after `doveadm auth test`, with and without the setting | Both settings are accepted (`doveconf` prints the first as `use_worker = yes`); the invented setting exits 89 (`Unknown setting: bogus_limit (service_bogus_limit or service_auth-worker_bogus_limit not found either.)`). With the setting an auth worker (`dovecot/auth -w`) exists after a login, without it there is only `dovecot/auth`: the passwd-file passdb honours `passdb_use_worker`. **Not run:** the memory under 50 parallel failing logins, and that the limit holds under load (section 3, point 4). |
+| 34 | The LDAP sender table (3b, the account tables) | `osixia/openldap:2.6.15-rc` (digest of row 18, no TLS here: TLS is rows 22 and 23) with `alice` (`mail`, two `mailAlias` values), `bob`, a `mailEnabled=FALSE` `carol` with an alias, and accounts whose login is `x/../bob`, `.hidden` and `sa.0123456789abcdef`; the rendered `ldap-sender.cf` and `main.cf` in the Postfix image of row 31; `postmap -q`, then an SMTP `MAIL FROM` / `RCPT` with `smtpd_sender_restrictions = reject_sender_login_mismatch` and `smtpd_sasl_auth_enable = yes` (no login), the directory stopped and started | `postmap -q`: `alice@a.example`, `ALICE@A.EXAMPLE`, `sales@b.example` and `alice@b.example` return `alice`, `bob@a.example` returns `bob`; the disabled account and its alias, the three guarded logins, their aliases and an unknown address return nothing. In the session an owned sender is `553 5.7.1 ... not logged in` (no login) and an unowned one is accepted, so the table is read; with the directory stopped both are `451 4.3.0 Temporary lookup failure`, and after the start the answers return. This closes the "inferred" of rows 6 and 4.4 for LDAP. |
+| 35 | The PostgreSQL sender table (3b, the account tables) | `postgres:18.6-alpine` (digest of row 18, no TLS) with `alice` and `bob` (`Bob@A.example`), the guarded logins and aliases to them, an alias of an upper-case target, an alias of an address that is no user; the rendered `pgsql-sender.cf` and `main.cf`; `postmap -q` and the session of row 34; the database stopped | `alice@a.example` in any case, `sales@b.example` and `alice@b.example` return `alice` once (the `UNION` merges the rows); `BOB@A.EXAMPLE` and the alias `Bobby@B.example` (target `BOB@a.example`) return `bob`; the alias of a missing user, the guarded logins and their aliases, an unknown address and `x' OR '1'='1` return nothing. In the session an owned sender is `553 5.7.1`, an unowned one is accepted, and with the database stopped both are `451 4.3.0`. |
+| 36 | The rendered account tables against Postfix and Dovecot (3b, the account tables) | The setup of row 31, `swaks` against port 25 and, with `STARTTLS` and `AUTH PLAIN`, against the `587` entry of the rendered `master.cf` (braces form); accounts `alice` (aliases `alice@b.example`, `Sales@b.example`), `testuser`, a disabled `bob` (alias `bobby@b.example`), a suspended `carol` (primary in an unauthorized domain, aliases in an authorized and in a foreign domain) and a conflicted `shared@b.example` | **Port 25:** `alice@a.example` (also `ALICE@A.EXAMPLE`), `alice@b.example`, `sales@b.example`, `bob@a.example` and `bobby@b.example` are `250`; `carol@a.example` and `shared@b.example` are `450 4.2.1 ... The address is temporarily not available` (the `recipient_defer` table); `carol@revoked.example` and `carol@other.example` are `554 5.7.1 Relay access denied`; unknown addresses `550 5.1.1`. One message to `alice@a.example`, `alice@b.example`, `sales@b.example` and `bobby@b.example` was delivered once to `alice` (one message in the INBOX, the three log lines carry the same message id and `orig_to`) and once to `bob`, the disabled account. **Port 587:** `alice` as sender `alice@a.example`, `alice@b.example`, `sales@b.example`, `ALICE@B.EXAMPLE` passes the sender check (the reply is the later recipient check); login by `alice@a.example` works too; `testuser@a.example`, an unknown local part, a foreign domain, `bobby@b.example`, `carol@a.example`, `shared@b.example` are `553 5.7.1 ... not owned by user alice`; `MAIL FROM:<>` is `554 5.7.1 ... The null sender is not allowed on submission`; `testuser` as `alice@a.example` is refused; a sender without a domain is `504 5.5.2`. `bob` and `carol` cannot log in (`535 5.7.8`). The restriction is evaluated at `RCPT`, not at `MAIL`, because `smtpd_delay_reject` is on: a probe that stops after `MAIL` sees nothing. |
+| 37 | The validation gate with the five tables (3b, the account tables) | The `validateScript` of the renderer in the Postfix image of row 31 with the rendered `main.cf`, `master.cf` and tables, then with one line of `valias` that has no value, then without the `sender_login` file | Exit 0 with all tables; exit 1 with `postmap: warning: /etc/postfix/valias, line 1: expected format: key whitespace value -- ignoring this line`; exit 1 with `postmap: fatal: open database /etc/postfix/sender_login: No such file or directory`. |
+| 38 | The `domain` parameter of the sender tables (3b, the account tables) | The rendered `ldap-sender.cf` and `pgsql-sender.cf` with `domain = a.example, b.example`, the `587` entry of the rendered `master.cf` and the Postfix image of row 31; the fixtures of rows 34 and 35 extended with the alias `alice@c.example` of `alice` (LDAP `mailAlias`, a row of the aliases relation) and an account `dave` with `dave@c.example`; Dovecot 2.4.5 with a passwd-file passdb for `alice` as the SASL backend (the login name equals the login of the directory); `AUTH PLAIN` as `alice`, `MAIL FROM` / `RCPT` (the check runs at `RCPT`); the same with the `domain` line deleted (control); the directory stopped; `postmap -q` against the stopped directory | With the line: `alice@a.example` and `sales@b.example` pass the sender check; `alice@c.example`, which the directory gives to `alice` but in a domain the server does not serve, and `dave@c.example` are `553 5.7.1 ... not owned by user alice`, for LDAP and PostgreSQL. Control without the line: `alice@c.example` passes (the gap). With the directory stopped, `alice@c.example` is still `553` and `postmap -q` of it prints no connection warning (the directory is not asked), while `alice@a.example` is `451 4.3.0` and `postmap -q` warns that it cannot contact the server (LDAP) or resolve the host (PostgreSQL). The fail-closed render has no authorized domain, no submission and no sender table (`TestDirectoryOnlyWhereRead`); a domain name that is not a plain name (a path, a list, a blank) is refused by the renderer. |
 
 
 
@@ -1526,20 +1536,15 @@ Argon2id profiles (Password Storage Cheat Sheet, section 3, point 4).
 
 **Not verified:** the Rspamd header-`From` check 2 (check 1 is row 19); the
 throughput and memory of Argon2id with `passdb_use_worker = yes` and a
-worker limit, and that the passwd-file passdb uses workers at all; the
-spelling of the `auth-worker` process limit inside the 2.4.5 service block
-(the `doveconf -n` gate of 3b decides); two separate passwd-files for passdb
-and userdb, a passdb file with empty uid, gid and home and a userdb file
-with an empty password (rows 5 and 12 used one file), and the `nologin`
-alternative on 2.4.5, including whether it stops SASL; the kubelet's symlink
-swap for the live Dovecot Secret (a file replace stood in); `soft_bounce` as
-a per-service override on the `lmtp` client of Postfix 3.11.7; the use of
-`doveadm kick` in the Dovecot pod; that the API server accepts the two CEL
-rules of 4.1 and their cost estimate; whether the API server counts only
-the values of `data` toward the 1 MiB limit (the guard counts keys as well,
-the conservative reading); Dovecot's start with LDAP down; `unionmap`
-errors inside a daemon (only `postmap` was run); the `recipient_defer` table
-(`450 4.2.1`); a hash made by the Go Argon2id library read by Dovecot; the
+worker limit (that the passwd-file passdb uses a worker, and the spelling of
+the limit, are row 33); the `nologin` alternative on 2.4.5, including
+whether it stops SASL; the kubelet's symlink swap for the live Dovecot
+Secret (row 31 appended to a file in place, which Dovecot read
+without a restart); the use of `doveadm kick` in the Dovecot pod; whether
+the API server counts only the values of `data` toward the 1 MiB limit (the
+guard counts keys as well, the conservative reading); Dovecot's start with
+LDAP down; `unionmap` errors inside a daemon (only `postmap` was run); a
+hash made by the Go Argon2id library read by Dovecot; the
 LDAP guards `(!(<login>=*/*))` and `(!(<login>=sa.*))` against an attribute
 **without** a SUBSTR rule (rows 22 and 23 ran them on `uid`, which has one),
 and a multi-valued `mail` attribute; the `ldap:` and `pgsql:` tables of the

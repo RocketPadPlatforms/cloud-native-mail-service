@@ -737,17 +737,19 @@ var _ = Describe("MailServer controller", func() {
 	})
 
 	Describe("static test users", func() {
-		var ns string
+		var ns, domain string
 		validUsers := "users:\n" +
 			"  - username: testuser\n" +
 			"    passwordHash: '$6$salt$hash'\n" +
 			"    mailbox: testuser@example.org\n"
 		BeforeEach(func() {
-			ns, _ = grantFixture()
+			ns, domain = grantFixture()
 		})
 
 		It("renders with a valid users Secret", func() {
-			createUsersSecretG(ns, validUsers)
+			// The account is served only in an authorized domain: a user in
+			// another domain is suspended and has no passdb line.
+			createUsersSecretG(ns, strings.Replace(validUsers, "example.org", domain, 1))
 			createServerG(ns, "mail", func(s *cnmsv1alpha1.MailServer) {
 				s.Spec.DirectoryRef = nil
 				s.Spec.Submission = &cnmsv1alpha1.Submission{
@@ -766,7 +768,8 @@ var _ = Describe("MailServer controller", func() {
 			secrets := secretsG(ns, "dovecot")
 			Expect(secrets).To(HaveLen(1))
 			Expect(*secrets[0].Immutable).To(BeTrue())
-			Expect(string(secrets[0].Data["users"])).To(ContainSubstring("testuser"))
+			Expect(string(secrets[0].Data["passdb"])).To(ContainSubstring("testuser"))
+			Expect(string(secrets[0].Data["userdb"])).To(ContainSubstring("testuser"))
 			for _, cm := range configMapsG(ns, "dovecot") {
 				Expect(cm.Data).ToNot(HaveKey("users"))
 			}

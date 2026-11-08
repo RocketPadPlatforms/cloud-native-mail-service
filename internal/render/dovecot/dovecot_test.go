@@ -127,33 +127,6 @@ func TestAuthOnlyHasNoLMTP(t *testing.T) {
 	}
 }
 
-func TestRenderUsers(t *testing.T) {
-	t.Run("default", func(t *testing.T) {
-		res, err := New().Render(testRequest(t, nil))
-		if err != nil {
-			t.Fatal(err)
-		}
-		got, ok := res.SecretData["users"]
-		if !ok {
-			t.Fatal("missing users in secret data")
-		}
-		checkGolden(t, "default.users", got)
-	})
-	t.Run("multi-user", func(t *testing.T) {
-		req := testRequest(t, nil)
-		req.Accounts = append(req.Accounts, render.Account{
-			Name:         "alice",
-			PasswordHash: "{SHA512-CRYPT}y",
-			Address:      "alice@" + domainA,
-		})
-		res, err := New().Render(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		checkGolden(t, "multi-user.users", res.SecretData["users"])
-	})
-}
-
 func TestRenderErrors(t *testing.T) {
 	tests := []struct {
 		name string
@@ -189,11 +162,11 @@ func TestRenderResultCommands(t *testing.T) {
 	if _, ok := res.ConfigData["dovecot.conf"]; !ok {
 		t.Error("missing dovecot.conf in config data")
 	}
-	if _, ok := res.ConfigData["users"]; ok {
+	if _, ok := res.ConfigData["passdb"]; ok {
 		t.Error("the users file (password hashes) must not be in the ConfigMap data")
 	}
-	if _, ok := res.SecretData["users"]; !ok {
-		t.Error("missing users in secret data")
+	if _, ok := res.SecretData["passdb"]; !ok {
+		t.Error("missing passdb in secret data")
 	}
 }
 

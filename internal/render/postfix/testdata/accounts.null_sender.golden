@@ -1,0 +1,3 @@
+# CNMS-rendered Postfix null sender rule (check_sender_access) -- do not edit.
+# Source: MailServer tenant1/mail
+<> REJECT The null sender is not allowed on submission

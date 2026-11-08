@@ -23,24 +23,53 @@ import (
 	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/render"
 )
 
-// renderUsers renders the passwd-file at usersPath. Dovecot 2.4 looks
-// users up by the full recipient address (LMTP delivery) with no
-// local-part fallback, so each static user is listed twice: with the
-// full mailbox address (delivery and full-address IMAP login) and
-// with the bare username (local-part IMAP login). The home directory
-// lives on the mail volume (ADR 0004).
-func renderUsers(req *render.RenderRequest) string {
+// The two files of the accounts, keys of the one Dovecot Secret (ADR
+// 0015, section 3, point 5, and section 4.7): who may log in (passdb) and
+// where the mail goes (userdb). Both change in one Secret update.
+const (
+	passdbFile = "passdb"
+	userdbFile = "userdb"
+)
+
+// renderPassdb renders the passwd-file of the logins (passdbFile): the
+// account name and the primary address are the two login forms, an
+// alias is none (ADR 0015, section 4.5). The extra field user= makes
+// the authenticated user the account name for both forms, so Postfix
+// sees one SASL name per account and sender_login needs one owner. An
+// account that is disabled or suspended has no line: no login, in IMAP
+// and in SASL. The fields are
+// user:password:uid:gid:gecos:home:shell:extra; the uid, gid and home of
+// the userdb are not repeated here.
+func renderPassdb(req *render.RenderRequest, plan *render.AccountPlan) string {
 	var b strings.Builder
-	b.WriteString("# CNMS-rendered Dovecot passwd-file (users) -- do not edit.\n")
-	fmt.Fprintf(&b, "# Source: MailServer %s/%s (ADR 0004)\n\n",
-		req.Server.Namespace, req.Server.Name)
-	b.WriteString("# Format: user:password:uid:gid::home:\n")
-	for _, u := range req.Accounts {
+	b.WriteString("# CNMS-rendered Dovecot passdb (logins) -- do not edit.\n")
+	fmt.Fprintf(&b, "# Source: MailServer %s/%s (ADR 0015)\n\n", req.Server.Namespace, req.Server.Name)
+	b.WriteString("# Format: login:password::::::user=<account name>\n")
+	for _, u := range plan.Logins {
+		fmt.Fprintf(&b, "%s:%s::::::user=%s\n", u.Address, u.PasswordHash, u.Name)
+		fmt.Fprintf(&b, "%s:%s::::::user=%s\n", u.Name, u.PasswordHash, u.Name)
+	}
+	return b.String()
+}
+
+// renderUserdb renders the passwd-file of the mailboxes (userdbFile).
+// Dovecot 2.4 looks a user up by the full recipient address for the
+// LMTP delivery (Postfix hands over the canonical address, never an
+// alias) and by the account name after a login, with no local-part
+// fallback, so each account is listed twice, with the address and with
+// the name. Every account is in it, a disabled or suspended one too:
+// the mail that Postfix accepted is delivered, not bounced (ADR 0015,
+// section 3, point 5). The home directory is keyed by the name and lives
+// on the mail volume (ADR 0004). There is no password field.
+func renderUserdb(req *render.RenderRequest, plan *render.AccountPlan) string {
+	var b strings.Builder
+	b.WriteString("# CNMS-rendered Dovecot userdb (mailboxes) -- do not edit.\n")
+	fmt.Fprintf(&b, "# Source: MailServer %s/%s (ADR 0015)\n\n", req.Server.Namespace, req.Server.Name)
+	b.WriteString("# Format: user::uid:gid::home:\n")
+	for _, u := range plan.Users {
 		home := mailRoot + "/" + u.Name
-		fmt.Fprintf(&b, "%s:%s:%d:%d::%s:\n",
-			u.Address, u.PasswordHash, vmailUID, vmailGID, home)
-		fmt.Fprintf(&b, "%s:%s:%d:%d::%s:\n",
-			u.Name, u.PasswordHash, vmailUID, vmailGID, home)
+		fmt.Fprintf(&b, "%s::%d:%d::%s:\n", u.Address, vmailUID, vmailGID, home)
+		fmt.Fprintf(&b, "%s::%d:%d::%s:\n", u.Name, vmailUID, vmailGID, home)
 	}
 	return b.String()
 }

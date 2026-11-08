@@ -1,0 +1,8 @@
+# CNMS-rendered Dovecot passdb (logins) -- do not edit.
+# Source: MailServer tenant1/mail (ADR 0015)
+
+# Format: login:password::::::user=<account name>
+alice@a.example:{SHA512-CRYPT}y::::::user=alice
+alice:{SHA512-CRYPT}y::::::user=alice
+testuser@a.example:{SHA512-CRYPT}x::::::user=testuser
+testuser:{SHA512-CRYPT}x::::::user=testuser

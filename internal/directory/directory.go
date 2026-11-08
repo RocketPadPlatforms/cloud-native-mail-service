@@ -178,6 +178,10 @@ const (
 	// ByLogin finds an account by its login name or its canonical
 	// address, never by an alias (the Dovecot passdb and userdb).
 	ByLogin
+	// BySender finds the account that owns an address, its canonical
+	// address or an alias (the Postfix sender-login table, ADR 0015,
+	// section 4.4). Without an alias attribute it is ByMail.
+	BySender
 )
 
 // The key placeholders of the engines. Only these two are accepted, so
@@ -207,6 +211,11 @@ func LookupFilter(a Attributes, active string, by Lookup, key string) (string, e
 		clause = fmt.Sprintf("(%s=%s)", a.Aliases, key)
 	case ByLogin:
 		clause = fmt.Sprintf("(|(%[1]s=%[3]s)(%[2]s=%[3]s))", a.Login, a.Mail, key)
+	case BySender:
+		clause = fmt.Sprintf("(%s=%s)", a.Mail, key)
+		if a.Aliases != "" {
+			clause = fmt.Sprintf("(|(%[1]s=%[3]s)(%[2]s=%[3]s))", a.Mail, a.Aliases, key)
+		}
 	default:
 		return "", fmt.Errorf("the lookup is not valid")
 	}

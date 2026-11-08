@@ -28,6 +28,7 @@ mydestination =
 smtpd_sasl_type = dovecot
 smtpd_sasl_path = inet:mail-dovecot.tenant1.svc.cluster.local:12345
 smtpd_sasl_security_options = noanonymous
+smtpd_sender_login_maps = texthash:/etc/postfix/sender_login
 
 # --- TLS (ADR 0006 floor: AUTH only over TLS, TLS >= 1.2) ---
 # Inbound on port 25 is opportunistic (STARTTLS offered,

@@ -22,6 +22,7 @@ package postfix
 import (
 	"errors"
 	"slices"
+	"strings"
 
 	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/render"
 )
@@ -48,16 +49,21 @@ const (
 // validateScript is the Postfix config gate: `postfix check` must
 // pass, `postconf -n` must not warn (stdout is the parameter dump
 // and is discarded; only the warnings on stderr are inspected) and
-// the texthash table must parse (`postmap -s` warns about a line it
-// ignores and fails on a missing file). The Job mounts the Secret with
-// the ldap: and pgsql: tables, because `postfix check` and `postconf -n`
-// warn about a table file that is missing; they open the tables but make
-// no lookup, so the gate needs no network and no directory (ADR 0015,
+// the texthash tables must parse (`postmap -s` warns about a line it
+// ignores and fails on a missing file; it runs for every file of
+// render.PostfixTableFiles). The Job mounts the Secret with the ldap:
+// and pgsql: tables, because `postfix check` and `postconf -n` warn
+// about a table file that is missing; they open the tables but make no
+// lookup, so the gate needs no network and no directory (ADR 0015,
 // verification rows 21 and 29). The golden files and the e2e test cover
 // the queries.
-const validateScript = `set -eu
+var validateScript = `set -eu
 postfix check
-tables=$(postmap -s texthash:/etc/postfix/vmailbox 2>&1 >/dev/null) || { echo "$tables" >&2; exit 1; }
+tables=""
+for t in ` + strings.Join(render.PostfixTableFiles, " ") + `; do
+  out=$(postmap -s texthash:/etc/postfix/$t 2>&1 >/dev/null) || { echo "$out" >&2; exit 1; }
+  tables="$tables$out"
+done
 warnings="$(postconf -n 2>&1 >/dev/null)$tables"
 if [ -n "$warnings" ]; then
   echo "$warnings" >&2
@@ -82,6 +88,10 @@ func (r *Renderer) Render(req *render.RenderRequest) (*render.RenderResult, erro
 	if req == nil || req.Server == nil {
 		return nil, errors.New("render request without MailServer")
 	}
+	plan, err := render.PlanAccounts(req.Accounts, req.AuthorizedDomains, req.ConflictedAddresses)
+	if err != nil {
+		return nil, err
+	}
 	dir, err := directoryOf(req)
 	if err != nil {
 		return nil, err
@@ -90,12 +100,11 @@ func (r *Renderer) Render(req *render.RenderRequest) (*render.RenderResult, erro
 	if dir != nil {
 		secret, env = dir.secret, dir.env
 	}
+	config := renderTables(req, plan)
+	config["main.cf"] = renderMainCF(req, dir)
+	config["master.cf"] = renderMasterCF(req)
 	return &render.RenderResult{
-		ConfigData: map[string]string{
-			"main.cf":    renderMainCF(req, dir),
-			"master.cf":  renderMasterCF(req),
-			vmailboxFile: renderVMailbox(req),
-		},
+		ConfigData: config,
 		// The directory tables carry the bind password: a Secret.
 		SecretData: secret,
 		Env:        env,
@@ -111,14 +120,17 @@ func (r *Renderer) Render(req *render.RenderRequest) (*render.RenderResult, erro
 }
 
 // directoryOf renders the directory tables when they are used: the
-// server receives mail (mailboxes enabled) for at least one authorized
-// domain. Nothing else reads them, so a send-only or fail-closed render
-// carries no directory (and no secret).
+// recipient tables when the server receives mail (mailboxes enabled), the
+// sender table when it has submission, in both cases for at least one
+// authorized domain. Nothing else reads them, so a fail-closed render
+// carries no directory (and no secret), and a send-only server no
+// recipient lookup.
 func directoryOf(req *render.RenderRequest) (*directoryMaps, error) {
-	if req.Directory == nil || !mailboxesEnabled(req) || len(req.AuthorizedDomains) == 0 {
+	u := uses{recipients: mailboxesEnabled(req), senders: submissionEnabled(req), domains: req.AuthorizedDomains}
+	if req.Directory == nil || len(req.AuthorizedDomains) == 0 || (!u.recipients && !u.senders) {
 		return nil, nil
 	}
-	return renderDirectory(req.Directory)
+	return renderDirectory(req.Directory, u)
 }
 
 // serverHostname is the name used for myhostname, which is also the HELO
