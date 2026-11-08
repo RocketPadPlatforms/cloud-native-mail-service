@@ -298,15 +298,15 @@ restart safety (every step after the first block runs in a fresh reconciler),
 the recovery, and the sizes that the API server accepts and refuses
 (`mailserver_limits_test.go`). The e2e suite takes about 22 minutes (64 specs;
 the MailUser block about five of them and the account specs about three), against
-the 60-minute timeout of `make test-e2e` (75 minutes for the CI job, which is
-slower than a workstation). The limits were raised from 45 and 60 minutes when
-the MailUser and the service-account blocks were added.
+the 60-minute timeout of `make test-e2e` (`go test -timeout=60m`) and the
+60-minute `timeout-minutes` of the CI job, which is slower than a workstation.
 
-Status of the last run for this code: the 13 `MailServiceAccount` specs passed,
-but the suite did not finish. A host limit on kernel keys prevented the DKIM
-block from starting pods, so that block and the specs after it did not run with
-this code; the last complete run (60 of 60) was on the code before the last
-amendments (ADR 0015, row 47).
+CI runs the whole suite in both legs (Prometheus Operator CRDs absent and
+present) on every pull request and every push to `main`, and is authoritative.
+A local host with a low per-user kernel key limit (`kernel.keys.maxkeys`,
+default 200) cannot start all pods of the kind cluster; the symptom is pods
+stuck with a "disk quota exceeded" session key error. Raise the limit as root
+on the host, or rely on CI.
 
 The `MailServiceAccount` specs of the e2e suite (ADR 0015, 3c) run in two places,
 in a second namespace `cnms-e2e-app`. On the PostgreSQL directory they check what
