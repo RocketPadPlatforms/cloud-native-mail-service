@@ -46,7 +46,19 @@ func (r *Renderer) Render(req *render.RenderRequest) (*render.RenderResult, erro
 	if req == nil || req.Server == nil {
 		return nil, errors.New("render request without MailServer")
 	}
+	// The header From of authenticated mail must be owned by the login (ADR
+	// 0015, section 4.4, check 2) for the accounts the operator manages. A
+	// directory owns its addresses outside the cluster: the check is off.
+	var data map[string]string
+	if req.Directory == nil {
+		owners, err := renderFromOwners(req)
+		if err != nil {
+			return nil, err
+		}
+		data = map[string]string{render.RspamdOwnersFile: owners}
+	}
 	return &render.RenderResult{
+		DataFiles: data,
 		// Flat file names: the ConfigMap volume is mounted at
 		// /etc/rspamd/local.d (internal/manifests), where ConfigMap
 		// data keys become the files. ConfigMap keys may not contain

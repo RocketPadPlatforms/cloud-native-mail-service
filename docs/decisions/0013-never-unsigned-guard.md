@@ -1,6 +1,6 @@
 # ADR 0013: Never-unsigned guard
 
-- **Status:** Accepted
+- **Status:** Accepted, partially amended by ADR 0014 and ADR 0015
 - **Date:** 2026-11-03
 
 ## Context
@@ -231,7 +231,9 @@ selectors per domain:
   header From and get it signed (`allow_hdrfrom_mismatch` is true). The
   sender-login binding of Phase 3 (ADR 0008 backlog) does not close this
   gap: `reject_sender_login_mismatch` checks only the envelope sender. A
-  check of the header From against the login is ADR 0015's check 2. A held
+  check of the header From against the login is ADR 0015's check 2, now part
+  of the guard (an `owners_mode` and the table `from_owners` rendered next to the
+  `required` table). A held
   (`quarantine`) message is guarded like any other.
 
 ### 4. Failure semantics

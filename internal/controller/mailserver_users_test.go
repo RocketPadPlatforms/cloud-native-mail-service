@@ -22,6 +22,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -157,6 +158,24 @@ var _ = Describe("MailServer with MailUsers", func() {
 		}
 		Expect(mounted).To(BeTrue())
 
+		// The owned header From addresses (check 2 of the Rspamd guard) are the
+		// rows of the envelope table, in a data ConfigMap of their own that the
+		// Rspamd pod mounts as a directory.
+		var owners *corev1.ConfigMap
+		rspamdDep := &appsv1.Deployment{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: ns, Name: testServerName + "-rspamd"}, rspamdDep)).To(Succeed())
+		for _, v := range rspamdDep.Spec.Template.Spec.Volumes {
+			if v.Name == "data" && v.ConfigMap != nil {
+				owners = &corev1.ConfigMap{}
+				Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: ns, Name: v.ConfigMap.Name}, owners)).To(Succeed())
+			}
+		}
+		Expect(owners).NotTo(BeNil(), "Rspamd mounts the table of the owned addresses")
+		Expect(owners.Name).To(MatchRegexp(`^mail-rspamd-d-[0-9a-f]{8}$`))
+		Expect(owners.Data["from_owners"]).To(And(
+			ContainSubstring("\nalice@"+domA+" alice\n"), ContainSubstring("\nalice@"+domB+" alice\n"), ContainSubstring("\nsales@"+domB+" alice\n")))
+		Expect(table("sender_login")).To(ContainSubstring("alice@"+domA+" alice"), "the same owners as the envelope")
+
 		// The hash is in no ConfigMap, no hash-named Secret and no Event.
 		for _, component := range dataPlaneComponents {
 			for _, cm := range configMapsG(ns, component) {
@@ -212,7 +231,7 @@ var _ = Describe("MailServer with MailUsers", func() {
 		Expect(table("vmailbox")).To(ContainSubstring("bob@" + domA))
 		Expect(postfixHash()).NotTo(Equal(postfix))
 		Expect(dovecotHash()).To(Equal(dovecot), "a new user is no Dovecot revision")
-		Expect(jobsG(ns, testServerName, "")).To(HaveLen(jobs+1), "one Job for the Postfix revision, none for Dovecot")
+		Expect(jobsG(ns, testServerName, "")).To(HaveLen(jobs+2), "a Job for the Postfix revision and one for Rspamd (the owned header From addresses), none for Dovecot")
 
 		// Change the password: the passdb changes, nothing else does.
 		postfix, version, jobs = postfixHash(), live().ResourceVersion, len(jobsG(ns, testServerName, ""))

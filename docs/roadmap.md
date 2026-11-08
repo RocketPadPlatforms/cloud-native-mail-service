@@ -27,24 +27,25 @@ operator does now, including parts of later phases that landed early and
 parts of finished phases that are still open. The truth for any item is
 the code and the [status conditions](reference/status-conditions.md).
 
-- **Reconciled resources:** `MailServer`, `MailDomain` and `MailDomainGrant`.
-  The `MailDirectory` controller validates the configuration and probes
-  the directory (`Ready`, `Reachable`); the `MailServer` controller reads
-  only its existence.
+- **Reconciled resources:** `MailServer`, `MailDomain`, `MailDomainGrant` and
+  `MailUser`. The `MailDirectory` controller validates the configuration and
+  probes the directory (`Ready`, `Reachable`); the `MailServer` controller
+  reads its spec and Secrets to render the tables of Postfix and Dovecot.
 - **Data plane (Phase 2):** Postfix, Rspamd, Valkey and Dovecot with
   validation Jobs and immutable, hash-named configuration, per-component
   disruption budgets and topology spread, resource requests and limits,
   default-deny NetworkPolicies, k8up annotations on the volumes, and
   ServiceMonitors when the Prometheus Operator CRDs exist.
-- **Users (Phase 3, 3a):** a `directoryRef` (LDAP or PostgreSQL) feeds
+- **Users (Phase 3, 3a and 3b):** a `directoryRef` (LDAP or PostgreSQL) feeds
   recipient validation, aliases and logins in Postfix and Dovecot; the
   static test users (`--enable-insecure-test-features`) are another
   source, and a server has one source (`UserSourceConflict`). The
   `MailUser`s are the third: the server renders their addresses, passwords
   and aliases (3b). The envelope
   sender of an authenticated user is bound to the addresses it owns, for
-  static users and directory users alike (3b); the header From binding for
-  operator-managed accounts and `MailServiceAccount` are not there yet.
+  static users and directory users alike (3b); the header From is bound to the
+  login as well for `MailUser`s and the static users (3b); `MailServiceAccount`
+  is not there yet.
 - **Mailboxes (Phase 4):** IMAP, LMTP delivery and the maildir volume
   work with the data plane. Open: quota, Dovecot metrics, the mailbox
   format ADR, and the k8up backup and restore e2e.

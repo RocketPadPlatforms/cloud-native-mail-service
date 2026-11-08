@@ -1,5 +1,6 @@
 #!/bin/sh
-# Never-unsigned guard and signing matrix (ADR 0013, section 6).
+# Never-unsigned guard and signing matrix (ADR 0013, section 6), with the
+# header From binding of ADR 0015, section 4.4 (check 2).
 #
 # Starts the pinned Rspamd image (internal/images/images.go) the way the
 # manifests do (read-only root, non-root user, no capabilities), with the
@@ -43,7 +44,7 @@ FAILS=0
 CHECKS=0
 
 cleanup() {
-	docker rm -f "$PREFIX-good" "$PREFIX-broken" "$PREFIX-source" >/dev/null 2>&1 || true
+	docker rm -f "$PREFIX-good" "$PREFIX-broken" "$PREFIX-source" "$PREFIX-dir" "$PREFIX-empty" "$PREFIX-nomap" "$PREFIX-unread" "$PREFIX-badmap" >/dev/null 2>&1 || true
 	chmod -R u+rwX "$WORK" 2>/dev/null || true # the unreadable key
 	rm -rf "$WORK"
 }
@@ -63,6 +64,15 @@ go run ./hack/render-rspamd-fixture -out "$WORK/fx"
 FX=$WORK/fx
 # Keys that exist but that the Rspamd user may not read.
 chmod 000 "$FX/dkim/unreadable.example/$R.key"
+
+# The table of the owned header From addresses (check 2), as variants: missing,
+# unreadable and malformed.
+mkdir "$WORK/nomap" "$WORK/unreadmap" "$WORK/badmap"
+chmod 755 "$WORK/nomap" "$WORK/unreadmap" "$WORK/badmap"
+cp "$FX/data/from_owners" "$WORK/unreadmap/from_owners"
+chmod 000 "$WORK/unreadmap/from_owners"
+printf 'alice@dual.example alice\nthis line has three words\n' >"$WORK/badmap/from_owners"
+chmod 644 "$WORK/badmap/from_owners"
 
 # The guard with an error in its check function (the error path), one
 # with an error in its source function (the source cannot be determined),
@@ -95,7 +105,7 @@ chmod 755 "$WORK/msgs"
 # DATE_IN_PAST and tips unauthenticated mail over the greylist score.
 DATE=$(LC_ALL=C date -u '+%a, %d %b %Y %H:%M:%S +0000')
 mkmsg() { # mkmsg <file> <from-domain> [body]
-	printf 'From: Bob <bob@%s>\nTo: alice@example.net\nSubject: test\nDate: %s\nMessage-ID: <%s@%s>\n\n%s\n' \
+	printf 'From: Alice <alice@%s>\nTo: alice@example.net\nSubject: test\nDate: %s\nMessage-ID: <%s@%s>\n\n%s\n' \
 		"$2" "$DATE" "$1" "$2" "${3:-hello}" >"$WORK/msgs/$1.eml"
 }
 for d in dual rsa partial missing unreadable nokeys; do mkmsg "$d" "$d.example"; done
@@ -118,27 +128,36 @@ mkhdr twofrom 'From: Bob <bob@dual.example>' 'From: Eve <eve@other.example>'
 mkhdr multiother 'From: Bob <bob@other.example>, Eve <eve@sub.dual.example>'
 # No From header at all.
 mkhdr nofrom 'X-Test: no from'
+# Header From addresses in a served domain that the login may or may not own
+# (check 2): another account's address, an address nobody owns, an alias of the
+# login, the same address in other case, and one with a display name.
+mkhdr bobfrom 'From: Bob <bob@dual.example>'
+mkhdr nobodyfrom 'From: Nobody <nobody@dual.example>'
+mkhdr aliasfrom 'From: Sales <sales@dual.example>'
+mkhdr upperfrom 'From: ALICE <Alice@DUAL.Example>'
+mkhdr namedfrom 'From: "Alice Example, Ltd." <alice@dual.example>'
 # A From without a domain, and an address with an empty domain.
 mkhdr nodomain 'From: bob'
 mkhdr emptydomain 'From: Bob <bob@>'
 
 # --- containers ---
 
-# rspamd_args <lua-file>: docker run arguments of an Rspamd with the
-# fixture, mounted like the manifests do (internal/manifests).
+# rspamd_args <lua-file> [<data-dir>]: docker run arguments of an Rspamd with
+# the fixture, mounted like the manifests do (internal/manifests).
 rspamd_args() {
 	printf '%s\n' --network none --read-only --user "$RSPAMD_ID:$RSPAMD_ID" \
 		--cap-drop ALL --security-opt no-new-privileges \
 		-v "$FX/local.d:/etc/rspamd/local.d:ro" \
 		-v "$1:/etc/rspamd/rspamd.local.lua:ro" \
 		-v "$FX/dkim:/etc/rspamd/dkim:ro" \
+		-v "${2:-$FX/data}:/etc/rspamd/cnms:ro" \
 		-v "$WORK/msgs:/msgs:ro" \
 		--tmpfs "/var/lib/rspamd:uid=$RSPAMD_ID,gid=$RSPAMD_ID"
 }
 
-start() { # start <name> <lua-file>
+start() { # start <name> <lua-file> [<data-dir>]
 	# shellcheck disable=SC2046 # the arguments hold no spaces
-	docker run -d --name "$1" $(rspamd_args "$2") "$IMAGE" >/dev/null
+	docker run -d --name "$1" $(rspamd_args "$2" "${3:-}") "$IMAGE" >/dev/null
 	i=0
 	until docker exec "$1" rspamc -t 5 -h 127.0.0.1:11333 /msgs/dual.eml >/dev/null 2>&1; do
 		i=$((i + 1))
@@ -163,6 +182,9 @@ JQ='[ .action,
 NONE='no action|||'
 # Which signatures a deferred message carries does not matter: none leaves.
 DEFERRED="soft reject|$DEFER_MSG|*"
+# An authenticated message whose From address is not owned by the login (check
+# 2, ADR 0015, section 4.4) is rejected too.
+NOTOWNED="reject|From address is not owned by the login|*"
 # A message with several From addresses of a served domain can never be
 # signed: it is rejected, not deferred.
 MULTI="reject|multiple From addresses cannot be DKIM signed|*"
@@ -257,6 +279,24 @@ check "$G" "authenticated, From without a domain" nodomain "$UNSERVED" --ip $IP 
 check "$G" "authenticated, From with an empty domain" emptydomain "$UNSERVED" --ip $IP --user alice --from bob@dual.example
 check "$G" "authenticated, no From header" nofrom "$UNSERVED" --ip $IP --user alice --from bob@dual.example
 
+# The header From of authenticated mail must be owned by the login (ADR 0015,
+# section 4.4, check 2). alice owns alice@ and sales@dual.example and an
+# address in every other domain; bob owns bob@dual.example. The whole address
+# is compared in lower case. A refusal is permanent and names no address.
+check "$G" "authenticated, owned From passes and is signed" dual "no action||$DUAL|$BOTH" --ip $IP --user alice --from alice@dual.example
+check "$G" "authenticated, owned alias passes and is signed" aliasfrom "no action||$DUAL|$BOTH" --ip $IP --user alice --from alice@dual.example
+check "$G" "authenticated, display name with a comma passes" namedfrom "no action||$DUAL|$BOTH" --ip $IP --user alice --from alice@dual.example
+check "$G" "authenticated, a case variant of the owned address passes" upperfrom "no action||$DUAL|$BOTH" --ip $IP --user alice --from alice@dual.example
+check "$G" "authenticated, the login in other case passes" dual "no action||$DUAL|$BOTH" --ip $IP --user ALICE --from alice@dual.example
+check "$G" "authenticated, another account's address in a served domain" bobfrom "$NOTOWNED" --ip $IP --user alice --from alice@dual.example
+check "$G" "authenticated, an address nobody owns in a served domain" nobodyfrom "$NOTOWNED" --ip $IP --user alice --from alice@dual.example
+check "$G" "authenticated, the owner of the address is not the login" dual "$NOTOWNED" --ip $IP --user bob --from alice@dual.example
+check "$G" "authenticated, a login that is no account" dual "$NOTOWNED" --ip $IP --user carol --from alice@dual.example
+check "$G" "authenticated, bob sends as bob" bobfrom "no action||$DUAL|$BOTH" --ip $IP --user bob --from bob@dual.example
+# Unauthenticated and loopback mail is not bound.
+check "$G" "unauthenticated, a From that no login owns" bobfrom "$NONE" --ip $IP --from bob@dual.example
+check "$G" "loopback, a From that no login owns" bobfrom "no action||$DUAL|$BOTH" --ip 127.0.0.1 --from bob@dual.example
+
 # Postfix's own non-SMTP mail comes from loopback without a login.
 check "$G" "loopback IPv4, signed" dual "no action||$DUAL|$BOTH" --ip 127.0.0.1 --from bob@dual.example
 check "$G" "loopback IPv6, signed" dual "no action||$DUAL|$BOTH" --ip ::1 --from bob@dual.example
@@ -300,6 +340,45 @@ start "$S" "$WORK/source.lua"
 check "$S" "source error, authenticated" dual "$DEFERRED" --ip $IP --user alice --from bob@dual.example
 check "$S" "source error, loopback with a sender untouched" missing "$NONE" --ip 127.0.0.1 --from bob@missing.example
 check "$S" "source error, unauthenticated untouched" dual "$NONE" --ip $IP --from bob@dual.example
+
+# Check 2 depends on the table that was rendered with the guard (ADR 0015,
+# section 4.4). A directory owns its addresses outside the cluster: the mode is
+# off and an address of another account passes, check 1 still applies.
+D=$PREFIX-dir
+start "$D" "$FX/directory/rspamd.local.lua"
+check "$D" "directory, an address of another account passes and is signed" bobfrom "no action||$DUAL|$BOTH" --ip $IP --user alice --from alice@dual.example
+check "$D" "directory, an address nobody owns passes" nobodyfrom "no action||$DUAL|$BOTH" --ip $IP --user alice --from alice@dual.example
+check "$D" "directory, domain not served is still refused" other "$UNSERVED" --ip $IP --user alice --from alice@other.example
+check "$D" "directory, unauthenticated untouched" bobfrom "$NONE" --ip $IP --from bob@dual.example
+
+# An operator-managed server without a single account has an empty table and
+# check 2 stays on: every address of a login is refused, not allowed.
+E=$PREFIX-empty
+start "$E" "$FX/empty/rspamd.local.lua" "$FX/empty/data"
+check "$E" "no accounts, every From of a login is refused" dual "$NOTOWNED" --ip $IP --user alice --from alice@dual.example
+check "$E" "no accounts, unauthenticated untouched" dual "$NONE" --ip $IP --from bob@dual.example
+check "$E" "no accounts, loopback signed" dual "no action||$DUAL|$BOTH" --ip 127.0.0.1 --from bob@dual.example
+
+# A table that is missing, unreadable or malformed is a guard that cannot do
+# its work: the mail of logins is deferred, like for a key that cannot be read,
+# and nothing else is touched.
+for variant in nomap:"$WORK/nomap":"table missing" unread:"$WORK/unreadmap":"table unreadable" badmap:"$WORK/badmap":"table malformed"; do
+	name=${variant%%:*}
+	rest=${variant#*:}
+	dir=${rest%%:*}
+	what=${rest#*:}
+	V=$PREFIX-$name
+	start "$V" "$GOOD_LUA" "$dir"
+	check "$V" "$what, authenticated is deferred" dual "$DEFERRED" --ip $IP --user alice --from alice@dual.example
+	check "$V" "$what, unauthenticated untouched" dual "$NONE" --ip $IP --from bob@dual.example
+	check "$V" "$what, loopback signed" dual "no action||$DUAL|$BOTH" --ip 127.0.0.1 --from bob@dual.example
+done
+CHECKS=$((CHECKS + 1))
+if docker logs "$PREFIX-nomap" 2>&1 | grep -q 'CNMS DKIM guard failed'; then
+	echo "ok   missing table is logged"
+else
+	fail "the missing table is not in the log of $PREFIX-nomap"
+fi
 
 echo "$CHECKS checks, $FAILS failed"
 if [ "$FAILS" -ne 0 ]; then

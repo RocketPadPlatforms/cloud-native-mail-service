@@ -77,3 +77,14 @@ func (r *RenderRequest) ActiveKeys(domain string) []DKIMKey {
 	slices.SortFunc(keys, func(a, b DKIMKey) int { return strings.Compare(a.Selector, b.Selector) })
 	return keys
 }
+
+// RspamdDataDir is where the ConfigMap with the data that grows with the
+// accounts is mounted in the Rspamd pod (ADR 0015, section 4.4 and 4.7): its
+// own immutable object, so that the table of the owned addresses cannot push
+// the guard and the DKIM tables over the limit of a ConfigMap.
+const RspamdDataDir = "/etc/rspamd/cnms"
+
+// RspamdOwnersFile is the key (and the file name) of the table that maps
+// every address an operator-managed account may use in the header From to the
+// login that owns it: one "address login" per line, sorted, lower case.
+const RspamdOwnersFile = "from_owners"

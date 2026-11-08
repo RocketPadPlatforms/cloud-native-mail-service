@@ -1,6 +1,6 @@
 # ADR 0009: Config validation gate with immutable configuration
 
-- **Status:** Accepted
+- **Status:** Accepted, partially amended by ADR 0015
 - **Date:** 2026-11-02
 
 ## Context
@@ -43,7 +43,13 @@ Postfix 3.11.7, Valkey 9.1.2):
    SHA-256 of the rendered files. The Dovecot users file (password
    hashes) lives in an immutable Secret with the same naming, mounted
    at `/etc/dovecot-users` with mode 0440 (a file cannot be mounted
-   into the read-only ConfigMap directory). The objects are owned by
+   into the read-only ConfigMap directory). (Amended by ADR 0015, section
+   4.7: the passdb and userdb files are two keys of the stable, mutable
+   Secret `<server>-dovecot-users`, outside the content hash and mounted as
+   a directory at `/etc/dovecot-users`; the operator gets `update` on
+   Secrets, and a revision over the limits of that section is refused. The
+   immutable Secret keeps only the directory password and CA, mounted at
+   `/etc/dovecot-secret`.) The objects are owned by
    the `MailServer` and are created, never updated; `AlreadyExists`
    counts as success. Pod templates reference the hashed names, and
    carry the config hash as an annotation. That hash covers the

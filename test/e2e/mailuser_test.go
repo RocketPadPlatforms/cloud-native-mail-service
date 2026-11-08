@@ -285,6 +285,45 @@ func registerMailUserSpecs() {
 			Expect(mailFromReply(muMain, muMainPW, "<>")).To(And(HavePrefix("554 5.7.1"), ContainSubstring("null sender is not allowed")))
 		})
 
+		// The header From of authenticated mail must be owned by the login (ADR
+		// 0015, section 4.4, check 2). The login is the account name that Dovecot
+		// reports, also when the client typed the primary address.
+		It("binds the header From to the login", func() {
+			submit := func(login, hfrom, subject string) string {
+				return swaks("--to", "sink@"+e2eMailpitSink, "--from", muMainAddr, "--h-From", hfrom,
+					"--server", e2ePostfixSVC+":587", "--tls", "--auth", "PLAIN",
+					"--auth-user", login, "--auth-password", muMainPW,
+					"--header", "Subject: "+subject, "--body", "header From e2e")
+			}
+
+			By("an owned header From passes and is signed, for a login by name and by address")
+			for i, login := range []string{muMain, muMainAddr} {
+				subject := fmt.Sprintf("mu-from-%d", i)
+				Expect(submit(login, muMainAddr, subject)).To(ContainSubstring("Ok: queued as"), "login "+login)
+				var raw string
+				Eventually(func() bool {
+					var found bool
+					var err error
+					raw, found, err = mailpitRawBySubject(subject)
+					return err == nil && found
+				}, 5*time.Minute, 5*time.Second).Should(BeTrue(), "the message of login "+login+" reaches the sink")
+				sigs, err := dkimSignatures(raw)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(sigs).NotTo(BeEmpty(), "login "+login+": signed")
+				Expect(sigs[0].Domain).To(Equal(e2eDomain))
+			}
+
+			By("another account's address and an address nobody owns are refused")
+			for _, hfrom := range []string{muOther + "@" + e2eDomain, "nobody@" + e2eDomain} {
+				out := submit(muMain, hfrom, "mu-from-refused")
+				Expect(out).To(And(ContainSubstring("554 5.7.1"), ContainSubstring("From address is not owned by the login")), "header From "+hfrom+": "+out)
+				Expect(out).NotTo(ContainSubstring("Ok: queued as"))
+			}
+			_, found, err := mailpitRawBySubject("mu-from-refused")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeFalse(), "a refused message is not delivered")
+		})
+
 		It("keeps a disabled account out of the logins and delivers its mail", func() {
 			authRefused(muOff, muOffPW, "a disabled account cannot log in (SASL)")
 			_, err := imapSearch(muOff, muOffPW, "x")

@@ -157,9 +157,11 @@ libpq `connect_timeout` in the parameters did not shorten it).
   `553 5.7.1` or `554 5.7.1`. A user whose entry has no value in the `mail`
   attribute is not found by the directory at all and can neither log in nor
   send. A lookup error (directory down) is `451 4.3.0`, never a refusal. The
-  header `From` of a directory user is not bound to its addresses: the user
+  header `From` of a directory user is not bound to its addresses (check 2 of the
+  guard is off for a directory, whose addresses are outside the cluster): the user
   can still put any address of a served domain there and have it signed (the
-  served-domain check of the guard applies).
+  served-domain check of the guard applies). `MailUser`s are bound, see
+  [users and aliases](users-and-aliases.md).
 - A directory with an address that two accounts share (or an alias that is
   another account's address, or two values in `mail`) expands that address
   to both: keep the directory consistent. CNMS cannot see its content.

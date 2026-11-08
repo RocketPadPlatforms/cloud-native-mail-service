@@ -167,7 +167,10 @@ informational: they never feed into `Ready`.
 
 The `MailDirectory` controller checks the configuration and probes the
 directory ([ADR 0015](../decisions/0015-user-sources-directory-users-and-aliases.md),
-section 5). It changes no data plane: nothing reads these conditions yet.
+section 5). The controller itself changes no data plane, and the `MailServer`
+that references the directory does not read these conditions: it reads the
+spec and the Secrets of the directory itself and renders Postfix and Dovecot
+from them (`DirectoryInvalid` on the server, see the `MailServer` conditions).
 
 | Condition | Status | Reason | Meaning |
 |---|---|---|---|

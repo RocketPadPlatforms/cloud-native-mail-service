@@ -24,6 +24,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2" // nolint:revive,staticcheck
 )
@@ -31,6 +32,8 @@ import (
 const (
 	certmanagerVersion = "v1.21.3"
 	certmanagerURLTmpl = "https://github.com/cert-manager/cert-manager/releases/download/%s/cert-manager.yaml"
+	// certmanagerApplyAttempts bounds the retries of the manifest download.
+	certmanagerApplyAttempts = 3
 
 	defaultKindBinary  = "kind"
 	defaultKindCluster = "kind"
@@ -86,19 +89,28 @@ func UninstallCertManager() {
 // InstallCertManager installs the cert manager bundle.
 func InstallCertManager() error {
 	url := fmt.Sprintf(certmanagerURLTmpl, certmanagerVersion)
-	cmd := exec.Command("kubectl", "apply", "-f", url)
-	if _, err := Run(cmd); err != nil {
+	// The release download can answer 5xx for a while; apply is idempotent.
+	var err error
+	for attempt := 1; attempt <= certmanagerApplyAttempts; attempt++ {
+		if _, err = Run(exec.Command("kubectl", "apply", "-f", url)); err == nil {
+			break
+		}
+		if attempt < certmanagerApplyAttempts {
+			time.Sleep(10 * time.Second)
+		}
+	}
+	if err != nil {
 		return err
 	}
 	// Wait for cert-manager-webhook to be ready, which can take time if cert-manager
 	// was re-installed after uninstalling on a cluster.
-	cmd = exec.Command("kubectl", "wait", "deployment.apps/cert-manager-webhook",
+	cmd := exec.Command("kubectl", "wait", "deployment.apps/cert-manager-webhook",
 		"--for", "condition=Available",
 		"--namespace", "cert-manager",
 		"--timeout", "5m",
 	)
 
-	_, err := Run(cmd)
+	_, err = Run(cmd)
 	return err
 }
 

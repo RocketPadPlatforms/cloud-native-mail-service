@@ -72,7 +72,9 @@ engine. It needs `docker`, `go` and `jq`:
    holds a copy of the golden files) and generates throwaway RSA-2048 and
    Ed25519 keys for six served domains: RSA and Ed25519, RSA only, one of
    two keys missing, a key missing, a key the Rspamd user cannot read,
-   and no key.
+   and no key. It renders three servers: one with the accounts `alice`
+   (an address in every domain and `sales@dual.example`) and `bob`, one
+   with a directory (check 2 off) and one without a single account.
 2. The pinned Rspamd image (read from `internal/images/images.go`) starts
    the way the manifests start it: read-only root file system, the
    Rspamd user, no capabilities, and no network, so no DNS lookup or map
@@ -83,27 +85,38 @@ engine. It needs `docker`, `go` and `jq`:
    the algorithms of the `DKIM-Signature` headers.
 
 The matrix covers: authenticated mail signed with every active key; a
-missing, unreadable or absent key, and a served domain without keys,
-answered with a soft reject (`DKIM signing unavailable, try again
-later`); unauthenticated mail from Internet and pod addresses, with an
-unserved or no `From`, left untouched and never deferred; authenticated mail
-whose `From` header is missing, has no domain or an empty domain, or is
-in an unserved domain or a subdomain of a served one, rejected
-(`From must be an address in a served domain`, [ADR 0015](../decisions/0015-user-sources-directory-users-and-aliases.md));
-loopback mail (Postfix's own non-SMTP mail) signed, deferred without a
-key, and exempt when the envelope sender is empty; a message that is
-rejected anyway stays a reject; a message with several `From` addresses,
-one of them in a served domain (in one header or in two), is rejected
-(`multiple From addresses cannot be DKIM signed`), also from loopback,
-and left alone when there is no login, and from loopback when no address
-is served or there is no `From` header; an error inside the guard defers
-authenticated mail and loopback mail with a sender, leaves everything
-else alone and is logged; an error in the source detection defers
-authenticated mail only. `rspamadm configtest` is run for the good
-configuration (exit 0, also with missing keys), a guard with a syntax
-error and a guard that fails at load time (exit 1 each).
+missing, unreadable or absent key, and a served domain without keys, answered
+with a soft reject (`DKIM signing unavailable, try again later`);
+unauthenticated mail from Internet and pod addresses, with an unserved or no
+`From`, left untouched and never deferred; authenticated mail whose `From`
+header is missing, has no domain or an empty domain, or is in an unserved
+domain or a subdomain of a served one, rejected (`From must be an address in
+a served domain`, [ADR
+0015](../decisions/0015-user-sources-directory-users-and-aliases.md));
+loopback mail (Postfix's own non-SMTP mail) signed, deferred without a key,
+and exempt when the envelope sender is empty; a message that is rejected
+anyway stays a reject; check 2 of [ADR
+0015](../decisions/0015-user-sources-directory-users-and-aliases.md) (the
+header `From` of authenticated mail must be owned by the login): an owned
+address, an owned alias, a case variant and a display name with a comma pass
+and are signed, the login in other case passes, an address of another
+account, an address nobody owns, a login that owns another address and a
+login that is no account are rejected (`From address is not owned by the
+login`), unauthenticated and loopback mail is not bound, a server with a
+directory passes every served address, a server without accounts refuses
+every one, and a table that is missing, unreadable or malformed defers the
+mail of logins and is logged; a message with several `From` addresses, one of
+them in a served domain (in one header or in two), is rejected (`multiple
+From addresses cannot be DKIM signed`), also from loopback, and left alone
+when there is no login, and from loopback when no address is served or there
+is no `From` header; an error inside the guard defers authenticated mail and
+loopback mail with a sender, leaves everything else alone and is logged; an
+error in the source detection defers authenticated mail only. `rspamadm
+configtest` is run for the good configuration (exit 0, also with missing
+keys), a guard with a syntax error and a guard that fails at load time (exit
+1 each).
 
-A run takes under ten seconds once the image is present, can be repeated
+A run takes under a minute once the image is present, can be repeated
 at will, and removes its containers and temporary files on exit.
 
 ## The e2e suite
@@ -241,7 +254,9 @@ over SASL or IMAP and still receives (it reads the message once re-enabled); an
 account added, changed and removed with no restart of the Dovecot pod (its UID
 and restart count are compared) and the latency of each change; and the
 revocation of the alias domain, which ends its addresses while the account keeps
-its primary address. The envtest specs (`mailserver_users_test.go`) cover the
+its primary address; and the binding of the header `From` to the login (an
+owned address passes and is signed, also for a login by the primary address; the
+address of another account and one that nobody owns are refused with `554 5.7.1`). The envtest specs (`mailserver_users_test.go`) cover the
 rendering: the Postfix maps, the live Secret (same name, new `resourceVersion`,
 unchanged pod-template hash for a changed account), disabled, suspended and
 conflicting accounts, a missing or foreign credential hash, the second user
