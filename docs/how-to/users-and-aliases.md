@@ -113,8 +113,11 @@ revoking it:
 kubectl exec -n <ns> <server>-dovecot-0 -c dovecot -- doveadm kick <account name>
 ```
 
-`doveadm` reaches the master in the pod (checked on kind); that `kick` ends an
-open IMAP session is **not verified**. If the session stays open, restart the
+On kind, `doveadm who` and a `kick` of an account without a session answered
+through `kubectl exec` in the pod. `kick` ended an open IMAP session in a plain
+container with the pinned image ([ADR
+0016](../decisions/0016-mailbox-format-and-storage.md), S3); that it ends one
+through `kubectl exec` in a pod is **not verified**. If the session stays open, restart the
 Dovecot pod, which ends every session: `kubectl rollout restart
 statefulset/<server>-dovecot`. The operator cannot run `doveadm` itself (it has
 no `pods/exec`); a sidecar that kicks revoked accounts is in the backlog.
@@ -171,8 +174,11 @@ Each alias domain signs with the key of its own domain: sending as
   fail closed (no domain, no account), as for any revoked domain, and then
   the valid revision without it.
 - A **deleted** account loses its login and its mail lines in the same pass as
-  above. Its mailbox stays on the volume (`/srv/mail/<name>`); a new account of
-  the same name gets it.
+  above. Its mailbox stays on the volume (`/srv/mail/<name>`), and **a new
+  account of the same name gets it, with all the old mail**: a different person
+  could read the previous person's mail. [Purge the
+  mailbox](../operations/index.md#purge-a-mailbox) before the name is reused; the
+  operator never deletes mail.
 - An account whose credential Secret is missing has no login; it still
   receives mail.
 

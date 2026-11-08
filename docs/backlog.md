@@ -100,12 +100,37 @@ Not scoped (ADR 0015, "Limits" and section 4.7):
   ceiling moves from about 978 to about 1,567 aliases, and at the caps the
   worst case still exceeds 1 MiB per table; the byte guard stays the limit
   (ADR 0015, section 4.7).
-- Mailbox retention when a `MailUser` is deleted: the data stays on the
-  volume and a new user of the same name would inherit it. Phase 4 adds an
-  explicit purge; nothing is deleted automatically.
+
+## Parked in Phase 4
+
+Closed for Phase 4 by [ADR 0016](decisions/0016-mailbox-format-and-storage.md)
+(proposed):
+
+- Mailbox retention when a `MailUser` is deleted: the data stays on the volume
+  and a new user of the same name inherits it. Not decided in Phase 4 beyond a
+  runbook: the purge stays a procedure you run on purpose
+  ([Purge a mailbox](operations/index.md#purge-a-mailbox)); nothing is deleted
+  automatically.
 - A path for mail with a null sender that Dovecot generates (message
   disposition notifications, Sieve vacation replies): port 587 refuses it
-  (ADR 0015, section 4.4); Phase 4 decides the route.
+  (ADR 0015, section 4.4). Not decided in Phase 4: Phase 4 renders no Sieve and
+  no `submission_host`, so Dovecot generates no mail; the route waits for the
+  phase that adds Sieve.
+
+Parked, with the reason:
+
+- A purge API (a field or a resource that removes a mailbox): the operator never
+  deletes mail, and a runbook step keeps the decision with a person.
+- A managed IMAP Service (a field on `MailServer` that creates a reachable
+  Service): the exposure differs per cluster, so the how-to shows a Service of
+  your own.
+- A `MailDirectory` attribute for the quota of a directory user, and an
+  `unlimited` override of a default quota: they need the quota design, and
+  `spec.mailboxes.quota` is not enforced yet.
+- Warning mails when a mailbox nears its quota: they need a sender route for
+  mail that Dovecot generates (see the null sender above).
+- Keeping the old IMAP UIDs after a restore from a young backup: it needs the
+  restore procedure of the backup decision first.
 
 ## Phase 5: `MailDomain` and domain authorization
 
@@ -228,6 +253,17 @@ Not scoped (ADR 0015, "Limits" and section 4.7):
   the container limit: Valkey runs without a password and without a memory
   cap today, protected only by the NetworkPolicies (ADR 0006), and is
   OOM-killed instead of refusing writes when it reaches its memory limit.
+- `fsGroupChangePolicy: OnRootMismatch` for the Dovecot pod: it needs the
+  ownership of a restored volume to be known and a measured time of the
+  recursive `chown` on a large volume (ADR 0016).
+- Exclude the Dovecot index files from the backup, once the backup and restore
+  e2e shows what a restored volume does with them.
+- A shorter `tolerationSeconds` for the Dovecot pod than the 300 s default, to
+  shorten the failover where something deletes failed Node objects (the
+  failover steps are in the [runbook](operations/index.md#dovecot-failover)).
+- A CSI `VolumeSnapshot` integration for a point-in-time backup of the mail
+  volume (ADR 0016): documented as the option, not implemented.
+- A quota-usage metric and status for mailboxes, with the quota itself.
 
 ## Phase 10: docs and release
 

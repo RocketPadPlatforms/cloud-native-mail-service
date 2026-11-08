@@ -157,7 +157,7 @@ valid on a Pod or a PVC):
 
 | Volume | Annotation | Why |
 |--------|------------|-----|
-| Dovecot mail volume (`mail`) | `k8up.io/backup: "true"` | the mailboxes; maildir is safe for a file-level backup of a live volume |
+| Dovecot mail volume (`mail`) | `k8up.io/backup: "true"` | the mailboxes; a file-level copy that Maildir tolerates, not a point in time ([ADR 0016](../decisions/0016-mailbox-format-and-storage.md)) |
 | Postfix queue volumes (`postfix-queue`) | `k8up.io/backup: "false"` | a restored queue delivers stale or duplicate mail |
 | Valkey volume | `k8up.io/backup: "false"` | rebuildable state (trained Bayes data excepted, a backlog item) |
 
@@ -293,10 +293,13 @@ started.
 | `/srv/mail` | RWO PVC (`spec.mailboxes.storage`) | mail storage; must be writable by vmail (uid/gid 1000), enforced by the manifest (fsGroup) |
 | `/var/run/dovecot` | `emptyDir` | runtime sockets/state; lost on pod restart (rebuildable) |
 
-Mail is stored as **maildir** under `/srv/mail/<username>/mail`.
-Maildir is crash-consistent and safe for file-level backup (k8up);
-indexes are rebuildable. The mailbox-format decision is formalized in
-the Phase 4 ADR.
+Mail is stored as **Maildir** (Maildir++ layout) under
+`/srv/mail/<username>/mail`; see [mailboxes](mailboxes.md). A file-level
+backup of the live volume (k8up) is a copy that Maildir tolerates, not a point
+in time: a message that moves during the copy can be saved twice or not at all,
+and the control files (`dovecot-uidlist`) and indexes come from other moments
+than the messages. The format decision is [ADR
+0016](../decisions/0016-mailbox-format-and-storage.md).
 
 ### Test users (Phase 2)
 

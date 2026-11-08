@@ -53,14 +53,17 @@ mail from a CNMS server yet.
 
 - [Getting started](getting-started/index.md) — install on kind, first send
   and first receive (not written yet).
-- [How-to guides](how-to/index.md) — install and operate, blocking direct
-  SMTP egress; DNS records, rDNS, IP pools, directories, relay mode,
-  observability, backup and GitOps follow with their features.
+- [How-to guides](how-to/index.md) — install and operate, DKIM keys and DNS
+  records, directories, `MailUser`s and aliases, service accounts, mailboxes
+  (IMAP), blocking direct SMTP egress; rDNS, IP pools, relay mode,
+  observability, the backup and restore procedure and GitOps follow with
+  their features.
 - [Concepts](concepts/index.md) — resource model, domain authorization,
   architecture, control plane vs data plane, reputation isolation, failure
   modes.
-- [Operations](operations/index.md) — runbooks and operating procedures
-  (not written yet).
+- [Operations](operations/index.md) — runbooks and operating procedures: Dovecot
+  failover, purging a mailbox, ending the sessions of a revoked account, a
+  server blocked by a limit; the other runbooks follow with their features.
 - [Reference](reference/index.md) — API reference, status conditions,
   testing, third-party and data-plane licenses.
 
