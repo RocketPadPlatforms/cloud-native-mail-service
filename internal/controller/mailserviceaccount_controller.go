@@ -89,7 +89,8 @@ const (
 // whether the account may send as its sender and, if so, makes the
 // credential Secret and the egress NetworkPolicy in its namespace (ADR 0008,
 // ADR 0015 section 4.9). It writes the status and those two objects only. The
-// MailServer does not serve the account yet.
+// MailServer serves the account (mailserver_serviceaccounts.go) and decides
+// again, with every other claimant, whether it may.
 type MailServiceAccountReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme

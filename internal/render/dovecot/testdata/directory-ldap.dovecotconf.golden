@@ -70,6 +70,12 @@ service imap-login {
     port = 31993
   }
 }
+# Logins of the service accounts: the passwd-file of the users Secret is
+# asked before the directory (ADR 0015, section 4.9, point 2).
+passdb passwd-file {
+  passwd_file_path = /etc/dovecot-users/passdb
+  passdb_use_worker = yes
+}
 # User source: the MailDirectory (ADR 0015), LDAP. The password and the
 # CA bundle are read from files of the users Secret.
 ldap_uris = ldap://ldap.example.com:389
@@ -91,4 +97,7 @@ userdb ldap {
   fields {
     home = /srv/mail/%{ldap:uid}
   }
+}
+service auth-worker {
+  process_limit = 4
 }

@@ -85,7 +85,16 @@ func domainOf(addr string) string {
 // for every producer of accounts. The second result is the list of
 // conflicted addresses. The accounts it is given are not changed.
 func DecideAccounts(accounts []Account, authorized []string) ([]Account, []string) {
-	res := addresses.Decide(AccountsInput(accounts, authorized))
+	out, res := DecideAccountsWith(accounts, AccountsInput(accounts, authorized))
+	return out, res.Conflicted
+}
+
+// DecideAccountsWith is DecideAccounts for an input that the caller built
+// with AccountsInputWith: the verdict is the one of the whole server, the
+// senders of service accounts included, and the whole result is returned
+// (the caller reads the rows of the senders from it).
+func DecideAccountsWith(accounts []Account, in addresses.Input) ([]Account, addresses.Result) {
+	res := addresses.Decide(in)
 	out := slices.Clone(accounts)
 	for i := range out {
 		for _, u := range res.Users {
@@ -94,13 +103,24 @@ func DecideAccounts(accounts []Account, authorized []string) ([]Account, []strin
 			}
 		}
 	}
-	return out, res.Conflicted
+	return out, res
 }
 
 // AccountsInput is the input of addresses.Decide, and of the limits of
 // addresses.CheckLimits, for accounts without MailDomain objects: the domain
 // of each address is named by its DNS name and is ok when it is in authorized.
 func AccountsInput(accounts []Account, authorized []string) addresses.Input {
+	return AccountsInputWith(accounts, authorized, nil)
+}
+
+// SenderClaim is the sender of a service account, with its domain named by the
+// DNS name: the claim that AccountsInputWith adds to the decision. Owner is
+// "<namespace>/<name>" of the account.
+type SenderClaim struct{ Owner, Local, Domain string }
+
+// AccountsInputWith is AccountsInput with the senders of the service accounts
+// that claim an address of the server (ADR 0015, section 4.2, rank 3).
+func AccountsInputWith(accounts []Account, authorized []string, senders []SenderClaim) addresses.Input {
 	authorized = lowerAll(authorized)
 	in := addresses.Input{Domains: map[string]addresses.Domain{}}
 	state := func(domain string) string {
@@ -120,6 +140,9 @@ func AccountsInput(accounts []Account, authorized []string) addresses.Input {
 			u.Aliases = append(u.Aliases, addresses.Address{Local: local, Domain: state(domain)})
 		}
 		in.Users = append(in.Users, u)
+	}
+	for _, s := range senders {
+		in.Senders = append(in.Senders, addresses.Sender{Owner: s.Owner, Address: addresses.Address{Local: strings.ToLower(s.Local), Domain: state(s.Domain)}})
 	}
 	return in
 }
@@ -164,12 +187,18 @@ func PlanAccounts(accounts []Account, authorized, conflicted []string) (*Account
 	slices.SortFunc(accounts, func(x, y Account) int { return strings.Compare(x.Name, y.Name) })
 	deferred := map[string]bool{}
 	for _, a := range accounts {
-		plan.Users = append(plan.Users, a)
+		// A send-only account (a service account) is no user of the
+		// userdb: no delivery ever finds it.
+		if !a.SendOnly {
+			plan.Users = append(plan.Users, a)
+		}
 		if !a.Disabled && !a.Suspended() && a.PasswordHash != "" {
 			plan.Logins = append(plan.Logins, a)
 		}
 		for _, r := range a.Verdict.Rows {
 			switch {
+			case a.SendOnly:
+				// Owns its sender, receives nothing.
 			case r.Kind == addresses.KindPrimary && r.Served:
 				plan.Mailboxes = append(plan.Mailboxes, r.Address)
 			case r.Kind == addresses.KindAlias && r.Served:
@@ -314,8 +343,25 @@ func validateAccount(a Account) error {
 	if err := validateAddress(a.Address, false); err != nil {
 		return fmt.Errorf("account %q: primary address: %w", a.Name, err)
 	}
+	if a.SendOnly {
+		// The sender has the form the API allows, and the login the reserved
+		// form of a service account (ADR 0015, section 4.9).
+		if !serviceLoginRE.MatchString(a.Name) {
+			return fmt.Errorf("send-only account %q: the name is not the login of a service account", a.Name)
+		}
+		if err := validateAddress(a.Address, true); err != nil {
+			return fmt.Errorf("send-only account %q: sender: %w", a.Name, err)
+		}
+		if len(a.Verdict.Rows) != 1 || len(a.Aliases) != 0 {
+			return fmt.Errorf("send-only account %q has more than its sender", a.Name)
+		}
+	}
 	return nil
 }
+
+// serviceLoginRE is the login of a service account: "sa." and 16 hexadecimal
+// characters.
+var serviceLoginRE = regexp.MustCompile(`^sa\.[0-9a-f]{16}$`)
 
 // validateAddress checks an address for a table. A strict address is the
 // form the API allows for an alias (lower-case local part pattern of
@@ -357,3 +403,15 @@ func NewAccounts(res addresses.Result, users []addresses.User, hash func(name st
 	}
 	return accounts
 }
+
+// SafeHash reports whether a password hash can be written into a passwd-file
+// line: no separator and no control character. The controllers leave an account
+// whose hash fails it without a login instead of passing it on, so one bad
+// value cannot stop the render of a server.
+func SafeHash(hash string) bool { return !hasForbiddenChar(hash) }
+
+// ValidateAccount applies the checks of the renderers to one account (its name,
+// its hash, its address, and for a send-only account its sender and login). The
+// controllers call it to leave out an account the renderers would refuse, so
+// that one bad account cannot stop the render of the others.
+func ValidateAccount(a Account) error { return validateAccount(a) }

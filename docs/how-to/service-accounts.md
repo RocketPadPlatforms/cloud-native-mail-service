@@ -7,14 +7,6 @@ API version `v1alpha1`. Decisions: [ADR
 4.9.
 :::
 
-:::caution
-A `MailServiceAccount` has **no effect on mail yet**. The controller makes the
-credential Secret and the NetworkPolicy and reports the status, but the
-`MailServer` does not serve the account: the login is not in its Dovecot files
-and the sender is not in its sender maps, so a connection with the credential
-is refused. This page describes what exists now.
-:::
-
 A `MailServiceAccount` is the sending credential of an application. It lives in
 the namespace of the application and may name a `MailServer` of another
 namespace. The operator makes a Secret in the namespace of the application with
@@ -119,9 +111,62 @@ to bring from GitOps. After a restore from GitOps, which holds no Secrets, the
 application gets a new password: mount the Secret rather than copy it, so the
 application sees the new one.
 
-An application that cannot use the credential before the server serves the
-account will see the connection refused; the `Ready` condition does not say
-whether the server serves it yet.
+## What the server does with the account
+
+The `MailServer` serves an account that it accepts: the server consents to its
+namespace and the domain of its sender, and the account controller admitted
+the sender (`status.admittedSender` and `status.admittedFor` match). Whether it
+is served is decided again by the server in every pass, with every other claimant
+of its addresses (the `MailUser`s, the static test users and the other accounts),
+not taken from the status of the account: a conflict, a revoked domain or a
+withdrawn consent stops the account in the next pass of the server, whatever the
+status still says. The account is then:
+
+- a **login** in the passwd-file of the live Dovecot Secret (`<server>-dovecot-users`),
+  by the name alone (`sa.` and 16 hexadecimal characters), with the hash of the
+  credential Secret. The login is derived from the account, never read from the
+  Secret, and the hash is taken only from a Secret the account controls and only
+  in the form the operator writes. There is no line for it in the userdb file,
+  so nothing is delivered to it;
+- the **owner of its sender** in the sender table of Postfix
+  (`smtpd_sender_login_maps`): it may send as `spec.sender` and as no other
+  address, and not with the null sender;
+- the owner of its sender in the table of the owned header `From` addresses of
+  Rspamd (check 2 of the guard): the header `From` of its mail must be its sender
+  too. On a server **with a directory** check 2 is off for every login, the
+  service accounts included, because the addresses of the directory are not in
+  the cluster; the residual risk is the one of the directory users (a login can put
+  any served address in the header `From`, and it is signed);
+- no recipient: it has no mailbox and no alias, and mail for its sender is
+  `550 5.1.1` unless somebody else owns the address.
+
+A server whose only accounts are service accounts (no directory, no `MailUser`
+and no static test users) is a **send-only server**: it is `Ready` and not
+`NoUserSource`. With a directory the passwd-file is asked first and a login that is
+not in it falls through to the directory, and the sender table is the union of
+the table of the service accounts and the directory's: a lookup error in either
+one is a temporary failure (`451`), so a directory that is down also stops the
+submission of service accounts.
+
+**The senders count as addresses.** At most 5,000 addresses (primary addresses,
+aliases and senders of service accounts) belong to one server, and the senders of
+**every consented namespace** count, also those that lose a conflict. A
+namespace that the server consents to can therefore fill the limit and block the
+new revisions of the server (`AddressLimitExceeded`; the running revision keeps
+serving, and a login that is removed or changed still takes effect). Consent only
+to namespaces you trust with that, and see [failure modes](../concepts/failure-modes.md).
+
+**Revocation takes time.** A withdrawn consent, a deleted account or a change
+of the spec of an account reaches the server in a few seconds (a change of an
+account is debounced for three seconds), and the login leaves the live Dovecot
+Secret in the same pass; the pod sees the change after the kubelet has projected
+the Secret, typically a minute or two, like for the users. The Postfix and
+Rspamd tables follow with a validated revision. A change of the credential
+Secret itself (an edit by the tenant, a deleted Secret) is not watched by either
+controller: it takes effect at the next pass of the server or at the ten-minute
+requeue of the account, whichever comes first. A submission session that is
+open when the account is revoked stays authenticated until it closes; the
+password is checked when it starts.
 
 ## The egress policy
 
@@ -153,5 +198,6 @@ directory** is not admitted (`DirectoryUnavailable`, asked again after about a
 minute); an account that was admitted for this sender, server and directory
 keeps its credential and is not asked again, so a directory that is down never
 takes a working account away. The lookup uses the same restriction and guards
-as the lookups of Postfix. That the directory lookup works against a real LDAP
-or PostgreSQL server is not verified yet (the specs use a fake).
+as the lookups of Postfix. The lookup against a real PostgreSQL directory is
+covered by the e2e suite (ADR 0015, row 47); against LDAP it is not verified
+(the specs use a fake).

@@ -30,6 +30,7 @@ import (
 
 // Names of the unit tests of the accounts.
 const (
+	nsLimited   = "limited"
 	unitDomainA = "a.example"
 	unitDomainB = "b.example"
 	unitApp     = "app"
@@ -85,12 +86,12 @@ func TestAccountConsent(t *testing.T) {
 		t.Error("a namespace that is not listed is allowed")
 	}
 	server.Spec.ServiceAccounts = &cnmsv1alpha1.ServerServiceAccounts{AllowedNamespaces: []cnmsv1alpha1.AllowedNamespace{
-		{Name: unitApp}, {Name: "limited", SenderDomains: []string{unitDomainA}}, {Name: "srv", SenderDomains: []string{unitDomainB}},
+		{Name: unitApp}, {Name: nsLimited, SenderDomains: []string{unitDomainA}}, {Name: "srv", SenderDomains: []string{unitDomainB}},
 	}}
 	if ok, domains := accountConsent(server, unitApp); !ok || domains != nil {
 		t.Errorf("listed = %v, %v", ok, domains)
 	}
-	if ok, domains := accountConsent(server, "limited"); !ok || !slices.Equal(domains, []string{unitDomainA}) {
+	if ok, domains := accountConsent(server, nsLimited); !ok || !slices.Equal(domains, []string{unitDomainA}) {
 		t.Errorf("limited = %v, %v", ok, domains)
 	}
 	if ok, domains := accountConsent(server, "srv"); !ok || !slices.Equal(domains, []string{unitDomainB}) {
@@ -107,14 +108,14 @@ func TestAccountConsent(t *testing.T) {
 func TestServiceSenders(t *testing.T) {
 	server := serverIn("srv", testServerName)
 	server.Spec.ServiceAccounts = &cnmsv1alpha1.ServerServiceAccounts{AllowedNamespaces: []cnmsv1alpha1.AllowedNamespace{
-		{Name: unitApp}, {Name: "limited", SenderDomains: []string{unitDomainA}},
+		{Name: unitApp}, {Name: nsLimited, SenderDomains: []string{unitDomainA}},
 	}}
 	accounts := []cnmsv1alpha1.MailServiceAccount{
 		*accountIn("srv", "own", "", testServerName, "own@a.example"), // the namespace of the server: no namespace in serverRef
 		*accountIn(unitApp, "ok", "srv", testServerName, "ok@a.example"),
 		*accountIn(unitApp, "b", "srv", testServerName, "Up@B.example"),
-		*accountIn("limited", "in", "srv", testServerName, "in@a.example"),
-		*accountIn("limited", "out", "srv", testServerName, "out@b.example"), // domain not allowed
+		*accountIn(nsLimited, "in", "srv", testServerName, "in@a.example"),
+		*accountIn(nsLimited, "out", "srv", testServerName, "out@b.example"), // domain not allowed
 		*accountIn("stranger", "x", "srv", testServerName, "x@a.example"),    // not consented to
 		*accountIn(unitApp, "elsewhere", "srv", otherServer, "e@a.example"),  // another server
 	}
@@ -123,7 +124,7 @@ func TestServiceSenders(t *testing.T) {
 	for _, s := range senders {
 		got = append(got, s.owner+" "+s.local+"@"+s.domain)
 	}
-	want := []string{"app/b up@b.example", "app/ok ok@a.example", "limited/in in@a.example", "srv/own own@a.example"}
+	want := []string{"app/b up@b.example", "app/ok ok@a.example", nsLimited + "/in in@a.example", "srv/own own@a.example"}
 	if !slices.Equal(got, want) {
 		t.Errorf("senders = %v, want %v", got, want)
 	}

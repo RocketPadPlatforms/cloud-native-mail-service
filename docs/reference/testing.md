@@ -296,9 +296,58 @@ ADR): a revision over the cap of accounts, over the cap of addresses and over
 the byte guard is held back, the revocation-only write of the live files, the
 restart safety (every step after the first block runs in a fresh reconciler),
 the recovery, and the sizes that the API server accepts and refuses
-(`mailserver_limits_test.go`). The e2e suite takes 19 to 21 minutes (the
-MailUser block about five of them), against the 45-minute timeout of `make
-test-e2e` (60 minutes for the CI job).
+(`mailserver_limits_test.go`). The e2e suite takes about 22 minutes (64 specs;
+the MailUser block about five of them and the account specs about three), against
+the 60-minute timeout of `make test-e2e` (75 minutes for the CI job, which is
+slower than a workstation). The limits were raised from 45 and 60 minutes when
+the MailUser and the service-account blocks were added.
+
+Status of the last run for this code: the 13 `MailServiceAccount` specs passed,
+but the suite did not finish. A host limit on kernel keys prevented the DKIM
+block from starting pods, so that block and the specs after it did not run with
+this code; the last complete run (60 of 60) was on the code before the last
+amendments (ADR 0015, row 47).
+
+The `MailServiceAccount` specs of the e2e suite (ADR 0015, 3c) run in two places,
+in a second namespace `cnms-e2e-app`. On the PostgreSQL directory they check what
+the directory decides, with the real lookup of the operator against the database:
+a free sender is admitted for this server and directory and gets its credential
+(the keys and the values of the Secret, the NetworkPolicy as an object), and the
+address of a directory account is `SenderConflict` with nothing issued. The
+admitted account then logs in through the Dovecot of the directory server (the
+passwd-file passdb is asked before the directory's), sends as its sender and no
+other address (`unionmap` of the sender tables in a running `smtpd`), and the
+directory's own accounts keep their addresses and have not the sender of the
+account; the accounts and the consent are removed again at once. On the server that the
+`MailUser` specs leave (no directory, no user), which is then a send-only server,
+they show that a namespace the server does not consent to gets
+`NamespaceNotAllowed` and nothing; that the consented one gets the credential and
+the policy; that the login works after the projection of the live Dovecot Secret
+and a wrong password does not; that mail is sent only as `spec.sender` (it
+reaches the Mailpit sink, signed, while another address of the domain and a
+foreign domain are `553 5.7.1` and the null sender `554 5.7.1`), that the header
+`From` must be the sender (`554 5.7.1`), that mail for the sender is `550 5.1.1`;
+and that withdrawing the consent deletes the credential Secret and the
+NetworkPolicy, and the login is refused after the projection. The application
+is played by pods in `cnms-e2e-app` from the e2e client image that mount
+`notifications-credential` at `/creds`: the login, the sending and the TLS
+checks run in the pod, not in the namespace of the server. `openssl s_client`
+and `swaks --tls-verify` verify the certificate of the server against `ca.crt`
+and the name in `tlsServerName` (the name of the Service in `server` fails, and
+without `ca.crt` the certificate is not trusted). The NetworkPolicy is tested on
+kind, whose CNI (kindnet) enforces it (ADR 0004, item 7): a pod without the
+label reaches the Mailpit sink and port 25 of the server, the pod with the label
+reaches neither and still sends on port 587.
+The envtest specs (`mailserver_serviceaccounts_test.go`) cover the server side:
+the send-only server, the login taken from the account and the hash only from a
+Secret the account controls and in the operator's form, the sender decided at
+render time (a `MailUser` that takes the address after the admission wins, and
+the account loses it without a new status), the consent withdrawn between two
+passes, a server with `MailUser`s, the limit counted on senders, and a server
+with a directory (the union of the sender tables, the passwd-file asked before
+the directory, check 2 off); unit tests cover the accepted accounts and the
+accounts of the render, and golden files the Postfix, Dovecot and Rspamd
+render.
 
 The DKIM specs below submit with the envelope sender `alice@e2e.example.org`,
 the address `alice` owns in the directory fixtures (the envelope sender

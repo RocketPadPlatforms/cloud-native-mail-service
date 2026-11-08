@@ -61,10 +61,26 @@ Not scoped (ADR 0015, "Limits" and section 4.7):
   two consented namespaces that share a domain cannot make each other lose
   the same sender (ADR 0015, sections 4.2 and 4.9; until then every
   namespace gets its own `senderDomains`).
+- A per-namespace cap on the senders of service accounts, or counting only the
+  senders that win their conflict: today every sender of every consented
+  namespace counts toward the 5,000 addresses of a server, those that lose a
+  conflict too, so one consented namespace can fill the cap and block every new
+  revision of the server, the revisions of the `MailUser`s of its owner
+  included. The ADR calls it an accepted risk of consent (section 4.9,
+  point 8); the cap would remove the risk.
+- A service account that is removed while the server is blocked by a limit keeps
+  its login until the block clears, like any account that is only in the live
+  files: a spec for it (`dovecot.ParseLive` reads the empty primary address of a
+  send-only account) would pin the revocation-only rule for them.
+- Check 2 of the Rspamd guard (the header `From` must be owned by the login) is
+  off on a server with a directory, also for the service accounts, whose senders
+  the operator knows. It could be on for the logins of the form `sa.` alone, with
+  a table of the senders of the accounts and a mode of its own in the guard; the
+  guard matrix would grow with it (ADR 0015, sections 4.4 and 4.9).
 - The `MailServiceAccount` controller does not read the static test users
   (`submission.insecureStaticUsers`), so a sender that equals the address of a
-  static user is reported `Ready` until the `MailServer` decides with all
-  claimants; the CA chain in the credential (`ca.crt`) and a Secret that was
+  static user is reported `Ready` while the `MailServer` (which decides with all
+  claimants) does not serve it; the CA chain in the credential (`ca.crt`) and a Secret that was
   deleted come back with the ten-minute requeue, because Secrets are not
   watched; and a directory that gains the address of an admitted sender later
   is not asked again (ADR 0015, section 4.9, points 3 and 7).

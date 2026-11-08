@@ -75,21 +75,92 @@ func (r *MailServerReconciler) serverMailUsers(ctx context.Context, server *cnms
 // decision is built by serverAddressInput, the function the MailUser
 // controller builds its status from, so the rows that a user reports are the
 // rows that are rendered (ADR 0015, section 3, point 6).
-func (r *MailServerReconciler) mailUserSource(ctx context.Context, server *cnmsv1alpha1.MailServer, users []cnmsv1alpha1.MailUser, domains *cnmsv1alpha1.MailDomainList, ev *authorizationEvaluator) (userSource, error) {
+//
+// The senders of the service accounts that the server consents to take part
+// in the same decision, at the rank below the aliases (ADR 0015, section 4.2),
+// and the accounts that are served join the users as send-only accounts
+// (serviceAccountAccounts). With no MailUser the server is a send-only server.
+func (r *MailServerReconciler) mailUserSource(ctx context.Context, server *cnmsv1alpha1.MailServer, users []cnmsv1alpha1.MailUser, svc serviceInput, domains *cnmsv1alpha1.MailDomainList, ev *authorizationEvaluator) (userSource, error) {
 	hashes, err := r.credentialHashes(ctx, server, users)
 	if err != nil {
 		return userSource{}, err
 	}
-	// The senders of the service accounts join the decision with the next
-	// step: the MailServer does not serve them yet.
-	in, _ := serverAddressInput(server.Name, users, nil, namespaceDomains(domains, server.Namespace), ev)
+	in, _ := serverAddressInput(server.Name, users, serviceSenders(server, svc.all), namespaceDomains(domains, server.Namespace), ev)
 	res := addresses.Decide(in)
+	accounts := render.NewAccounts(res, in.Users, func(name string) string { return hashes[name] })
+	service, err := r.serviceAccounts(ctx, server, svc, res)
+	if err != nil {
+		return userSource{}, err
+	}
 	return userSource{
-		accounts:   render.NewAccounts(res, in.Users, func(name string) string { return hashes[name] }),
+		accounts:   append(accounts, service...),
 		conflicted: res.Conflicted,
 		verdict:    &res,
 		input:      in,
 	}, nil
+}
+
+// accountSource decides the addresses and builds the accounts of the render
+// from the user source the server has (the static test users, the MailUsers
+// or a directory), with the service accounts that join any of them, all in
+// one decision (ADR 0015, sections 3 and 4.9). src carries the directory
+// when the server has one.
+func (r *MailServerReconciler) accountSource(ctx context.Context, server *cnmsv1alpha1.MailServer, static []render.Account, users []cnmsv1alpha1.MailUser, svc serviceInput, src userSource, domains *cnmsv1alpha1.MailDomainList, ev *authorizationEvaluator, authorized []string) (userSource, error) {
+	staticUsers := server.Spec.Submission != nil && server.Spec.Submission.InsecureStaticUsers != nil
+	switch {
+	case staticUsers:
+		// The static test users, and the senders of the service accounts in
+		// the same decision.
+		in := render.AccountsInputWith(static, authorized, senderClaims(serviceSenders(server, svc.all)))
+		accounts, res := render.DecideAccountsWith(static, in)
+		src.accounts, src.input, src.conflicted = accounts, in, res.Conflicted
+		service, err := r.serviceAccounts(ctx, server, svc, res)
+		if err != nil {
+			return src, err
+		}
+		src.accounts = append(src.accounts, service...)
+		return src, nil
+	case len(users) > 0 || src.directory == nil:
+		// The MailUsers, or none and a server with service accounts alone.
+		return r.mailUserSource(ctx, server, users, svc, domains, ev)
+	case len(svc.all) > 0:
+		return r.serviceOnlySource(ctx, server, svc, src, domains, ev)
+	}
+	return src, nil
+}
+
+// serviceInput is the MailServiceAccounts of a server: all that name it, and
+// those it accepts (consent and admission).
+type serviceInput struct {
+	all, accepted []cnmsv1alpha1.MailServiceAccount
+}
+
+// serviceAccounts reads the credentials of the accepted accounts and gives
+// the accounts of the render for those whose sender the decision serves.
+func (r *MailServerReconciler) serviceAccounts(ctx context.Context, server *cnmsv1alpha1.MailServer, svc serviceInput, res addresses.Result) ([]render.Account, error) {
+	if len(svc.accepted) == 0 {
+		return nil, nil
+	}
+	hashes, err := r.serviceCredentialHashes(ctx, server, svc.accepted)
+	if err != nil {
+		return nil, err
+	}
+	return serviceAccountAccounts(res, svc.accepted, hashes), nil
+}
+
+// serviceOnlySource is the user source of a server with a directory (the
+// logins and the addresses come from it) that has service accounts: the
+// decision has their senders only, since the directory's addresses are not in
+// the cluster (ADR 0015, section 4.9, point 3).
+func (r *MailServerReconciler) serviceOnlySource(ctx context.Context, server *cnmsv1alpha1.MailServer, svc serviceInput, src userSource, domains *cnmsv1alpha1.MailDomainList, ev *authorizationEvaluator) (userSource, error) {
+	in, _ := serverAddressInput(server.Name, nil, serviceSenders(server, svc.all), namespaceDomains(domains, server.Namespace), ev)
+	res := addresses.Decide(in)
+	service, err := r.serviceAccounts(ctx, server, svc, res)
+	if err != nil {
+		return src, err
+	}
+	src.accounts, src.conflicted, src.verdict, src.input = service, res.Conflicted, &res, in
+	return src, nil
 }
 
 // credentialHashes reads the password hashes of the users with one list of
@@ -139,10 +210,13 @@ func (r *MailServerReconciler) credentialHashes(ctx context.Context, server *cnm
 }
 
 // validStoredHash reports whether a hash from a credential Secret has the
-// form the MailUser controller writes (parseHash accepts nothing else).
+// form the controllers write (parseHash accepts the canonical form and
+// nothing else) and one that the renderers accept (render.SafeHash): the
+// Secret is in a namespace of a tenant, and a value that fails here leaves the
+// account without a login instead of failing the render of the whole server.
 func validStoredHash(hash string) bool {
 	_, _, ok := parseHash(hash)
-	return ok
+	return ok && render.SafeHash(hash)
 }
 
 // errLiveUsersRaced says that the live users Secret changed between the read
@@ -241,13 +315,28 @@ func (r *MailServerReconciler) setAddressesCondition(server *cnmsv1alpha1.MailSe
 			}
 		}
 	}
-	if len(parts) == 0 {
-		setCondition(conds, server.Generation, ConditionAddressesServed, metav1.ConditionTrue, ReasonAllServed,
-			fmt.Sprintf("every address of the %d accounts is served", len(v.Users)))
+	// The senders of the service accounts are counted, not listed: they
+	// belong to other namespaces, whose names and addresses are not for the
+	// owner of the server to read here.
+	unserved := 0
+	for _, s := range v.Senders {
+		if !s.Row.Served {
+			unserved++
+		}
+	}
+	if len(parts) == 0 && unserved == 0 {
+		message := fmt.Sprintf("every address of the %d accounts is served", len(v.Users))
+		if len(v.Senders) > 0 {
+			message = fmt.Sprintf("every address of the %d accounts and every sender of the %d service accounts is served", len(v.Users), len(v.Senders))
+		}
+		setCondition(conds, server.Generation, ConditionAddressesServed, metav1.ConditionTrue, ReasonAllServed, message)
 		return
 	}
 	if len(parts) > 10 {
 		parts = append(parts[:10], fmt.Sprintf("and %d more", len(parts)-10))
+	}
+	if unserved > 0 {
+		parts = append(parts, fmt.Sprintf("%d senders of service accounts", unserved))
 	}
 	message := "not served: " + strings.Join(parts, ", ")
 	setCondition(conds, server.Generation, ConditionAddressesServed, metav1.ConditionFalse, ReasonPartiallyServed, message)
@@ -311,6 +400,10 @@ func accountEntries(accounts []render.Account) []addresses.Entry {
 		e := addresses.Entry{
 			Name: a.Name, Disabled: a.Disabled || a.PasswordHash == "", Suspended: a.Suspended(),
 			Credential: a.PasswordHash, Primary: a.Address,
+		}
+		if a.SendOnly {
+			// A service account logs in by its name alone (RenderLogins).
+			e.Primary = ""
 		}
 		for _, row := range a.Verdict.Rows[min(1, len(a.Verdict.Rows)):] {
 			if row.Served {

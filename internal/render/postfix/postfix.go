@@ -99,6 +99,11 @@ func (r *Renderer) Render(req *render.RenderRequest) (*render.RenderResult, erro
 	var secret, env map[string]string
 	if dir != nil {
 		secret, env = dir.secret, dir.env
+		// The senders of the service accounts are owners next to the
+		// directory's (ADR 0015, section 4.9, point 3): the sender table is
+		// the union of the two. Without a service account it stays the
+		// directory's alone.
+		dir.unionSenders = dir.sender != "" && len(plan.Senders) > 0
 	}
 	config := renderTables(req, plan)
 	config["main.cf"] = renderMainCF(req, dir)

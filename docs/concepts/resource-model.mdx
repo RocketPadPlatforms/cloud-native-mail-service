@@ -37,11 +37,11 @@ keys and lists and verifies its DNS records
 ([how-to](../how-to/dkim-keys-and-dns-records.mdx)), and the `MailServer`
 hands the active keys to Rspamd ([DKIM signing](dkim-signing.md)).
 The `MailDirectory` controller validates its configuration and probes the
-directory, but nothing renders a directory into Postfix or Dovecot yet: the
-`MailServer` controller reads only its existence. The `MailServiceAccount`
+directory, and the `MailServer` renders it into the lookups of Postfix and
+Dovecot ([directories](../how-to/directories.md)). The `MailServiceAccount`
 controller checks the consent, the sender and the directory and makes the
-credential Secret and the egress policy, but the `MailServer` does not serve
-the accounts yet, so they have no effect on mail
+credential Secret and the egress policy, and the `MailServer` serves the accounts
+it accepts as send-only logins that own their sender
 ([how-to](../how-to/service-accounts.md)). See the
 [roadmap](../roadmap.md) for the phase of each part.
 :::
@@ -85,8 +85,9 @@ Key spec fields:
 - `directoryRef` — the `MailDirectory` used for recipient validation and
   authentication. Optional (ADR 0008): without it the server needs another
   user source, otherwise it is not ready (`NoUserSource`): `MailUser`s that name
-  the server, or, for tests, `submission.insecureStaticUsers`. A server has one
-  source.
+  the server, or, for tests, `submission.insecureStaticUsers`; a
+  `MailServiceAccount` that the server accepts is a source of its own that adds to
+  any of them. A server has one of the others.
 - `outbound` — exactly one of `direct` (own sending addresses, optionally via
   a `MailIPPoolClaim`) or `relay` (a smart host; the `MailRelay` resource
   arrives with the relay phase).
@@ -222,11 +223,13 @@ authorized for the namespace cannot be checked by the API server; the
 controller does.
 
 `status` has the `observedGeneration`, the conditions, the name and the
-revision of the credential Secret, and the `admittedSender`. The controller
-makes a Secret `<name>-credential` with the connection values for the
+revision of the credential Secret, and the `admittedSender` and `admittedFor`.
+The controller makes a Secret `<name>-credential` with the connection values for the
 application and a NetworkPolicy `<name>-submission` in the namespace of the
 account, and removes both when the namespace or the sender is revoked. The
-`MailServer` does not serve the account yet.
+`MailServer` serves the account as a login by the name `sa.` and 16 hexadecimal
+characters and as the owner of its sender, and decides again, with every other
+claimant of the addresses, whether it may.
 
 <CodeBlock language="yaml" title="config/samples/cnms_v1alpha1_mailserviceaccount.yaml">{ServiceAccountSample}</CodeBlock>
 

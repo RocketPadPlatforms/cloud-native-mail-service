@@ -64,8 +64,11 @@ type directoryMaps struct {
 	mailbox string // virtual_mailbox_maps; empty when the server receives no mail
 	alias   string // virtual_alias_maps, empty when the directory has no aliases
 	sender  string // smtpd_sender_login_maps; empty when the server has no submission
-	secret  map[string]string
-	env     map[string]string
+	// unionSenders makes smtpd_sender_login_maps the union of the sender
+	// table of the service accounts (texthash) and sender.
+	unionSenders bool
+	secret       map[string]string
+	env          map[string]string
 }
 
 // uses says which tables a render needs: the recipient tables when the

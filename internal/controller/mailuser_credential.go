@@ -116,6 +116,16 @@ var errHash = fmt.Errorf("the password could not be hashed")
 // accepted here; it is accepted by Dovecot, and the Go library verifies it
 // in a test (TestVerifyHash).
 func parseHash(stored string) (salt, tag []byte, ok bool) {
+	// The stored string ends up as a line of a passwd-file and must be the
+	// printable ASCII of the PHC form, nothing else. Go's base64 decoder
+	// ignores a CR or a LF anywhere in its input, so the check cannot be left
+	// to the decoding below: a newline in the tag would still decode, still
+	// verify, and then break the file (and the render that writes it).
+	for i := 0; i < len(stored); i++ {
+		if stored[i] <= ' ' || stored[i] > '~' {
+			return nil, nil, false
+		}
+	}
 	rest, found := strings.CutPrefix(stored, hashScheme)
 	if !found {
 		return nil, nil, false
@@ -133,6 +143,12 @@ func parseHash(stored string) (salt, tag []byte, ok bool) {
 	}
 	tag, err = b64.DecodeString(parts[5])
 	if err != nil || len(tag) != int(argonKeyLen) {
+		return nil, nil, false
+	}
+	// Only the canonical form: encoding what was decoded gives the stored
+	// string back, byte for byte. That refuses what a decoder tolerates (bits
+	// after the last full byte, the other base64 alphabets, padding).
+	if phc(salt, tag, argonMemory, argonTime, argonThreads) != stored {
 		return nil, nil, false
 	}
 	return salt, tag, true

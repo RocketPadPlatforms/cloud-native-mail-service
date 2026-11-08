@@ -175,9 +175,8 @@ the new CRDs reject or prune the old field names.
   and, for a server with a directory, the directory, writes the status, and
   makes a credential Secret `<name>-credential` and a NetworkPolicy
   `<name>-submission` **in the namespace of the account**, which for an account of
-  another namespace is a namespace the `MailServer` does not live in. The
-  `MailServer` does not serve the accounts yet, so they have no effect on mail.
-  Install the new CRDs (`make install`) before the new operator: the operator
+  another namespace is a namespace the `MailServer` does not live in. Install the new CRDs
+  (`make install`) before the new operator: the operator
   watches `MailServiceAccount`s and exits at startup while the CRD is missing
   (the data plane keeps running). The operator role gains `get`, `list` and
   `watch` on `mailserviceaccounts`, `patch` on `mailserviceaccounts/status`
@@ -187,6 +186,28 @@ the new CRDs reject or prune the old field names.
   `ca.crt` key of the TLS Secret of the `MailServer` for the credential. The
   controller also reads the `MailDirectory` of a server that has one (with the
   Secrets it names), and asks that directory about the sender of an account.
+  The `MailServer` controller now also watches and reads the accounts and the
+  credential Secrets of its accounts (`get`, `list` and `watch` on
+  `mailserviceaccounts`; a label-selected `list` of Secrets in the namespace of
+  each account, which its role already allowed).
+- **The `MailServer` serves service accounts** ([ADR
+  0015](../decisions/0015-user-sources-directory-users-and-aliases.md), sections
+  4.2 and 4.9; [how-to](../how-to/service-accounts.md)). An account that the
+  server accepts becomes a login (by the name `sa.` and 16 hexadecimal
+  characters, in the passdb file of the live Dovecot Secret, with no userdb
+  line), the owner of its sender in the Postfix sender table and in the table
+  of the owned header `From` addresses of Rspamd, and nothing else. Its sender
+  takes part in the decision about the addresses of the server at the rank below
+  the aliases, so it can never take the address of a user. A server whose only
+  accounts are service accounts is a send-only server and no longer
+  `NoUserSource`. Existing servers change in three ways: the senders of the
+  accounts count as addresses toward the limit of 5,000; **the `dovecot.conf` of
+  a server with a directory gains the passdb of the passwd-file (asked before the
+  directory) and the limit of four auth workers**, which is a validated revision
+  and restarts Dovecot once; and a server with a directory **and** a service
+  account reads `smtpd_sender_login_maps` as the union of its table and the
+  directory's (`unionmap`), which is a new Postfix revision when the first
+  account is served. A server without service accounts keeps its Postfix files.
 - **Storage sizes are immutable:** `spec.postfix.queueStorage` and
   `spec.mailboxes.storage` cannot be edited once set, and decreasing
   `spec.postfix.replicas` is rejected. Resize the PersistentVolumeClaims

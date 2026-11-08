@@ -20,10 +20,10 @@ reason and message.
 | `Ready` | `False` | `DirectoryInvalid` | the `MailDirectory` cannot be rendered: a Secret it names is missing or incomplete (or a password holds a control character), or the active filter does not compile, or the engines refuse a setting (`InvalidSettings` of the `MailDirectory`); the message says which. The running revision keeps running |
 | `Ready` | `False` | `HostnameNotAuthorized`, `DuplicateHostname` | the hostname is not authorized (see `HostnameAuthorized`); the server runs with the name of its Postfix Service and serves its domains, but is not ready for what its spec asks for |
 | `Ready` | `False` | `NoDomains` | no `MailDomain` of the namespace references the server in `spec.serverRef`; nothing is deployed, and a running data plane is re-rendered fail closed ([ADR 0014](../decisions/0014-domain-server-binding-and-hostname.md)) |
-| `Ready` | `False` | `NoUserSource` | no `spec.directoryRef`, no static test users and no `MailUser` that names the server. A running data plane keeps its Postfix revision, but the logins of an account that was just removed are taken away: the live Dovecot Secret is emptied, and the change reaches the pod after the kubelet projection (a minute or two) |
+| `Ready` | `False` | `NoUserSource` | no `spec.directoryRef`, no static test users, no `MailUser` that names the server and no `MailServiceAccount` that the server accepts (it consents to the namespace and the account admitted its sender); a server whose only accounts are service accounts is a send-only server and is not blocked. A running data plane keeps its Postfix revision, but the logins of an account that was just removed are taken away: the live Dovecot Secret is emptied, and the change reaches the pod after the kubelet projection (a minute or two) |
 | `Ready` | `False` | `UserSourceConflict` | the server has more than one user source: `spec.directoryRef`, `spec.submission.insecureStaticUsers` and `MailUser`s that name the server; the message names them. A server has one user source, so none is picked silently. The running revision keeps running, and an Event says so; remove one source to resolve it ([ADR 0015](../decisions/0015-user-sources-directory-users-and-aliases.md), section 3) |
 | `Ready` | `False` | `UserLimitExceeded` | the server has more than 1,000 accounts (`MailUser`s, or static test users); the message gives the count. The new revision is not applied: the running one keeps serving, and only the removal, the disabling and the new password of a login still apply ([users and aliases](../how-to/users-and-aliases.md#limits)). A Warning Event is emitted when the message changes |
-| `Ready` | `False` | `AddressLimitExceeded` | the server has more than 5,000 addresses, or an account more than 32 aliases; the same block |
+| `Ready` | `False` | `AddressLimitExceeded` | the server has more than 5,000 addresses (primary addresses, aliases and the senders of service accounts, those of every consented namespace and those that lose a conflict too), or an account more than 32 aliases; the same block |
 | `Ready` | `False` | `ConfigTooLarge` | a ConfigMap or Secret of the new revision, the live users Secret included, would hold 1,000,000 bytes or more (keys and values); the message names the object (a hash-named object, or `<server>-dovecot-users`) and its size. Nothing is sent to the API server for it; the same block |
 | `Ready` | `False` | `InsecureStaticUsersDisabled` | `spec.submission.insecureStaticUsers` is set but the operator runs without `--enable-insecure-test-features` |
 | `Ready` | `False` | `StaticUsersInvalid` | the users Secret is missing, has no `users.yaml` key, or does not parse |
@@ -32,8 +32,8 @@ reason and message.
 | `Ready` | `False` | `IpPoolClaimNotAvailable` | `outbound.direct.ipPoolClaimRef` is set; IP management arrives in Phase 7 |
 | `Ready` | `False` | `OwnershipConflict` | an object the data plane needs exists and is not controlled by this `MailServer` (also reported by `Observability`) |
 | `Ready` | `False` | `ApplyFailed` | applying the data plane failed; the message has the error |
-| `AddressesServed` | `True` | `AllServed` | The server is served by `MailUser`s and every address of every account is served. The condition is absent for any other user source |
-| `AddressesServed` | `False` | `PartiallyServed` | Some address of some account is not served; the message lists the first ten with their reasons (`AddressConflict`, `AliasDomainNotAuthorized`, ...). A warning: it never feeds `Ready`; a Warning Event is emitted when the message changes |
+| `AddressesServed` | `True` | `AllServed` | The server is served by `MailUser`s or service accounts and every address of every account and every sender of a service account is served. The condition is absent for the static test users and for a directory without a service account |
+| `AddressesServed` | `False` | `PartiallyServed` | Some address of some account is not served; the message lists the first ten with their reasons (`AddressConflict`, `AliasDomainNotAuthorized`, ...) and counts the senders of service accounts that are not served, without naming them (they belong to other namespaces). A warning: it never feeds `Ready`; a Warning Event is emitted when the message changes |
 | `DomainsAuthorized` | `True` | `Authorized` | every `MailDomain` that references the server is covered by a `MailDomainGrant` for the namespace |
 | `DomainsAuthorized` | `True` | `NoDomains` | no `MailDomain` references the server: nothing is unauthorized and nothing is served |
 | `DomainsAuthorized` | `True` | `AuthorizationDisabled` | the operator runs with `--domain-authorization=unrestricted` |
@@ -258,8 +258,10 @@ NetworkPolicy in the namespace of the account ([ADR
 0008](../decisions/0008-user-sources-and-service-accounts.md), [ADR
 0015](../decisions/0015-user-sources-directory-users-and-aliases.md), section
 4.9). `kubectl get mailserviceaccounts` shows `Sender`, `Server`, `Server
-Namespace` and `Ready`. The `MailServer` does not serve the accounts yet: until
-it does, a `Ready` account has a credential and a policy and no effect on mail.
+Namespace` and `Ready`. The `MailServer` serves an account that it accepts
+(see [service accounts](../how-to/service-accounts.md)); `Ready` says the
+credential and the policy are in place, not that the server serves the account:
+it decides that itself in every pass.
 
 `Ready` shows the first failure of the checks, in the order of this table.
 

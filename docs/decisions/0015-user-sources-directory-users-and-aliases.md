@@ -10,9 +10,12 @@
   limits of section 4.7 are enforced; the Rspamd check 2 (header `From`) is
   done; the load test of section 3, point 4 (cgroup `memory.peak`, delivery
   during the flood) is not);
-  3c has the API (the `MailServiceAccount` resource and `allowedNamespaces`)
-  and the controller (consent, sender decision, directory check, credential
-  Secret and egress policy); the `MailServer` does not serve the accounts yet
+  3c has the API (the `MailServiceAccount` resource and `allowedNamespaces`),
+  the controller (consent, sender decision, directory check, credential Secret
+  and egress policy) and the `MailServer` that serves the accounts (section 4.9,
+  point 8); the e2e of the second namespace is in row 47, which says what
+  ran on kind for this code and what did not (the DKIM block and the specs
+  after it did not start, for lack of a host resource)
 - **Date:** 2026-11-06
 
 ## Context
@@ -1256,6 +1259,36 @@ Aliases and senders come from the directory through the **same contract** as
    skip the probe), and are rebuilt by a probe after a restore: a restored
    account is new. The `MailServer` serves an account only while they equal
    its `spec.sender` and its own server and directory.
+8. **What the `MailServer` renders for an account (3c).** The server reads the
+   accounts that name it through the index of its cache, in any namespace, and
+   serves those it **accepts**: it consents to the namespace and the domain of
+   the sender, and `status.admittedSender` and `status.admittedFor` match. It does
+   not serve an account because the status says so: it runs
+   `addresses.Decide` with every claimant (the `MailUser`s, the static users, the
+   senders of all consented accounts, section 4.2) in each pass, so a conflict, a
+   revoked domain or a withdrawn consent stops the account in the next pass, before
+   the account controller has run. A served account is **a login and an owner of
+   its sender, and nothing else**: one passdb line by the name `sa.<16 hex>` with
+   the hash and `user=<name>` (no line with an address, since an address is not
+   one of its logins); **no userdb line**, so nothing is delivered to it (this
+   narrows the text of point 2 and section 4.7, which counted a userdb line to be
+   conservative; row 47 checks that a login needs none); the sender in
+   `smtpd_sender_login_maps` and in the table of the owned header `From`
+   addresses, and in no recipient or alias table. The login is derived from the
+   account object and the hash is taken from a Secret the account controls in
+   the operator's form (point 5). A server whose only accounts are service
+   accounts is a send-only server: `NoUserSource` needs no accepted account
+   either. The limits count the senders of every consented account as addresses
+   (`CheckLimits` counts `Input.Senders`), so a namespace the server consents to
+   can fill the 5,000 and block the revisions of the server
+   (`AddressLimitExceeded`): an **accepted risk of consent**, documented in the
+   how-to and the failure modes. With a directory, the passdb of the file is asked
+   before the directory's (the directory's logins never have the reserved form),
+   and `smtpd_sender_login_maps` is `unionmap:{texthash:<table of the accounts>,
+   <directory table>}` once an account is served (a lookup error in either member
+   fails the lookup, row 48). **Check 2 stays off on a server with a directory**,
+   the service accounts included (backlog): the mode is rendered per server, and
+   the table of a directory server has no data ConfigMap.
 
 #### 4.10 Not handled in Phase 3
 
@@ -1414,7 +1447,7 @@ warning `AddressesServed`. `DirectoryNotFound` and `NoUserSource` stay
 `MailServiceAccount` (3c): its conditions are not tabled here. The two
 reasons this ADR introduces, `SenderConflict` and `DirectoryUnavailable`,
 are described in section 4.9, point 3, and the table of the account's
-conditions is written with the CRD in 3c.
+conditions is in `docs/reference/status-conditions.md`.
 
 ### 9. Test fixtures, images and licenses
 
@@ -1691,6 +1724,8 @@ written down from its result, so anyone can repeat it.
 | 44 | A limit blocks a revision, and what still applies (3b, the limits) | envtest, specs "MailServer limits" in `internal/controller/mailserver_limits_test.go`, the caps lowered through `MailServerReconciler.Limits`; every step after the first block runs in a reconciler that has seen nothing before (nothing is kept in memory) | Over the cap of 3 accounts (5 given) and over the cap of 5 addresses (6 given), and over the byte guard (the live Secret just too large for one account more): `Ready=False` with `UserLimitExceeded`, `AddressLimitExceeded` and `ConfigTooLarge`, the message with the counts, or the live Secret and its size; the pod-template hash of Postfix and the Postfix tables are those of the running revision, no validation Job is created, the new accounts and aliases are in no file; a Warning Event is emitted once. A changed provided password replaces the hash in the passdb file and leaves the userdb file byte-identical; a disabled account loses its passdb lines and keeps its userdb lines and its Postfix entries; a deleted account loses its login and keeps its mailbox lines. When the count falls to the cap the next reconcile applies the whole revision (the new account in the Postfix tables, the removed one gone from userdb). The byte guard does not send the oversized Secret: its `resourceVersion` is unchanged. A first revision that a limit blocks creates no live Secret. No condition or Event holds an address, a domain or a hash. |
 | 45 | Rspamd check 2 on a real `MailServer` with `MailUser`s: which login `task:get_user()` sees, and the refusal (3b, the header `From` binding) | the full e2e suite on kind v0.33.0, 51 of 51 specs in 1,224 s, spec "binds the header From to the login": `swaks` through 587 with the envelope sender the account owns and `--h-From` set | A login typed as the account name and a login typed as the primary address both pass with the owned header `From` and the message in the Mailpit sink carries a `DKIM-Signature` of the domain. So the name that Rspamd receives in `{auth_authen}` is the account name that Dovecot reports (`user=`), not the typed login, the same one that Postfix compares for `sender_login`; the guard lower-cases it anyway. Another account's address in the same domain and an address nobody owns are answered `554 5.7.1 From address is not owned by the login` and nothing reaches the sink. The directory specs of the suite (DKIM, header `From` of another domain, check 2 off) and the other MailUser specs passed unchanged. The e2e installed cert-manager from its chart because the release download was unavailable. |
 | 46 | The guard matrix with check 2 (3b) | `make test-rspamd-guard` against `rspamd/rspamd:4.2.3@sha256:47e00f62105f8a60009a30a590ebcf3bfd0b992d45468222d34afa5ca2103690`, rendered configuration and table of the production renderer (`hack/render-rspamd-fixture`), `rspamc --user` with header `From` variants | 70 checks, 0 failed (29 new ones for check 2 and the 41 of check 1 and signing that were there). Owned address, owned alias, a case variant of the address (`Alice@DUAL.Example`), a display name with a comma, and the login in other case pass and are signed; another account's address, an address nobody owns, a login that owns another address and a login that is no account give `reject` with `From address is not owned by the login`; unauthenticated mail with such a `From` gives no action and loopback mail is signed. The directory variant (`owners_mode` `"off"`, no table) passes the address of another account and still refuses an unserved domain. The variant without accounts (mode `"on"`, empty table) refuses every address of a login. A table that is missing, unreadable (mode 000) or has a line of three words defers the mail of logins (`451`, `DKIM signing unavailable`), is logged as `CNMS DKIM guard failed`, and leaves unauthenticated mail untouched and loopback mail signed |
+| 47 | A service account on a real `MailServer`: the send-only server, a login without a userdb line, the sender binding, check 2, the withdrawal, and the lookup against a real PostgreSQL directory (3c) | The e2e suite on kind v0.33.0 with the node image of `make test-e2e`, 64 specs, the 13 of `test/e2e/serviceaccount_test.go` among them: an account in a second namespace `cnms-e2e-app`, consented by `allowedNamespaces` with `senderDomains: [e2e.example.org]`, first on the PostgreSQL directory (the accounts and the consent removed again at once), then on the server the `MailUser` specs leave (no directory, no user). The application is played by two pods in `cnms-e2e-app` from the e2e client image that mount the credential Secret, one with the label of the policy and one without | **What ran for this code (one run, 1,323 s):** 59 of 64 specs ran, 58 passed, 1 failed and 5 were skipped. All 13 service-account specs passed. The failure is the `BeforeAll` of the DKIM block (a spec that this change does not touch): it timed out waiting for the rollout of the test DNS server, because a host limit on kernel keys was reached and the node could no longer start pods. A rerun of that block alone failed the same way. **The DKIM block and the specs after it did not run with this code.** The previous full run, on the code before the last amendments of this commit (60 of 60 passed in 1,319 s), is the last complete run of the suite. **Send-only server:** a namespace not consented to got `NamespaceNotAllowed` and nothing; the server was `Ready`; the pod of the application, with the credential mounted from the Secret, verified the certificate of the server with `ca.crt` and the name in `tlsServerName` (`openssl s_client -starttls smtp`, and `swaks --tls-verify`; the name of the Service in `server` and a missing `ca.crt` both failed), logged in over STARTTLS with the `sa.` login (no userdb line, so Dovecot needs none for SASL; a wrong password was refused), and sent as the sender (the message reached the sink with a DKIM signature of `e2e.example.org`); another address of the domain and a foreign domain gave `553 5.7.1 ... not owned by user sa.<hex>`, the null sender `554 5.7.1`; a header `From` other than the sender gave `554 5.7.1` and no delivery; `RCPT` to the sender gave `550 5.1.1`; removing the namespace from `allowedNamespaces` deleted the credential Secret and the NetworkPolicy and the login was refused. **NetworkPolicy, tested on kind (kindnet enforces it, one run):** the pod without the label reached the Mailpit sink and port 25 of the server; the pod with the label reached neither, and still sent on port 587. **Directory server:** the lookup of the operator against the real PostgreSQL admitted a free sender (`status.admittedFor` is `cnms-e2e/mail/sql-e2e`) and refused the address of a directory account (`SenderConflict`, no Secret, no NetworkPolicy); the admitted account logged in through the Dovecot of the directory server (the passwd-file passdb asked first), `MAIL FROM` its sender gave `250` and another address of the domain and the address of a directory account `553 5.7.1`, and the directory account kept its own address and was refused the sender of the service account. **Not run:** a lookup against an LDAP directory. |
+| 48 | `unionmap` as the sender table (3c, a server with a directory and service accounts) | The `cnms-postfix:3.11.7-1` image built from `images/postfix` (Postfix 3.11.7), a minimal `main.cf`, two `texthash` files, `postmap -q` against `unionmap:{texthash:one, texthash:two}`, the same with a member whose configuration file is missing (`ldap:/missing.cf`), and `postconf -e smtpd_sender_login_maps = unionmap:{...}` | An address in both tables prints both owners (`alice,alice`); an address in one prints its owner; an address in neither exits 1 with no output; a member that cannot be opened is `postmap: fatal: open ...` and exit 1, so the lookup fails (the ADR text of section 4.9, point 3, said as much); the `main.cf` form is accepted. Inside a running `smtpd` the union table was exercised by the directory-server spec of row 47 (one run: the sender of the service account owned by its login, a directory address not). **Not run:** the `451` for a failing member inside the daemon (inferred from rows 34 and 38, which show it for the single `ldap:` and `pgsql:` tables). |
 
 
 

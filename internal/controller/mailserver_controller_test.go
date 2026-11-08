@@ -212,7 +212,7 @@ func createUsersSecretG(ns, payload string) {
 
 func newReconcilerG(mode domainAuthorizationMode, insecure bool) *MailServerReconciler {
 	return &MailServerReconciler{
-		Client:                     k8sClient,
+		Client:                     newIndexedClient(k8sClient),
 		Scheme:                     scheme.Scheme,
 		APIReader:                  k8sClient,
 		DomainAuthorization:        mode,

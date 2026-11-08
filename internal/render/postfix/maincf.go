@@ -129,6 +129,11 @@ func renderMainCF(req *render.RenderRequest, dir *directoryMaps) string {
 		senders := tablePathTexthash(senderLoginFile)
 		if dir != nil {
 			senders = dir.sender
+			if dir.unionSenders {
+				// A lookup error in either table fails the lookup: a
+				// temporary failure (ADR 0015, section 4.9, point 3).
+				senders = "unionmap:{" + tablePathTexthash(senderLoginFile) + ", " + dir.sender + "}"
+			}
 		}
 		fmt.Fprintf(&b, "smtpd_sender_login_maps = %s\n\n", senders)
 	}

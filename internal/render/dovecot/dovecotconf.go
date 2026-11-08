@@ -136,7 +136,18 @@ func renderDovecotConf(req *render.RenderRequest) (conf string, dirSecret map[st
 		if err != nil {
 			return "", nil, err
 		}
+		// The logins of the service accounts (ADR 0015, section 4.9, point 2)
+		// are lines of the passdb file whichever user source the server has:
+		// the file is asked first (small, local, no network), and a login
+		// that is not in it, which is every login of the directory (no
+		// directory login has the reserved form of a service account), falls
+		// through to the directory. There is no userdb block of the file: a
+		// service account has no mailbox.
+		b.WriteString("# Logins of the service accounts: the passwd-file of the users Secret is\n")
+		b.WriteString("# asked before the directory (ADR 0015, section 4.9, point 2).\n")
+		b.WriteString(passdbFileBlock())
 		b.WriteString(dir)
+		b.WriteString(authWorkerBlock())
 		return b.String(), secret, nil
 	}
 	b.WriteString("# User source: the accounts, two passwd-files of the users Secret\n")
@@ -148,15 +159,24 @@ func renderDovecotConf(req *render.RenderRequest) (conf string, dirSecret map[st
 	b.WriteString("# workers are limited to 4: a memory-hard hash needs memory per\n")
 	b.WriteString("# verification, and anyone can start one (ADR 0015, section 3,\n")
 	b.WriteString("# point 4). Excess logins queue instead of using more memory.\n")
-	b.WriteString("passdb passwd-file {\n")
-	fmt.Fprintf(&b, "  passwd_file_path = %s\n", passdbPath)
-	b.WriteString("  passdb_use_worker = yes\n")
-	b.WriteString("}\n")
+	b.WriteString(passdbFileBlock())
 	b.WriteString("userdb passwd-file {\n")
 	fmt.Fprintf(&b, "  passwd_file_path = %s\n", userdbPath)
 	b.WriteString("}\n")
-	b.WriteString("service auth-worker {\n")
-	b.WriteString("  process_limit = 4\n")
-	b.WriteString("}\n")
+	b.WriteString(authWorkerBlock())
 	return b.String(), nil, nil
+}
+
+// passdbFileBlock is the passdb of the logins of the accounts: the passwd-file
+// of the users Secret, checked in an auth worker.
+func passdbFileBlock() string {
+	return "passdb passwd-file {\n" +
+		"  passwd_file_path = " + passdbPath + "\n" +
+		"  passdb_use_worker = yes\n" +
+		"}\n"
+}
+
+// authWorkerBlock limits the auth workers to 4 (ADR 0015, section 3, point 4).
+func authWorkerBlock() string {
+	return "service auth-worker {\n  process_limit = 4\n}\n"
 }
