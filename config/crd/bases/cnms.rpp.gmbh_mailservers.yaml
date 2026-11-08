@@ -185,7 +185,9 @@ spec:
                     anyOf:
                     - type: integer
                     - type: string
-                    description: Per-user quota. Unset means no quota.
+                    description: |-
+                      Not enforced yet: no component reads this value. Intended as the
+                      per-user quota.
                     pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                     x-kubernetes-int-or-string: true
                     x-kubernetes-validations:

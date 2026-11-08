@@ -319,7 +319,8 @@ type Mailboxes struct {
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="storage is immutable; resize the PersistentVolumeClaim manually"
 	Storage *resource.Quantity `json:"storage,omitempty"`
 
-	// Per-user quota. Unset means no quota.
+	// Not enforced yet: no component reads this value. Intended as the
+	// per-user quota.
 	// +optional
 	// +kubebuilder:validation:XValidation:rule="quantity(string(self)).isGreaterThan(quantity('0'))",message="must be greater than zero"
 	Quota *resource.Quantity `json:"quota,omitempty"`

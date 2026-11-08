@@ -30,7 +30,9 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: MailUser is the Schema for the cnms mail users.
+        description: |-
+          MailUser is the Schema for the cnms mail users. Its mailbox outlives it:
+          a MailUser created later with the same name uses the old mailbox.
         properties:
           apiVersion:
             description: |-
@@ -50,7 +52,12 @@ spec:
           metadata:
             type: object
           spec:
-            description: spec defines the desired state of the MailUser
+            description: |-
+              spec defines the desired state of the MailUser. The mailbox of an
+              account stays on the volume when the MailUser is deleted, and a
+              MailUser created later with the same name uses it, with the old mail.
+              Purge it before the name is reused (purge runbook,
+              docs/operations/index.md#purge-a-mailbox).
             properties:
               aliases:
                 description: |-

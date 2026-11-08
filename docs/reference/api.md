@@ -745,7 +745,8 @@ _Appears in:_
 
 
 
-MailUser is the Schema for the cnms mail users.
+MailUser is the Schema for the cnms mail users. Its mailbox outlives it:
+a MailUser created later with the same name uses the old mailbox.
 
 
 
@@ -758,7 +759,7 @@ MailUser is the Schema for the cnms mail users.
 | `kind` _string_ | Kind is a string value representing the REST resource this object represents.<br />Servers may infer this from the endpoint the client submits requests to.<br />Cannot be updated.<br />In CamelCase.<br />More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds |  | Optional: \{\} <br /> |
 | `apiVersion` _string_ | APIVersion defines the versioned schema of this representation of an object.<br />Servers should convert recognized schemas to the latest internal value, and<br />may reject unrecognized values.<br />More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources |  | Optional: \{\} <br /> |
 | `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  | Optional: \{\} <br /> |
-| `spec` _[MailUserSpec](#mailuserspec)_ | spec defines the desired state of the MailUser |  | Required: \{\} <br /> |
+| `spec` _[MailUserSpec](#mailuserspec)_ | spec defines the desired state of the MailUser. The mailbox of an<br />account stays on the volume when the MailUser is deleted, and a<br />MailUser created later with the same name uses it, with the old mail.<br />Purge it before the name is reused (purge runbook,<br />docs/operations/index.md#purge-a-mailbox). |  | Required: \{\} <br /> |
 | `status` _[MailUserStatus](#mailuserstatus)_ | status defines the observed state of the MailUser |  | Optional: \{\} <br /> |
 
 
@@ -810,6 +811,11 @@ login and the local part of the primary address. The mailbox is
 keyed by the name. A MailServer has either a directory or MailUsers,
 not both.
 
+The mailbox of an account stays on the volume when the MailUser is
+deleted, and a MailUser created later with the same name uses it,
+with the old mail. Purge it before the name is reused (purge runbook,
+docs/operations/index.md#purge-a-mailbox).
+
 
 
 _Appears in:_
@@ -860,7 +866,7 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `enabled` _boolean_ | Enable mail storage (IMAP access, LMTP delivery). Defaults to<br />false. | false | Optional: \{\} <br /> |
 | `storage` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#quantity-resource-api)_ | Size of the mail storage volume. Defaults to 10Gi. Immutable<br />once set: the volume claim template of a StatefulSet cannot<br />change, and existing volumes are resized manually (ADR 0010). | 10Gi | Optional: \{\} <br /> |
-| `quota` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#quantity-resource-api)_ | Per-user quota. Unset means no quota. |  | Optional: \{\} <br /> |
+| `quota` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#quantity-resource-api)_ | Not enforced yet: no component reads this value. Intended as the<br />per-user quota. |  | Optional: \{\} <br /> |
 
 
 #### NameReference
