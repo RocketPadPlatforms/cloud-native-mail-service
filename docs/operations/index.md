@@ -89,11 +89,13 @@ next delivery.
    has one. The Postfix image the operator already uses does:
    `kubectl get pod <server>-dovecot-0 -n <ns> -o
    jsonpath='{.spec.containers[?(@.name=="cert-reload")].image}'`. The files belong
-   to uid and gid 1000, so the pod runs as **1000:1000** (or as root). In a
-   container test without any `fsGroup` the home directories had mode `0700` and
-   another uid was refused even with group 1000. On a cluster the `fsGroup` of the
-   Dovecot pod is expected to add group read and write and the setgid bit to
-   existing directories when the volume is mounted; the advice holds either way.
+   to uid and gid 1000, so the pod runs as **1000:1000** (or as root). In the
+   container test the volume root was prepared like `fsGroup` (`root:1000`, mode
+   2775) but no `fsGroup` change ran on the contents: the home directories had
+   mode 2700 (owner 1000:1000, no group permission bits), so another uid was
+   refused even with group 1000. On a cluster the `fsGroup` of the Dovecot pod is
+   expected to add group access to existing directories when the volume is
+   mounted; that is not verified, and the advice holds either way.
 
    ```yaml
    apiVersion: v1
@@ -158,9 +160,10 @@ its mailbox starts empty (no folders but INBOX, new UIDs).
 
 In a container test with the pinned Dovecot 2.4.5 image and the CNMS Postfix
 image on the same volume, removing `/srv/mail/<login>` worked as 1000:1000 and as
-root and failed as 65534:1000 (the home directories were mode `0700`); an account
-created again after the removal had an empty INBOX, and without the removal it saw
-the old messages. **Not verified on a cluster:** the pod above, the `nodeName`
+root and failed as 65534:1000 (the home directories were mode 2700); `ls
+/srv/mail` in the Postfix image listed the homes as 1000:1000 and as root. An
+account created again after the removal had an empty INBOX, and without the
+removal it saw the old messages. **Not verified on a cluster:** the pod above, the `nodeName`
 placement, the `fsGroup` of the volume, the Postfix queue commands of step 5, and
 `doveadm user` through `kubectl exec`.
 
