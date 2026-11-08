@@ -16,6 +16,7 @@ module.exports = {
         'how-to/directories',
         'how-to/users-and-aliases',
         'how-to/service-accounts',
+        'how-to/mailboxes',
         'how-to/block-direct-smtp-egress',
       ],
     },

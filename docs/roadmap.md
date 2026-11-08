@@ -51,9 +51,12 @@ the code and the [status conditions](reference/status-conditions.md).
   namespace of the account, and the `MailServer` serves the accounts it accepts:
   a login by the name alone, the owner of the sender in the Postfix and Rspamd
   tables, and nothing delivered to it (3c).
-- **Mailboxes (Phase 4):** IMAP, LMTP delivery and the maildir volume
-  work with the data plane. Open: quota, Dovecot metrics, the mailbox
-  format ADR, and the k8up backup and restore e2e.
+- **Mailboxes (Phase 4):** IMAP, LMTP delivery and the Maildir volume
+  work with the data plane. The mailbox format is proposed in [ADR
+  0016](decisions/0016-mailbox-format-and-storage.md); the
+  [mailboxes how-to](how-to/mailboxes.md) and the Dovecot failover and purge
+  [runbooks](operations/index.md) exist. Open: quota (`spec.mailboxes.quota`
+  is not enforced), Dovecot metrics, and the k8up backup and restore e2e.
 - **Domains (Phase 5):** a `MailDomain` names its server in
   `spec.serverRef` ([ADR 0014](decisions/0014-domain-server-binding-and-hostname.md));
   the authorization of the domains of a server is enforced on the

@@ -23,7 +23,7 @@ from the hardening phase on.
 | Postfix replica lost | Queued mail survives on the per-replica queue PVC; remaining replicas keep serving; the lost replica is replaced |
 | Scale-down of Postfix | Not supported yet: the queue move is not implemented, so decreasing `postfix.replicas` is rejected |
 | Dovecot down | IMAP/LMTP unavailable until the pod reschedules onto a node that can attach the mail volume; mail is queued in Postfix meanwhile |
-| Account changed, disabled or removed (`MailUser`) | The Dovecot files are updated in place and reach the pod after the kubelet has projected the Secret: typically a minute or two, longer under load. Until then the old password or login still works; open IMAP sessions stay open (see [users and aliases](../how-to/users-and-aliases.md); that `doveadm kick` ends one is not verified). Postfix follows with a validated rollout; mail it accepts for a user that Dovecot does not know yet is deferred, not bounced |
+| Account changed, disabled or removed (`MailUser`) | The Dovecot files are updated in place and reach the pod after the kubelet has projected the Secret: typically a minute or two, longer under load. Until then the old password or login still works; open IMAP sessions stay open (see [users and aliases](../how-to/users-and-aliases.md); `doveadm kick` ended one in a plain container, not verified through `kubectl exec` in a pod). Postfix follows with a validated rollout; mail it accepts for a user that Dovecot does not know yet is deferred, not bounced |
 | Operator down, with MailUsers | The live Secret and the Postfix maps stay as they are: logins and mail keep working. New accounts, changed passwords, and disabled or deleted accounts take effect only once the operator runs again; until then a revoked account can still log in |
 | Server blocked for another reason (a render error, `UserSourceConflict`, `DirectoryInvalid`, `ClusterIssuerNotAllowed`, relay or IP pool claim) | The running revision and the live users Secret stay as they are, so an account that is disabled or deleted meanwhile keeps its login until the block clears. The revocation-only rule of ADR 0015, section 4.7 (logins are never blocked) applies to the limit blocks only (next row); extending it to these blocks is in the [backlog](../backlog.md) |
 | Server over a limit (more than 1,000 accounts, 5,000 addresses, or an object of 1,000,000 bytes or more: `UserLimitExceeded`, `AddressLimitExceeded`, `ConfigTooLarge`) | A blocked revision: the new revision is not applied as a whole, Postfix and Rspamd keep the running data, `Ready=False` names the counts or the object. Removing or disabling an account and a new password still apply to the live Dovecot files, new accounts and aliases wait; a removed account keeps its mailbox and is still a recipient until the block clears. It clears by itself once the numbers are under the limits (see [limits](../how-to/users-and-aliases.md#limits) and the [runbook](../operations/index.md#a-server-is-blocked-by-a-limit)) |
@@ -178,11 +178,16 @@ is a plain PVC: a larger `valkey.storage` is applied in place.
 ### Dovecot
 
 Dovecot runs a single replica on a read-write-once volume (active/
-standby via rescheduling). After a node failure the volume can stay
-attached to the old node for minutes unless the node is
-tainted or removed — the realistic failover time, and how to speed
-it up, will be in the [operations](../operations/index.md) runbook (not
-written yet).
+standby via rescheduling). When its node fails, **the pod is not replaced
+automatically**: Kubernetes never replaces a StatefulSet pod on an
+unreachable node by itself, and the volume stays attached to the old node.
+You release the pod (taint the node `node.kubernetes.io/out-of-service`,
+delete the Node object, or force-delete the pod) after you have confirmed
+that the node is down. Where something deletes the Node objects of failed
+nodes, the pod is replaced after about 11 minutes, a figure derived from
+Kubernetes defaults and not verified on a cluster. The steps are in the
+[Dovecot failover](../operations/index.md#dovecot-failover) runbook. IMAP is
+down meanwhile; Postfix queues the mail and nothing is lost.
 
 ## Observing failures
 

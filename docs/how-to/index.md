@@ -12,7 +12,7 @@ Task-oriented guides:
 - [Use MailUsers and aliases](users-and-aliases.md)
 - [Let an application send mail with a MailServiceAccount](service-accounts.md)
 - Relay mode
-- Mailboxes
+- [Use mailboxes (IMAP)](mailboxes.md)
 - Observability with and without the Prometheus Operator
 - Backup and restore with k8up (including DKIM key handling)
 - GitOps setup
