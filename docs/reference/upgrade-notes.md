@@ -419,6 +419,13 @@ the new CRDs reject or prune the old field names.
   short LMTP and IMAP interruption; Postfix defers LMTP mail and does
   not lose it. Custom NetworkPolicies or probes that name the old
   container ports must follow.
+- **`dovecot.conf` sets `mailbox_list_layout = maildir++`** for a server with
+  mailboxes ([ADR 0016](../decisions/0016-mailbox-format-and-storage.md)).
+  That is the layout Dovecot already uses for `mail_driver = maildir`, so the
+  folders on an existing mail volume stay where they are and nothing is
+  migrated; the setting only makes the default explicit. The rendered
+  configuration changes, so Dovecot rolls **once** (one validated rollout, one
+  restart). A server without mailboxes (auth-only) is not affected.
 - **Configuration lives in immutable ConfigMaps named
   `<server>-<component>-<hash8>`** (and an immutable Secret for the directory
   password and CA of Dovecot; the Dovecot users are a live Secret, see above).
