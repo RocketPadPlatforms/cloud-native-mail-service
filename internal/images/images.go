@@ -43,7 +43,7 @@ const (
 	// RedisExporter exports the Valkey metrics (ADR 0005).
 	RedisExporter = "oliver006/redis_exporter:v1.97.0@sha256:f5f903fbe77571d455ede0453b084d6840bc62fc105efac001034421cab83b99"
 	// Mailpit is the e2e SMTP sink (ADR 0004, section 7).
-	Mailpit = "axllent/mailpit:v1.33.0@sha256:9b3a463be15354c0f0eba91697d80e3e0d8a5623ef0e627cacc836bc17fd5231"
+	Mailpit = "axllent/mailpit:v1.33.1@sha256:aef2aacc11f075ec0fb6874275ee4a421e688e11a96ebb296134d1735c7761ce"
 	// Curl scrapes the operator metrics endpoint in the e2e suite.
 	Curl = "curlimages/curl:8.23.0@sha256:3fb7e13e5d179a845c97d78204f3f1064d1907037f26a3ebf91710571151fd93"
 	// CoreDNS is the e2e DNS server that serves the test zone the
