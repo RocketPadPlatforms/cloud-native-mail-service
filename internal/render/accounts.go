@@ -84,6 +84,13 @@ func domainOf(addr string) string {
 // conflict (ADR 0015, section 4.2); they answer 450 and are never
 // served, whoever claims them.
 //
+// The conflicts are decided elsewhere, by addresses.Decide, which sees the
+// claimants the renderer does not (service accounts) and the domains of
+// every address: its Conflicted list is the conflicted argument here, and
+// the Aliases of an account are UserResult.Aliases. PlanAccounts only
+// applies that verdict; TestPlanAccountsAgreesWithTheVerdict keeps the two
+// in step on scenarios and on random servers.
+//
 // It validates every value that reaches a table file again (the values
 // come from validated API fields, but the renderers are the last line
 // before a file that Postfix and Dovecot parse by whitespace and

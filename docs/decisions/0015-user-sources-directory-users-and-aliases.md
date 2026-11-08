@@ -411,7 +411,12 @@ has at most one owner. Rules, in the style of `DuplicateDomain` (ADR 0003):
    which is exact because a domain served by one server has one authorized
    `MailDomain` (`DuplicateDomain`, ADR 0003), and is what an index of
    `MailUser`s by claimed address uses (section 7), so a conflict reaches
-   the claimants and not every user of the server.
+   the claimants and not every user of the server. The decision function
+   (`internal/addresses`) keys a conflict by the folded DNS name of the
+   domain instead: only a claim in a domain that is served and authorized
+   takes part in the ranking, ADR 0003 allows one authorized object per DNS
+   name in a namespace, and a static test user has a DNS name and no
+   `MailDomain`. For valid input both keys select the same claimants.
 6. **Directory addresses are outside the cluster** (section 4.8): the
    operator cannot see them, so conflicts between a directory and a
    `MailServiceAccount` sender cannot be decided from the objects; 3c
@@ -1233,7 +1238,10 @@ because an uncached `List` rejects field selectors (ADR 0014).
 
 The reasons of one **address** are in `status.addresses[]`, not on the
 condition: `Served`, `AliasDomainNotFound`, `AliasDomainNotServed`,
-`AliasDomainNotAuthorized`, `AddressConflict`.
+`AliasDomainNotAuthorized`, `AddressConflict`. The row of the primary
+address, and the row of an alias of a suspended account (section 4.6), show
+the cause on the **primary** domain instead: `DomainNotFound`,
+`DomainNotServed` or `DomainNotAuthorized`.
 
 `MailServer` additions: reasons `UserSourceConflict`, `UserLimitExceeded`,
 `AddressLimitExceeded`, `ConfigTooLarge`, `DirectoryInvalid` (the

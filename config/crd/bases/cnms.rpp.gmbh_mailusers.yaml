@@ -185,6 +185,9 @@ spec:
                       description: |-
                         Reason is Served, or why the address is not: AliasDomainNotFound,
                         AliasDomainNotServed, AliasDomainNotAuthorized or AddressConflict.
+                        On the primary address, and on an alias of a suspended account, it
+                        is the cause on the primary domain: DomainNotFound, DomainNotServed
+                        or DomainNotAuthorized.
                       maxLength: 64
                       type: string
                     served:

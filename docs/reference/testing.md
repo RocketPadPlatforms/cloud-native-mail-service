@@ -24,6 +24,14 @@ The renderer golden files (`internal/render/*/testdata`, regenerated with
   delivery files differ for a disabled and a suspended account) and the
   directory blocks.
 
+Unit tests of `internal/addresses` cover the pure decision about address
+ownership (ranks and conflicts, the per-address reasons, suspended and
+disabled accounts, the limits of 1,000 accounts and 5,000 addresses, the
+byte guard at 1,000,000 bytes, and what a blocked revision still applies).
+They run every scenario with the input in several orders and require the same
+answer, check the invariants on random servers, and check that
+`render.PlanAccounts` agrees with the verdict.
+
 Unit tests check the decision behind them (`render.PlanAccounts`: logins,
 mailboxes, aliases, owners of senders, deferred addresses, refusals) and that
 no unsafe value (a blank, a newline, a colon, a `+`, `..`) reaches a table
