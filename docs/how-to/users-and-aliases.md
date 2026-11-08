@@ -162,6 +162,36 @@ Each alias domain signs with the key of its own domain: sending as
 - An account whose credential Secret is missing has no login; it still
   receives mail.
 
+## Limits
+
+A server serves at most **1,000 accounts** and **5,000 addresses** (the primary
+addresses and the aliases together), and an account has at most 32 aliases (the
+API refuses more). Every ConfigMap and Secret that the operator renders for the
+server, the live Dovecot Secret included, must also hold **less than 1,000,000
+bytes** (keys and values), a margin below the 1 MiB that the API server allows.
+At realistic sizes (25-character addresses) the caps are reached first; with
+very long addresses the byte limit comes first (about 760 accounts in the
+worst case).
+
+Over a limit the server is `Ready=False` with the reason `UserLimitExceeded`,
+`AddressLimitExceeded` or `ConfigTooLarge`; the message gives the counts, or
+the name and the size of the object. The new revision is **not applied as a
+whole**: Postfix and Rspamd keep the data of the running revision, and any
+other change in the same pass (a new domain) waits with it. Nobody is removed
+silently. What still applies, so that a block never keeps a login alive:
+
+- a **removed or disabled account** loses its login (after the kubelet
+  projection, see above), and a **changed password** takes effect;
+- a **new account**, a new alias, the removal of an alias, a changed primary
+  address and the enabling of a disabled account **wait**.
+
+A removed account keeps its mailbox and its address in the running Postfix maps
+until the block clears, so mail for it is still accepted and delivered to the
+retained mailbox. When the count falls below the cap, or the objects fit again
+(remove accounts or aliases), the next reconcile applies the revision as a
+whole. A first revision that is over a limit is not deployed. The steps are in
+the [runbook](../operations/index.md#a-server-is-blocked-by-a-limit).
+
 ## When the operator is down
 
 Mail and logins keep working: the data plane runs from the rendered objects and

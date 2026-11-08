@@ -247,9 +247,15 @@ unchanged pod-template hash for a changed account), disabled, suspended and
 conflicting accounts, a missing or foreign credential hash, the second user
 source, the last account removed, a revoked domain, the cleanup of the earlier
 scheme, and the wake-up of the server by a new `status.credentialRevision`
-without waiting for the safety requeue. The e2e suite takes 19 to 21 minutes
-(the MailUser block about five of them), against the 45-minute timeout of
-`make test-e2e` (60 minutes for the CI job).
+without waiting for the safety requeue. The limits are covered with the caps
+lowered through `MailServerReconciler.Limits` (a zero field is the value of the
+ADR): a revision over the cap of accounts, over the cap of addresses and over
+the byte guard is held back, the revocation-only write of the live files, the
+restart safety (every step after the first block runs in a fresh reconciler),
+the recovery, and the sizes that the API server accepts and refuses
+(`mailserver_limits_test.go`). The e2e suite takes 19 to 21 minutes (the
+MailUser block about five of them), against the 45-minute timeout of `make
+test-e2e` (60 minutes for the CI job).
 
 The DKIM specs below submit with the envelope sender `alice@e2e.example.org`,
 the address `alice` owns in the directory fixtures (the envelope sender

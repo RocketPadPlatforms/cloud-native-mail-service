@@ -203,6 +203,10 @@ type MailServerReconciler struct {
 	// (--dns-resolver). Without one no record is verified.
 	Resolver dnsrecords.Resolver
 
+	// Limits are the limits of ADR 0015, section 4.7; a zero field is the
+	// value of the ADR. The specs set smaller ones.
+	Limits addresses.Limits
+
 	// Now is the clock of the DNS lookup schedule; nil means time.Now.
 	// Tests advance a fake one.
 	Now func() time.Time
@@ -282,6 +286,16 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		setCondition(conds, generation, conditionReady, metav1.ConditionFalse, reason, message)
 		return done()
 	}
+	// fail reports a failed apply and finishes. A lost race on the live users
+	// Secret is no failure (another writer, for instance a second replica): the
+	// pass is repeated after a second and Ready is not touched (ADR 0015,
+	// section 4.7).
+	fail := func(err error) (ctrl.Result, error) {
+		if stderrors.Is(err, errLiveUsersRaced) {
+			return ctrl.Result{RequeueAfter: liveUsersRetry}, nil
+		}
+		return block(r.reportApplyFailure(ctx, server, prevReady, err), err.Error())
+	}
 
 	// Domain authorization (ADR 0003) is evaluated first and on every
 	// reconcile: no tenant-controlled check below may keep a revoked
@@ -303,7 +317,7 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	// revoked domain, so it gets the fail-closed render instead (no
 	// domains, no users; fixed content that depends on no tenant
 	// input beyond the server itself).
-	blocked, src, err := r.preflight(ctx, server, len(auth.domains) > 0, domains, ev)
+	blocked, src, err := r.preflight(ctx, server, len(auth.domains) > 0, domains, ev, auth.domains)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -325,13 +339,16 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			// renamed or revoked hostname, or the domains an older
 			// version put on it). A hostname change never fails the
 			// domains closed (ADR 0014).
-			if exists {
-				if err := r.keepRunning(ctx, server, auth.hostname, blocked); err != nil {
-					return block(r.reportApplyFailure(ctx, server, prevReady, err), err.Error())
-				}
+			reason, message, err := r.holdRunning(ctx, server, auth.hostname, blocked, src, exists, prevReady)
+			if err != nil {
+				return fail(err)
 			}
-			return block(blocked.reason, blocked.message)
+			return block(reason, message)
 		}
+		// A domain is revoked as well (needsFailClosed): the fail-closed render
+		// replaces the running one, and no limit applies to it (ADR 0015, section
+		// 4.7), so the Ready message below is the one of the block without the
+		// suffix of limitMessage: renderSrc is reset.
 		failClosed, renderDomains, renderSrc = true, nil, userSource{}
 	}
 
@@ -359,15 +376,12 @@ func (r *MailServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	prevValidated := meta.FindStatusCondition(*conds, ConditionConfigValidated)
 	prevValidated = prevValidated.DeepCopy()
 	g, rolloutWant, err := r.applyGuarded(ctx, server, renderDomains, auth.hostname, renderSrc, keys.keys, certCRDs, failClosed)
-	if stderrors.Is(err, errLiveUsersRaced) {
-		// Somebody wrote the live users Secret between our read and our write
-		// (a second replica): nothing failed, read again. Ready is not touched.
-		return ctrl.Result{RequeueAfter: liveUsersRetry}, nil
-	}
 	if err != nil {
-		return block(r.reportApplyFailure(ctx, server, prevReady, err), err.Error())
+		return fail(err)
 	}
-	r.setValidationCondition(server, g, prevValidated)
+	if blocked, err = r.recordGate(ctx, server, g, renderSrc, blocked, prevReady, prevValidated); err != nil {
+		return fail(err)
+	}
 
 	// Readiness of the rendered objects.
 	certStatus, certReason, certMessage := r.certificateReady(ctx, server)
@@ -489,6 +503,11 @@ func (r *MailServerReconciler) setAuxiliaryConditions(ctx context.Context, serve
 // The returned map holds the revision the rollout check waits for.
 func (r *MailServerReconciler) applyGuarded(ctx context.Context, server *cnmsv1alpha1.MailServer, domains []string, hostname string, src userSource, keys []render.DomainKeys, certCRDs, failClosed bool) (*gate, map[string]string, error) {
 	g, err := r.applyDataPlane(ctx, server, domains, hostname, src, keys, certCRDs, true)
+	if le, ok := stderrors.AsType[*addresses.LimitError](err); ok {
+		// The revision is too large: it is not applied, and a revoked domain
+		// still gets the fail-closed render below.
+		g, err = &gate{limit: le, message: le.Message}, nil
+	}
 	if err != nil {
 		return nil, nil, err
 	}
@@ -513,7 +532,7 @@ type blockedBy struct{ reason, message string }
 // non-nil blockedBy means the normal render must not be applied. The
 // static users are only loaded when needed (a fail-closed render has
 // none).
-func (r *MailServerReconciler) preflight(ctx context.Context, server *cnmsv1alpha1.MailServer, needUsers bool, domains *cnmsv1alpha1.MailDomainList, ev *authorizationEvaluator) (*blockedBy, userSource, error) {
+func (r *MailServerReconciler) preflight(ctx context.Context, server *cnmsv1alpha1.MailServer, needUsers bool, domains *cnmsv1alpha1.MailDomainList, ev *authorizationEvaluator, authorized []string) (*blockedBy, userSource, error) {
 	var src userSource
 	staticUsers := server.Spec.Submission != nil && server.Spec.Submission.InsecureStaticUsers != nil
 	mailUsers, err := r.serverMailUsers(ctx, server)
@@ -579,11 +598,25 @@ func (r *MailServerReconciler) preflight(ctx context.Context, server *cnmsv1alph
 	if !ok {
 		return &blockedBy{reason, message}, userSource{}, nil
 	}
-	src.accounts = users
+	if len(users) > 0 {
+		src.input = render.AccountsInput(users, authorized)
+		src.accounts, src.conflicted = render.DecideAccounts(users, authorized)
+	}
 	if len(mailUsers) > 0 {
 		if src, err = r.mailUserSource(ctx, server, mailUsers, domains, ev); err != nil {
 			return nil, src, err
 		}
+	}
+	src.entries = accountEntries(src.accounts)
+	// The counts of ADR 0015, section 4.7: over a cap the new revision is not
+	// applied. The running one keeps serving; the live files follow the
+	// revocation-only rule (keepRunning).
+	if err := addresses.CheckLimitsWith(src.input, r.Limits); err != nil {
+		if le, ok := stderrors.AsType[*addresses.LimitError](err); ok {
+			src.limited = true
+			return &blockedBy{le.Reason, le.Message}, src, nil
+		}
+		return nil, src, err
 	}
 	return nil, src, nil
 }
@@ -616,6 +649,13 @@ type userSource struct {
 	// verdict is the decision for the MailUsers of the server; nil for
 	// any other user source.
 	verdict *addresses.Result
+	// input is the input of the address decision, for the limits of ADR 0015,
+	// section 4.7. entries are the accounts as the engines carry them (the
+	// desired state that Settle compares with the live files). limited is
+	// set when a limit blocks the revision.
+	input   addresses.Input
+	entries []addresses.Entry
+	limited bool
 }
 
 // needsFailClosed reports whether the running data plane must be
@@ -637,16 +677,31 @@ func (r *MailServerReconciler) needsFailClosed(ctx context.Context, server *cnms
 
 // keepRunning is what a blocked render still does to the running data
 // plane: the Certificate loses names that are no longer authorized, and,
-// when the last MailUser is gone (no user source), a removed account loses
-// its login while the Postfix revision stays.
-func (r *MailServerReconciler) keepRunning(ctx context.Context, server *cnmsv1alpha1.MailServer, hostname string, blocked *blockedBy) error {
+// when the last MailUser is gone (no user source) or a limit blocks the
+// revision, a removed or disabled account loses its login while the Postfix
+// revision stays (the revocation-only rule of ADR 0015, section 4.7). It returns
+// the number of changes that wait.
+func (r *MailServerReconciler) keepRunning(ctx context.Context, server *cnmsv1alpha1.MailServer, hostname string, blocked *blockedBy, src userSource) (held int, err error) {
 	if err := r.reapplyCertificate(ctx, server, hostname); err != nil {
-		return err
+		return 0, err
 	}
-	if blocked.reason == ReasonNoUserSource {
-		return r.revokeLogins(ctx, server)
+	switch {
+	case blocked.reason == ReasonNoUserSource:
+		return 0, r.revokeLogins(ctx, server)
+	case src.limited:
+		return r.settleLiveUsers(ctx, server, src.entries)
 	}
-	return nil
+	return 0, nil
+}
+
+// limitMessage is the message of Ready for a limit block: the message of the
+// limit (counts or an object name), and what the block does. No address, no
+// secret.
+func limitMessage(message string, held int, running bool) string {
+	if !running {
+		return message + "; nothing is applied until it is fixed"
+	}
+	return fmt.Sprintf("%s; the running revision keeps serving, %d account changes wait, and the removal, the disabling and the new password of a login still apply", message, held)
 }
 
 // reapplyCertificate applies the Certificate alone, with the authorized

@@ -38,6 +38,21 @@ const (
 	MaxObjectBytes = 1_000_000
 )
 
+// Limits are the limits a caller checks against. A zero field is the value of
+// ADR 0015, section 4.7 (the constants above); the MailServer controller has
+// a Limits field of its own so that the specs need not create a thousand
+// objects.
+type Limits struct {
+	Users, Addresses, Aliases, ObjectBytes int
+}
+
+func orDefault(v, def int) int {
+	if v > 0 {
+		return v
+	}
+	return def
+}
+
 // The reasons of a blocked revision (ADR 0015, sections 4.7 and 8): the
 // Ready reasons of a MailServer. The previous revision keeps running.
 const (
@@ -71,22 +86,27 @@ func IsLimit(err error) bool {
 // address reason). It counts what is declared, not what is served, so a
 // conflict cannot hide a claim from the count. The result is nil, or a
 // *LimitError.
-func CheckLimits(in Input) error {
-	if n := len(in.Users); n > MaxUsers {
+func CheckLimits(in Input) error { return CheckLimitsWith(in, Limits{}) }
+
+// CheckLimitsWith is CheckLimits with other limits (zero fields are the
+// defaults).
+func CheckLimitsWith(in Input, l Limits) error {
+	maxUsers, maxAddresses, maxAliases := orDefault(l.Users, MaxUsers), orDefault(l.Addresses, MaxAddresses), orDefault(l.Aliases, MaxAliases)
+	if n := len(in.Users); n > maxUsers {
 		return &LimitError{ReasonUserLimitExceeded,
-			fmt.Sprintf("the server has %d accounts, at most %d are allowed", n, MaxUsers)}
+			fmt.Sprintf("the server has %d accounts, at most %d are allowed", n, maxUsers)}
 	}
 	addrs := len(in.Senders)
 	for _, u := range sortedUsers(in.Users) {
-		if len(u.Aliases) > MaxAliases {
+		if len(u.Aliases) > maxAliases {
 			return &LimitError{ReasonAddressLimitExceeded,
-				fmt.Sprintf("the account %q has %d aliases, at most %d are allowed", u.Name, len(u.Aliases), MaxAliases)}
+				fmt.Sprintf("an account has %d aliases, at most %d are allowed", len(u.Aliases), maxAliases)}
 		}
 		addrs += 1 + len(u.Aliases)
 	}
-	if addrs > MaxAddresses {
+	if addrs > maxAddresses {
 		return &LimitError{ReasonAddressLimitExceeded,
-			fmt.Sprintf("the server has %d addresses, at most %d are allowed", addrs, MaxAddresses)}
+			fmt.Sprintf("the server has %d addresses, at most %d are allowed", addrs, maxAddresses)}
 	}
 	return nil
 }
@@ -108,11 +128,15 @@ func ObjectSize[V ~string | ~[]byte](data map[string]V) int {
 // *LimitError with the reason ConfigTooLarge that names the object and its
 // size.
 func CheckObjectSize(name string, size int) error {
-	if size < MaxObjectBytes {
+	return checkObjectSize(name, size, MaxObjectBytes)
+}
+
+func checkObjectSize(name string, size, limit int) error {
+	if size < limit {
 		return nil
 	}
 	return &LimitError{ReasonConfigTooLarge,
-		fmt.Sprintf("%s holds %d bytes, it must stay under %d", name, size, MaxObjectBytes)}
+		fmt.Sprintf("%s holds %d bytes, it must stay under %d", name, size, limit)}
 }
 
 // CheckObjects checks several rendered objects, by name, and returns the
@@ -121,13 +145,20 @@ func CheckObjectSize(name string, size int) error {
 // on the data of the ConfigMaps and Secrets of a revision before it applies
 // them.
 func CheckObjects[V ~string | ~[]byte](objects map[string]map[string]V) error {
+	return CheckObjectsWith(objects, Limits{})
+}
+
+// CheckObjectsWith is CheckObjects with other limits (zero fields are the
+// defaults).
+func CheckObjectsWith[V ~string | ~[]byte](objects map[string]map[string]V, l Limits) error {
+	limit := orDefault(l.ObjectBytes, MaxObjectBytes)
 	names := make([]string, 0, len(objects))
 	for n := range objects {
 		names = append(names, n)
 	}
 	slices.Sort(names)
 	for _, n := range names {
-		if err := CheckObjectSize(n, ObjectSize(objects[n])); err != nil {
+		if err := checkObjectSize(n, ObjectSize(objects[n]), limit); err != nil {
 			return err
 		}
 	}

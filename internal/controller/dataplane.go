@@ -32,6 +32,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	cnmsv1alpha1 "github.com/RocketPadPlatforms/cloud-native-mail-service/api/v1alpha1"
+	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/addresses"
 	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/manifests"
 	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/render"
 	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/render/dovecot"
@@ -67,6 +68,9 @@ const (
 
 // gate is the result of applying the data plane.
 type gate struct {
+	// limit is set when the byte guard of ADR 0015, section 4.7 blocked the
+	// revision before anything was sent to the API server.
+	limit   *addresses.LimitError
 	state   validationState
 	message string
 	// want maps a workload name to its desired config hash; set only
@@ -126,6 +130,11 @@ func (r *MailServerReconciler) applyDataPlane(ctx context.Context, server *cnmsv
 		return r.hashKey(ctx, server)
 	})
 	if err != nil {
+		return nil, err
+	}
+	// The byte guard comes first: an object over the limit, the live users
+	// Secret included, is never sent to the API server.
+	if err := checkRendered(plane, r.Limits); err != nil {
 		return nil, err
 	}
 	// Immutable objects are created, never updated; the pods of the

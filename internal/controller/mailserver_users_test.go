@@ -423,7 +423,7 @@ var _ = Describe("MailServer with MailUsers", func() {
 		stale := live().DeepCopy()
 		// Another writer moves the resourceVersion on.
 		s := live()
-		s.Annotations = map[string]string{"touched": "yes"}
+		s.Annotations = map[string]string{touchedKey: touchedValue}
 		Expect(k8sClient.Update(ctx, s)).To(Succeed())
 		// The operator reads the old copy, and its desired content differs.
 		newUser(userBob, refA, nil)

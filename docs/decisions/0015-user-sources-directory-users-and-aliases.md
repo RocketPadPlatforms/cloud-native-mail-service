@@ -7,8 +7,9 @@
   own pull request (#40); 3b is under way (the `MailUser` API, the controller,
   the address decision and the sender binding are there, and the `MailServer`
   serves the `MailUser`s with the live Dovecot Secret of section 4.7; the
-  limits of section 4.7, the Rspamd check 2 and the load test of section 3,
-  point 4 (cgroup `memory.peak`, delivery during the flood) are not done);
+  limits of section 4.7 are enforced; the Rspamd check 2 and the load test of
+  section 3, point 4 (cgroup `memory.peak`, delivery during the flood) are not
+  done);
   3c is not
 - **Date:** 2026-11-06
 
@@ -805,25 +806,60 @@ passwd-files an explicit exception:
   `UserSourceConflict`, `DirectoryInvalid`, `ClusterIssuerNotAllowed`, relay,
   IP pool claim) the live Secret is not written either: an account that is
   disabled or deleted meanwhile keeps its login until the block clears. The
-  rule "logins are never blocked" below is for the limit blocks only, and is
-  not implemented yet; extending it to every block is in the backlog. A
+  rule "logins are never blocked" below is for the limit blocks only (it is
+  implemented for them, see "The limits of this section"); extending it to every
+  block is in the backlog. A
   conflict on the update (another writer) is not an error: the reconcile
-  requeues after a second and leaves `Ready` alone.
-  **Known limits, not covered by user docs.** The Secret is written before the
-  gate; above 1 MiB the API server refuses the update and the rollout is
-  blocked until the byte guard of the next commit refuses the render first.
-  That a running Dovecot pod keeps the files it last got when the Secret is
-  deleted is expected of the kubelet and **not verified**; a pod that is
-  rescheduled meanwhile cannot start until the Secret is written again by the
-  next reconcile (Secrets are not watched).
+  requeues after a second and leaves `Ready` alone. The settled write of a blocked
+  revision is computed from one read of the Secret and carries that read's
+  resourceVersion, so it is refused, not applied over a newer content, when
+  another writer changed the Secret in between.
+  **The limits of this section (3b).** The counts are checked on the accounts
+  of the server (the `MailUser`s, or the static test users) before the render
+  (`addresses.CheckLimits`), and the byte guard on every ConfigMap and Secret
+  of the revision, the live Secret included, right after the render and before
+  anything is sent to the API server (`addresses.CheckObjects`; the check
+  counts keys and values and is strictly below 1,000,000 bytes). A block is
+  `Ready=False` on the `MailServer` with the reason `UserLimitExceeded`,
+  `AddressLimitExceeded` or `ConfigTooLarge`; the message has the counts, or
+  the (hash-named, non-secret) object and its size, and what the block does;
+  a Warning Event is emitted when the reason or the message changes. Nothing
+  of the revision is applied, so Postfix and Rspamd keep the data of the
+  running revision, and any other change of the same pass (a new domain)
+  waits with it; the cluster is not told to drop anybody. A first revision that
+  is blocked creates nothing.
+  **The previous accepted set is the live Secret itself.** The controller reads
+  it back (`dovecot.ParseLive`: a passdb line is an account that can log in,
+  with its hash and primary address; an account that is only in the userdb
+  cannot), so it is in the cluster and survives a restart of the operator, and
+  it is exactly what Dovecot reads. `addresses.Settle` with `blocked=true` then
+  gives the passdb file: the lines that are in it, rendered again with the
+  current hash, minus the accounts that are gone, disabled or suspended; no
+  line is added. The userdb file is written back unchanged. **A removed or
+  disabled account therefore loses its login (after the kubelet projection) but
+  its address stays in the frozen Postfix maps and its userdb line stays**: mail
+  for it is still accepted and delivered to the retained mailbox until the
+  block clears. The count of the changes that wait (`Settled.Held`) is in the
+  message; it does not count alias changes, because the live files do not carry
+  aliases. Domain revocation does not come here: its fail-closed render has no
+  users, and no limit applies to it. When the count falls below the cap, or the
+  objects fit again, the next reconcile applies the revision as a whole.
+  **Known limits, not covered by user docs.** That a running Dovecot pod keeps
+  the files it last got when the Secret is deleted is expected of the kubelet
+  and **not verified**; a pod that is rescheduled meanwhile cannot start until
+  the Secret is written again by the next reconcile (Secrets are not
+  watched). An oversized live Secret is no longer a case: the byte guard
+  refuses the revision before the write. While a limit blocks the server a
+  missing live Secret is not created either (a blocked revision only revokes):
+  it stays missing until the block clears.
 - **Alternative: restart.** One restart-based rollout per user change is the
   design this replaces. It stays in the backlog as the option for clusters
   that cannot grant `update`.
 
 **Sizes and limits.** A ConfigMap or Secret is limited to 1 MiB (the API
-server sums the keys and values of `data`; **not verified** on the pinned
-Kubernetes version, so the guard below, which counts the keys as well, is
-the conservative reading). That limit is **per object**: the revisions of
+server sums the values of `data`; the keys are not counted, verified on the
+pinned Kubernetes version in row 43, so the guard below, which counts the keys
+as well, is the conservative reading). That limit is **per object**: the revisions of
 ADR 0009 are separate objects, and old and new together cost etcd space
 (negligible against its quota) but do not share the 1 MiB. Sizes with
 realistic and with worst-case lengths (worst case: a local part of 64 and a
@@ -1580,6 +1616,8 @@ written down from its result, so anyone can repeat it.
 | 40 | The load of the hash on a Dovecot with the worker limit (3b, the MailUser controller) | One `dovecot/dovecot:2.4.5` container, `docker run -m 512m --memory-swap 512m`, the rendered conf (`passdb_use_worker = yes`, `process_limit = 4`) and the passdb of row 39; five rounds in 65 s of 50 parallel failing `doveadm auth test` logins each (`docker exec`), with one correct login started in each round; the memory of the container sampled with `docker stats` about every 2 s | The container used 20.7 MiB before the load, and the **sampled peak was 95.6 MiB** (limit 512 MiB; a sample every 2 s can miss a higher peak); every correct login succeeded, in 8.6 to 15.6 s while the flood ran. The latency was **not analysed**: it is much more than 50 hashes of well under 0.1 s on 4 workers would take, so the 50 parallel `docker exec` clients or the failure delay of the auth service are the likelier causes than the worker limit; this row says nothing about the latency of a real login. One login alone takes well under 0.1 s. **The load-test criterion of section 3, point 4 is not met by this row and remains a 3b done item:** the `memory.peak` of the cgroup (not readable on this host, rootless Docker), IMAP logins, and mail delivered during the flood were not measured. The numbers are of one host and are no guarantee. |
 | 41 | The live users Secret read by Dovecot without a restart, and the latency of the kubelet projection (3b, the `MailServer` serves the `MailUser`s) | e2e suite on kind v0.33.0 with the node image `kindest/node:v1.37.0`, one node, the pinned Dovecot 2.4.5 pod `mail-dovecot-0`; `MailUser`s with `passwordSecretRef`; the account is created, its password Secret patched, and the object deleted, and a SASL login on 587 is repeated every 3 s until it succeeds (or is refused); the pod UID and the restart counts of its containers are compared before and after | Three runs: an added account logged in after **56 s** to **1 min 21 s**, the new password worked after **1 min 3 s** to **1 min 28 s** (the old one was refused 2 s later in the first run), a removed account was refused after **1 min 6 s** to **1 min 22 s**, and a re-enabled one logged in after **21 s** to **42 s**. All accounts had a `passwordSecretRef`; the operator-generated path was not measured. The times include the operator (the object event and its debounce of 3 s; for the password up to the polling interval of one minute), the kubelet sync (1 minute by default) and the cache delay, so they are what a user of that cluster sees, not a bound. The UID and the restart counts of the Dovecot pod did not change: Dovecot re-read the passwd-files after the kubelet swapped the projected directory (the symlink swap and the two files, which row 32 and section 4.7 listed as not verified, work). `doveadm who` in the `dovecot` container reaches the master; `doveadm kick mulate` for an account without a session answers `0 connections kicked`, exit 0. **Not verified:** that `doveadm kick` ends an open IMAP session. Three runs, one node, no load. |
 | 42 | Sender binding, the null sender and the revoked alias domain on a `MailServer` with `MailUser`s (3b) | the same e2e run: an account with the aliases `mailuser@e2etwo.example.org` and `sales@e2etwo.example.org` in a second `MailDomain`; `swaks` through 587 with `--quit-after RCPT` | Postfix judges the sender when it sees the first recipient (`smtpd_delay_reject`), so `MAIL FROM` is answered `250` and the refusal comes with `RCPT TO`: `553 5.7.1` for another account's address, an address nobody owns and a foreign domain, `554 5.7.1` for `MAIL FROM:<>`; a message from each of the three own addresses reached the Mailpit sink. Mail to the three addresses was delivered into one mailbox, once each, read over IMAP by name and by primary address and found in no other mailbox. A disabled account was refused over SASL and IMAP, still received mail, and read it after it was enabled again. Deleting the `MailDomain` of the aliases made them `554 5.7.1` and `553 5.7.1` as senders while the account kept its primary address and its login, also while Postfix was fail closed and the narrowed revision still validated (checked in the last two runs; the live files come from the narrowed render only). The whole suite (50 specs, the MailUser block adds nine) took 1240 s, 1253 s and 1124 s. |
+| 43 | What the API server counts against the 1 MiB of a Secret and a ConfigMap, and the margin of the byte guard (3b, the limits) | envtest with the `kube-apiserver` 1.37.0 of `make test`, spec "the size limit of the API server" in `internal/controller/mailserver_limits_test.go`: a Secret and a ConfigMap with one key `k` and a value of 999,998, 1,048,576 and 1,048,577 bytes | A Secret of 999,999 bytes (key and value, `addresses.ObjectSize`) is accepted. A value of exactly 1,048,576 bytes is accepted, a value of 1,048,577 bytes is refused: `Secret "over" is invalid: data: Too long: may not be more than 1048576 bytes`; the ConfigMap behaves the same. **The API server counts the values only, not the keys** (a one-byte key does not move the limit), so the guard of 1,000,000 bytes over keys and values is the conservative reading, with a margin of 48,576 bytes; the 1 MiB limit is not reached by anything the guard lets through. |
+| 44 | A limit blocks a revision, and what still applies (3b, the limits) | envtest, specs "MailServer limits" in `internal/controller/mailserver_limits_test.go`, the caps lowered through `MailServerReconciler.Limits`; every step after the first block runs in a reconciler that has seen nothing before (nothing is kept in memory) | Over the cap of 3 accounts (5 given) and over the cap of 5 addresses (6 given), and over the byte guard (the live Secret just too large for one account more): `Ready=False` with `UserLimitExceeded`, `AddressLimitExceeded` and `ConfigTooLarge`, the message with the counts, or the live Secret and its size; the pod-template hash of Postfix and the Postfix tables are those of the running revision, no validation Job is created, the new accounts and aliases are in no file; a Warning Event is emitted once. A changed provided password replaces the hash in the passdb file and leaves the userdb file byte-identical; a disabled account loses its passdb lines and keeps its userdb lines and its Postfix entries; a deleted account loses its login and keeps its mailbox lines. When the count falls to the cap the next reconcile applies the whole revision (the new account in the Postfix tables, the removed one gone from userdb). The byte guard does not send the oversized Secret: its `resourceVersion` is unchanged. A first revision that a limit blocks creates no live Secret. No condition or Event holds an address, a domain or a hash. |
 
 
 
