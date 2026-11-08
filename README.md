@@ -18,10 +18,11 @@ published for every release. The project plan and phase status are in
 
 > Mail of authenticated senders is signed with the DKIM keys of the
 > `MailDomain`; a served domain without a usable key defers its outbound
-> mail (`451 4.7.1`) instead of sending it unsigned. Users come only from
-> the static test users (a test feature); a `MailDirectory` is checked for
-> existence but not queried until Phase 3, so recipient validation and login
-> know no other user. Do not send production mail from a CNMS server yet.
+> mail (`451 4.7.1`) instead of sending it unsigned. Users come from a
+> `MailDirectory` (LDAP or PostgreSQL), from `MailUser`s or from the static test
+> users (a test feature), a server has one of the three, and applications send
+> with `MailServiceAccount`s on top of any of them. Do not send production mail
+> from a CNMS server yet.
 
 ## Key properties
 
@@ -34,7 +35,9 @@ published for every release. The project plan and phase status are in
 - No message content in etcd; no MTA is written by the operator.
 - Users come from an external directory (LDAP/SQL first, OIDC later) — the
   operator configures Postfix/Dovecot to query it. Environments without a
-  directory service get operator-managed `MailUser` accounts instead
+  directory service get operator-managed `MailUser` accounts instead, and
+  applications get operator-provided sending credentials with
+  `MailServiceAccount`s
   ([ADR 0008](docs/decisions/0008-user-sources-and-service-accounts.md)).
 - Failures degrade gracefully: filter or lookup outages result in temporary
   failure (4xx) and queueing, not lost mail.

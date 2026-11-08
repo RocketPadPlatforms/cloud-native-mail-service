@@ -179,13 +179,14 @@ Each alias domain signs with the key of its own domain: sending as
 ## Limits
 
 A server serves at most **1,000 accounts** and **5,000 addresses** (the primary
-addresses and the aliases together), and an account has at most 32 aliases (the
-API refuses more). Every ConfigMap and Secret that the operator renders for the
-server, the live Dovecot Secret included, must also hold **less than 1,000,000
-bytes** (keys and values), a margin below the 1 MiB that the API server allows.
-At realistic sizes (25-character addresses) the caps are reached first; with
-very long addresses the byte limit comes first (about 760 accounts in the
-worst case).
+addresses and the aliases together, and the senders of the [service
+accounts](service-accounts.md) of every namespace the server consents to), and
+an account has at most 32 aliases (the API refuses more). Every ConfigMap and
+Secret that the operator renders for the server, the live Dovecot Secret
+included, must also hold **less than 1,000,000 bytes** (keys and values), a
+margin below the 1 MiB that the API server allows. At realistic sizes
+(25-character addresses) the caps are reached first; with very long addresses
+the byte limit comes first (about 760 accounts in the worst case).
 
 Over a limit the server is `Ready=False` with the reason `UserLimitExceeded`,
 `AddressLimitExceeded` or `ConfigTooLarge`; the message gives the counts, or

@@ -1,0 +1,3 @@
+# CNMS-rendered Postfix sender table (smtpd_sender_login_maps) -- do not edit.
+# Source: MailServer tenant1/mail
+app@a.example sa.0123456789abcdef

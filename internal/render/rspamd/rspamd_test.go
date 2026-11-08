@@ -29,6 +29,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/RocketPadPlatforms/cloud-native-mail-service/api/v1alpha1"
+	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/addresses"
 	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/render"
 )
 
@@ -280,7 +281,7 @@ func ownerRequest(t *testing.T) *render.RenderRequest {
 	req := testRequest(t)
 	req.Accounts = []render.Account{
 		{Name: "bob", Address: "Bob@" + domainA, PasswordHash: "{X}b"},
-		{Name: "alice", Address: "alice@" + domainA, PasswordHash: "{X}a", Aliases: []string{"Sales@" + domainB, "alice@" + domainB}},
+		{Name: "alice", Address: "alice@" + domainA, PasswordHash: hashX, Aliases: []string{"Sales@" + domainB, "alice@" + domainB}},
 		{Name: "off", Address: "off@" + domainA, PasswordHash: "{X}o", Disabled: true, Aliases: []string{"off@" + domainB}},
 		{Name: "gone", Address: "gone@revoked.example", PasswordHash: "{X}g", Aliases: []string{"gone@" + domainA}},
 	}
@@ -388,8 +389,35 @@ func TestFromOwnersModeIsRenderedNotInferred(t *testing.T) {
 // An account that the renderer refuses stops the render of the table too.
 func TestFromOwnersRefusesWhatThePlanRefuses(t *testing.T) {
 	req := testRequest(t)
-	req.Accounts = []render.Account{{Name: "a/b", Address: "a@" + domainA, PasswordHash: "{X}a"}}
+	req.Accounts = []render.Account{{Name: "a/b", Address: "a@" + domainA, PasswordHash: hashX}}
 	if _, err := New().Render(req); err == nil {
 		t.Error("an account name with a slash was rendered")
 	}
 }
+
+// The header From of a service account must be its sender (check 2, ADR 0015,
+// sections 4.4 and 4.9): the table of the owners has the row of the envelope
+// table, with the login of the account.
+func TestFromOwnersHaveTheSenderOfAServiceAccount(t *testing.T) {
+	const login = "sa.0123456789abcdef"
+	req := testRequest(t)
+	req.Accounts = []render.Account{{
+		Name: login, PasswordHash: hashX, Address: "app@" + domainA, SendOnly: true,
+		Verdict: addresses.UserResult{Name: login, Rows: []addresses.Row{{
+			Address: "app@" + domainA, Kind: addresses.KindPrimary, Served: true, Reason: addresses.ReasonServed, MaySend: true,
+		}}},
+	}}
+	res, err := New().Render(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(res.DataFiles[render.RspamdOwnersFile], "\napp@"+domainA+" "+login+"\n") {
+		t.Errorf("from_owners:\n%s", res.DataFiles[render.RspamdOwnersFile])
+	}
+	if !strings.Contains(res.ConfigData[render.RspamdLocalLua], `local owners_mode = "on"`) {
+		t.Error("check 2 is not on for a server of the operator")
+	}
+}
+
+// hashX is a password hash of the shape the renderers accept.
+const hashX = "{X}a"

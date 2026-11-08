@@ -109,10 +109,11 @@ spec:
                 description: |-
                   Directory used for recipient validation and user authentication.
                   References a MailDirectory in the same namespace. Optional: a
-                  server without a directory needs another user source, which is
-                  MailUser accounts (ADR 0015) or, for tests,
-                  submission.insecureStaticUsers. Without any user source the
-                  server is not Ready (reason NoUserSource).
+                  server without a directory needs another user source: MailUser
+                  accounts (ADR 0015), for tests submission.insecureStaticUsers, or
+                  MailServiceAccounts that the server accepts, which make it a
+                  send-only server. A server has one of the first three. Without
+                  any user source the server is not Ready (reason NoUserSource).
                 properties:
                   name:
                     description: Name of the referenced resource.

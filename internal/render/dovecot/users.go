@@ -47,7 +47,11 @@ const (
 func renderPassdb(req *render.RenderRequest, plan *render.AccountPlan) string {
 	logins := make([]Login, 0, len(plan.Logins))
 	for _, u := range plan.Logins {
-		logins = append(logins, Login{Address: u.Address, Name: u.Name, Hash: u.PasswordHash})
+		l := Login{Address: u.Address, Name: u.Name, Hash: u.PasswordHash}
+		if u.SendOnly {
+			l.Address = ""
+		}
+		logins = append(logins, l)
 	}
 	return RenderLogins(req.Server, logins)
 }
@@ -65,7 +69,11 @@ func RenderLogins(server *cnmsv1alpha1.MailServer, logins []Login) string {
 	fmt.Fprintf(&b, "# Source: MailServer %s/%s (ADR 0015)\n\n", server.Namespace, server.Name)
 	b.WriteString("# Format: login:password::::::user=<account name>\n")
 	for _, u := range logins {
-		fmt.Fprintf(&b, "%s:%s::::::user=%s\n", u.Address, u.Hash, u.Name)
+		// A service account has no address to log in with: its login is
+		// the name alone (ADR 0015, section 4.9).
+		if u.Address != "" {
+			fmt.Fprintf(&b, "%s:%s::::::user=%s\n", u.Address, u.Hash, u.Name)
+		}
 		fmt.Fprintf(&b, "%s:%s::::::user=%s\n", u.Name, u.Hash, u.Name)
 	}
 	return b.String()

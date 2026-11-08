@@ -136,8 +136,10 @@ func TestDirectorySecretsStayInTheSecret(t *testing.T) {
 			if res.SecretData[tc.file] != tc.secret {
 				t.Errorf("the Secret holds %q as %s", res.SecretData[tc.file], tc.file)
 			}
-			if _, ok := res.SecretData["users"]; ok || strings.Contains(conf, "passwd-file") {
-				t.Error("a directory must not render the passwd-file")
+			// The passwd-file is the logins of the service accounts, a path of
+			// the users Secret and no Secret of the revision.
+			if _, ok := res.SecretData["users"]; ok || strings.Contains(conf, "userdb passwd-file") {
+				t.Error("a directory renders no users Secret and no userdb of the passwd-file")
 			}
 		})
 	}

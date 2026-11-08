@@ -148,6 +148,8 @@ func registerDirectorySpecs() {
 			deadAliases: []string{"stale@" + e2eDomain, "guarded-alias@" + e2eDomain},
 		})
 
+		registerServiceAccountDirectorySpecs() // serviceaccount_test.go
+
 		Context("with a second user source", func() {
 			var runningHash string
 
@@ -217,7 +219,8 @@ func registerDirectorySpecs() {
 			})
 		})
 
-		registerMailUserSpecs() // mailuser_test.go
+		registerMailUserSpecs()       // mailuser_test.go
+		registerServiceAccountSpecs() // serviceaccount_test.go: on the server the MailUser specs leave
 
 		Context("back on PostgreSQL", func() {
 			It("returns the server to the PostgreSQL directory", func() {

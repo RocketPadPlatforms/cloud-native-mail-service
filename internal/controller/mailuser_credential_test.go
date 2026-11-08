@@ -114,6 +114,54 @@ func TestVerifyHash(t *testing.T) {
 	}
 }
 
+// Only the canonical form of the hash is accepted (parseHash). The Secrets of
+// the accounts are in namespaces of tenants, and the hash ends up in a line of a
+// passwd-file: Go's base64 decoder ignores a CR and a LF, so a hash with a
+// newline inside its tag decodes, verifies, and would break the file.
+func TestParseHashIsCanonical(t *testing.T) {
+	ctx := context.Background()
+	salt := "AAECAwQFBgcICQoLDA0ODw"
+	tag := katHash[strings.LastIndex(katHash, "$")+1:]
+	inTag := func(i int, s string) string {
+		return katHash[:len(katHash)-len(tag)] + tag[:i] + s + tag[i:]
+	}
+	for name, stored := range map[string]string{
+		"a newline in the tag":             inTag(10, "\n"),
+		"a carriage return in the tag":     inTag(10, "\r"),
+		"a CRLF in the tag":                inTag(10, "\r\n"),
+		"a newline in the salt":            strings.Replace(katHash, salt, salt[:7]+"\n"+salt[7:], 1),
+		"a carriage return in the salt":    strings.Replace(katHash, salt, salt[:7]+"\r"+salt[7:], 1),
+		"a trailing newline":               katHash + "\n",
+		"a trailing CRLF":                  katHash + "\r\n",
+		"a leading newline":                "\n" + katHash,
+		"a leading blank":                  " " + katHash,
+		"a blank in the tag":               inTag(10, " "),
+		"a tab in the tag":                 inTag(10, "\t"),
+		"a NUL in the tag":                 inTag(10, "\x00"),
+		"a non-ASCII byte in the tag":      inTag(10, "é"),
+		"padding on the tag":               katHash + "=",
+		"bits after the last byte (tag)":   katHash[:len(katHash)-1] + "9",
+		"bits after the last byte (salt)":  strings.Replace(katHash, salt, salt[:21]+"x", 1),
+		"the URL alphabet in the tag":      strings.Replace(katHash, "+", "-", 1),
+		"a character outside the alphabet": inTag(10, "*"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, _, ok := parseHash(stored); ok {
+				t.Errorf("parseHash accepted %q", stored)
+			}
+			if validStoredHash(stored) {
+				t.Errorf("validStoredHash accepted %q", stored)
+			}
+			if got, err := verifyHash(ctx, katPassword, stored); err != nil || got {
+				t.Errorf("verifyHash(%q) = %v, %v; want false", stored, got, err)
+			}
+		})
+	}
+	if _, _, ok := parseHash(katHash); !ok {
+		t.Error("the canonical hash is refused")
+	}
+}
+
 func TestHashPasswordUsesARandomSaltEachTime(t *testing.T) {
 	ctx := context.Background()
 	a, err := hashPassword(ctx, katPassword)

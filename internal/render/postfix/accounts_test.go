@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/RocketPadPlatforms/cloud-native-mail-service/api/v1alpha1"
+	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/addresses"
 	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/directory"
 	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/render"
 )
@@ -453,5 +454,85 @@ func TestDirectorySenderTableIsLimitedToTheAuthorizedDomains(t *testing.T) {
 		if _, err := New().Render(req); err == nil {
 			t.Errorf("the authorized domain %q was accepted", bad)
 		}
+	}
+}
+
+const serviceLogin = "sa.0123456789abcdef"
+
+// serviceAccount is a served service account of the golden files: the sender
+// it owns and the login Dovecot reports.
+func serviceAccount() render.Account {
+	return render.Account{
+		Name: serviceLogin, PasswordHash: "{SHA512-CRYPT}s", Address: "app@" + domainA, SendOnly: true,
+		Verdict: addresses.UserResult{Name: serviceLogin, Rows: []addresses.Row{{
+			Address: "app@" + domainA, Kind: addresses.KindPrimary, Served: true, Reason: addresses.ReasonServed, MaySend: true,
+		}}},
+	}
+}
+
+// A service account owns its sender and nothing else: the sender table has the
+// line, and no recipient table does (it receives nothing, ADR 0015, section 4.9).
+func TestServiceAccountOwnsItsSenderAndReceivesNothing(t *testing.T) {
+	req := accountRequest(t)
+	// Every account of a render has a verdict, or none does.
+	users, lost := render.DecideAccounts(req.Accounts, req.AuthorizedDomains)
+	req.Accounts, req.ConflictedAddresses = append(users, serviceAccount()), lost
+	res, err := New().Render(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(res.ConfigData[senderLoginFile], "\napp@"+domainA+" "+serviceLogin+"\n") {
+		t.Errorf("sender table misses the service account:\n%s", res.ConfigData[senderLoginFile])
+	}
+	for _, f := range []string{vmailboxFile, valiasFile, recipientDeferFile} {
+		if strings.Contains(res.ConfigData[f], "app@"+domainA) || strings.Contains(res.ConfigData[f], serviceLogin) {
+			t.Errorf("%s has the service account:\n%s", f, res.ConfigData[f])
+		}
+	}
+	if !strings.Contains(res.ConfigData["main.cf"], "\nsmtpd_sender_login_maps = texthash:/etc/postfix/sender_login\n") {
+		t.Error("a server of the operator reads the sender table alone")
+	}
+}
+
+// With a directory the sender table is the union of the table of the service
+// accounts and the directory's (ADR 0015, section 4.9, point 3), and only
+// then: without a service account main.cf is the directory's alone.
+func TestDirectorySenderTableIsTheUnionWithServiceAccounts(t *testing.T) {
+	for _, tc := range []struct{ source, member string }{
+		{srcLDAP, "ldap:/etc/postfix-secret/" + ldapSenderFile},
+		{srcPgSQL, "pgsql:/etc/postfix-secret/" + pgsqlSenderFile},
+	} {
+		t.Run(tc.source, func(t *testing.T) {
+			source := ldapSource(nil)
+			if tc.source == srcPgSQL {
+				source = sqlSource(nil)
+			}
+			req := directoryRequest(t, source)
+			plain, err := New().Render(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(plain.ConfigData["main.cf"], "unionmap") || !strings.Contains(plain.ConfigData["main.cf"], "\nsmtpd_sender_login_maps = "+tc.member+"\n") {
+				t.Errorf("without a service account the directory alone:\n%s", plain.ConfigData["main.cf"])
+			}
+
+			req.Accounts = []render.Account{serviceAccount()}
+			res, err := New().Render(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := "\nsmtpd_sender_login_maps = unionmap:{texthash:/etc/postfix/sender_login, " + tc.member + "}\n"
+			if !strings.Contains(res.ConfigData["main.cf"], want) {
+				t.Errorf("main.cf misses %q:\n%s", strings.TrimSpace(want), res.ConfigData["main.cf"])
+			}
+			if !strings.Contains(res.ConfigData[senderLoginFile], "app@"+domainA+" "+serviceLogin+"\n") {
+				t.Errorf("sender table:\n%s", res.ConfigData[senderLoginFile])
+			}
+			if strings.Contains(res.ConfigData[vmailboxFile], "app@") {
+				t.Error("the service account is a recipient")
+			}
+			checkGolden(t, "directory-"+tc.source+"-service.main.cf", res.ConfigData["main.cf"])
+			checkGolden(t, "directory-"+tc.source+"-service.sender_login", res.ConfigData[senderLoginFile])
+		})
 	}
 }

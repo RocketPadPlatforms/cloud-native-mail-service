@@ -268,3 +268,80 @@ func TestPlanAccountsTwoEqualPrimariesAreDeferred(t *testing.T) {
 		t.Errorf("deferred = %v, want %v", p.Deferred, want)
 	}
 }
+
+// sendOnly is the account of a service account: its login, its sender, and
+// the verdict with that one row.
+func sendOnly(login, sender string, served bool) Account {
+	return Account{
+		Name: login, PasswordHash: hashA, Address: sender, SendOnly: true,
+		Verdict: addresses.UserResult{Name: login, Suspended: !served, Rows: []addresses.Row{{
+			Address: sender, Kind: addresses.KindPrimary, Served: served, Reason: addresses.ReasonServed, MaySend: served,
+		}}},
+	}
+}
+
+// A service account owns its sender and logs in; nothing is delivered to it:
+// no mailbox, no alias, no userdb line (ADR 0015, section 4.9).
+func TestPlanAccountsSendOnly(t *testing.T) {
+	const login = "sa.0123456789abcdef"
+	accounts := []Account{sendOnly(login, "app@a.example", true), sendOnly("sa.fedcba9876543210", "gone@a.example", false)}
+	p := plan(t, accounts, authorized, nil)
+	if len(p.Mailboxes) != 0 || len(p.Aliases) != 0 || len(p.Users) != 0 || len(p.Deferred) != 0 {
+		t.Errorf("a service account is delivered to: %+v", p)
+	}
+	if want := []Pair{{"app@a.example", login}}; !reflect.DeepEqual(p.Senders, want) {
+		t.Errorf("senders = %v, want %v", p.Senders, want)
+	}
+	if len(p.Logins) != 1 || p.Logins[0].Name != login {
+		t.Errorf("logins = %v, want the served account alone", p.Logins)
+	}
+}
+
+func TestPlanAccountsSendOnlyRefusals(t *testing.T) {
+	for name, tc := range map[string]struct {
+		account Account
+		want    string
+	}{
+		"a name that is not a service login": {sendOnly("amy", addrAmy, true), "login of a service account"},
+		"a sender with a plus":               {sendOnly("sa.0123456789abcdef", "a+b@a.example", true), "not a valid address"},
+		"a second address": {func() Account {
+			a := sendOnly("sa.0123456789abcdef", addrAmy, true)
+			a.Verdict.Rows = append(a.Verdict.Rows, addresses.Row{Address: addrBob, Kind: addresses.KindAlias, Served: true})
+			return a
+		}(), "more than its sender"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := PlanAccounts([]Account{tc.account}, authorized, nil)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("PlanAccounts() = %v, want an error containing %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// A service account sender takes part in the decision of the static users like
+// any other claim: the user's primary address wins.
+func TestDecideAccountsWithSenders(t *testing.T) {
+	users := []Account{{Name: nmAmy, Address: addrAmy, PasswordHash: hashA}}
+	in := AccountsInputWith(users, authorized, []SenderClaim{
+		{Owner: "ns/one", Local: "AMY", Domain: domA}, {Owner: "ns/two", Local: "app", Domain: domA}, {Owner: "ns/three", Local: "x", Domain: "c.example"},
+	})
+	out, res := DecideAccountsWith(users, in)
+	if len(out[0].Verdict.Rows) == 0 || !out[0].Verdict.Rows[0].Served {
+		t.Fatalf("the user does not keep its address: %+v", out[0].Verdict)
+	}
+	got := map[string]string{}
+	for _, s := range res.Senders {
+		got[s.Owner] = s.Row.Reason
+	}
+	want := map[string]string{"ns/one": addresses.ReasonSenderConflict, "ns/two": addresses.ReasonServed, "ns/three": addresses.ReasonDomainNotAuthorized}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("sender verdicts = %v, want %v", got, want)
+	}
+	if !AccountsInputIsStable(in) {
+		t.Error("the input has the senders of the claims")
+	}
+}
+
+// AccountsInputIsStable is true when the input holds the three senders.
+func AccountsInputIsStable(in addresses.Input) bool { return len(in.Senders) == 3 }

@@ -39,10 +39,8 @@ const (
 
 // Account is one operator-managed account (ADR 0015, section 5). The
 // insecureStaticUsers Secret (Phase 2 test source; see the MailServer
-// docs) is one producer of accounts. PasswordHash is a crypt(3) hash,
-// never a plaintext password.
-//
-// shortcut: no send-only flag yet; the service accounts of 3c add it.
+// docs) is one producer of accounts, and the service accounts are another
+// (SendOnly). PasswordHash is a crypt(3) hash, never a plaintext password.
 type Account struct {
 	// Name is the account name: the login, and the mailbox directory.
 	Name string
@@ -68,6 +66,14 @@ type Account struct {
 	// together with the primary address. They are ignored when Verdict is
 	// set.
 	Aliases []string
+
+	// SendOnly marks the account of a MailServiceAccount (ADR 0015, section
+	// 4.9): Name is its login (the reserved "sa." form), Address the sender
+	// it may send as, and Verdict has that one row. It is a login (passdb,
+	// by the name only) and an owner of the sender (the Postfix sender table
+	// and the Rspamd table of owned From addresses), and nothing else: no
+	// mailbox, no alias, no userdb line, so nothing is ever delivered to it.
+	SendOnly bool
 }
 
 // DirectorySource is the external user directory of a MailServer (a

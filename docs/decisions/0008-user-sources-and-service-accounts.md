@@ -73,13 +73,19 @@ is required today, so a directory-less server cannot be Ready at all.
      for the name to verify the certificate against) and
      `ca.crt` (the CA chain of the server's TLS certificate). Everything an
      application needs is in one mounted Secret; the application needs no
-     extra RBAC.
+     extra RBAC. (Amended by ADR 0015, section 4.9, point 5: `tls` is always
+     `mandatory`, the submission listener takes AUTH only over TLS; the
+     Secret also holds the password hash, for the operator.)
    - `ca.crt` is optional-integration (principle 10): it is omitted with a
      status note when cert-manager is not available.
    - The operator also creates a NetworkPolicy in the application's
      namespace (controller-owned) allowing egress to the server's
      submission Service on port 587; without it the port-25-era default
-     egress floor would block the application.
+     egress floor would block the application. (Amended by ADR 0015,
+     section 4.9, point 6: the policy selects only the pods that carry the
+     label `cnms.rpp.gmbh/mailserviceaccount: <account name>`, because a
+     policy isolates every pod it selects, so the pods of the application
+     must be labelled.)
    - The credential is rendered into the same passdb as a mailbox-less
      (auth-only) user, so it works with or without `mailboxes.enabled`.
      The allowed-sender map binds the credential to `spec.sender`, so the
@@ -89,7 +95,13 @@ is required today, so a directory-less server cannot be Ready at all.
      account name is a reserved form that cannot collide with a user.)
    - When the referenced `MailServer` is deleted, the account reports
      `NotReady` with a clear reason; no finalizer is needed (cross-namespace
-     owner references do not garbage-collect).
+     owner references do not garbage-collect). (Amended by ADR 0015: that
+     reason is `ServerNotFound` for a server of the account's own namespace;
+     a server of another namespace that does not exist gives
+     `NamespaceNotAllowed`, the answer of a server that does not consent, so
+     that a namespace cannot find out whether a server exists elsewhere. The
+     credential and the policy are kept; only a server that exists and does
+     not consent, or a sender that is not authorized, revokes them.)
    - Two CRDs instead of one CRD with a `type` field: the service account
      has materially different ownership semantics (different namespace,
      app-namespace Secret and NetworkPolicy) than a mailbox account.
@@ -167,6 +179,9 @@ yet, so this amends the design before Phase 3:
   only in Secrets (never in the CR or logs); the per-user and per-account
   Secrets are garbage-collected with their CR.
 - How we know it worked: e2e shows a `MailUser` logging in via swaks, an
-  application pod in a second namespace sending with the operator-provided
-  credential Secret, and the account going `NotReady` when the `MailServer`
-  is deleted.
+  pod of an application in a second namespace that mounts the operator-provided
+  credential Secret, verifies the certificate of the server with its `ca.crt`
+  and sends with the credential (amended by ADR 0015, section 9, row 47: the
+  withdrawal of the consent, not the deletion of the `MailServer`, is what the
+  e2e covers; the `NamespaceNotAllowed` and `ServerNotFound` answers are in the
+  unit and envtest specs).

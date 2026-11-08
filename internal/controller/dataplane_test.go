@@ -214,7 +214,7 @@ var _ = Describe("MailServer validation gate", func() {
 
 		It("deletes nothing while a newer change validates, even from a lagging cache", func() {
 			// The cache still shows the converged first revision.
-			stale := freezeWorkloadsG(k8sClient, ns)
+			stale := freezeWorkloadsG(newIndexedClient(k8sClient), ns)
 
 			// The second revision is applied; its pods are not updated.
 			reconcileServerG(r, ns, "mail")

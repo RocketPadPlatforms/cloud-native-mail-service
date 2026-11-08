@@ -232,7 +232,7 @@ func (r *MailServerReconciler) now() time.Time {
 // +kubebuilder:rbac:groups=cnms.rpp.gmbh,resources=mailservers/status,verbs=patch
 // +kubebuilder:rbac:groups=cnms.rpp.gmbh,resources=mailservers/finalizers,verbs=update
 // +kubebuilder:rbac:groups=cnms.rpp.gmbh,resources=maildomains,verbs=get;list;watch
-// +kubebuilder:rbac:groups=cnms.rpp.gmbh,resources=mailusers,verbs=get;list;watch
+// +kubebuilder:rbac:groups=cnms.rpp.gmbh,resources=mailusers;mailserviceaccounts,verbs=get;list;watch
 // +kubebuilder:rbac:groups=cnms.rpp.gmbh,resources=maildirectories,verbs=get;list;watch
 // +kubebuilder:rbac:groups=cnms.rpp.gmbh,resources=maildomaingrants,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=services;persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
@@ -539,6 +539,15 @@ func (r *MailServerReconciler) preflight(ctx context.Context, server *cnmsv1alph
 	if err != nil {
 		return nil, src, err
 	}
+	// The service accounts add to whichever user source the server has (ADR
+	// 0015, section 4.9, point 2): they count for the conflict of sources
+	// nowhere, and for the absence of a source only when the server accepts
+	// one.
+	every, err := r.serverServiceAccounts(ctx, server)
+	if err != nil {
+		return nil, src, err
+	}
+	svc := serviceInput{all: every, accepted: acceptedAccounts(server, every)}
 	// A server has one user source: never pick one silently.
 	if sources := userSourceNames(server, len(mailUsers) > 0); len(sources) > 1 {
 		return &blockedBy{ReasonUserSourceConflict, fmt.Sprintf(
@@ -571,11 +580,12 @@ func (r *MailServerReconciler) preflight(ctx context.Context, server *cnmsv1alph
 			}
 			src.directory = &render.DirectorySource{LDAP: target.ldap, SQL: target.sql}
 		}
-	} else if !staticUsers && len(mailUsers) == 0 {
-		// No directory, no static users and no MailUser (ADR 0015, section
-		// 3, point 7). shortcut: the service accounts of 3c will count too.
+	} else if !staticUsers && len(mailUsers) == 0 && len(svc.accepted) == 0 {
+		// No directory, no static users, no MailUser and no service account
+		// that the server accepts (ADR 0015, section 3, point 7). A server
+		// whose only accounts are service accounts is a send-only server.
 		return &blockedBy{ReasonNoUserSource,
-			"spec.directoryRef is not set and no other user source exists; set directoryRef or create a MailUser"}, src, nil
+			"spec.directoryRef is not set and no other user source exists; set directoryRef or create a MailUser or a MailServiceAccount"}, src, nil
 	}
 	// Outbound modes not implemented yet (fail closed).
 	switch {
@@ -598,14 +608,8 @@ func (r *MailServerReconciler) preflight(ctx context.Context, server *cnmsv1alph
 	if !ok {
 		return &blockedBy{reason, message}, userSource{}, nil
 	}
-	if len(users) > 0 {
-		src.input = render.AccountsInput(users, authorized)
-		src.accounts, src.conflicted = render.DecideAccounts(users, authorized)
-	}
-	if len(mailUsers) > 0 {
-		if src, err = r.mailUserSource(ctx, server, mailUsers, domains, ev); err != nil {
-			return nil, src, err
-		}
+	if src, err = r.accountSource(ctx, server, users, mailUsers, svc, src, domains, ev, authorized); err != nil {
+		return nil, src, err
 	}
 	src.entries = accountEntries(src.accounts)
 	// The counts of ADR 0015, section 4.7: over a cap the new revision is not
@@ -1140,6 +1144,11 @@ func (r *MailServerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// server, which cannot see the Secrets change (ADR 0015, section 7).
 		// The request waits mailUserDebounce so that a burst is one reconcile.
 		Watches(&cnmsv1alpha1.MailUser{}, debounced(r.mapUserServer, mailUserDebounce)).
+		// The service accounts of any namespace that name the server, with no
+		// generation predicate for the same reason: the account controller
+		// writes credentialRevision and admittedSender to its status. The
+		// server writes nothing to an account, so this cannot loop.
+		Watches(&cnmsv1alpha1.MailServiceAccount{}, debounced(r.mapAccountServer, mailUserDebounce)).
 		Watches(&cnmsv1alpha1.MailDomainGrant{}, handler.EnqueueRequestsFromMapFunc(r.mapGrantServers)).
 		// The hostname is unique across namespaces: a server that takes
 		// it, renames or goes away blocks or frees the other claimants.

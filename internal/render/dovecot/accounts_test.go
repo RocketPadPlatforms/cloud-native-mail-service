@@ -166,19 +166,58 @@ func TestAccountsLimitTheAuthWorkers(t *testing.T) {
 
 const hashA = "{SHA512-CRYPT}a"
 
-// A directory checks the password itself (a bind, or a query), so its
-// render has no passwd-file passdb and neither the worker setting nor the
-// worker limit.
-func TestDirectoryHasNoAuthWorkerSettings(t *testing.T) {
-	res, err := New().Render(directoryRequest(t, ldapSource(nil), true))
+// A directory checks the password itself (a bind, or a query), but the logins
+// of the service accounts are lines of the passwd-file, which is asked first
+// (ADR 0015, section 4.9, point 2): the render has that passdb before the
+// directory's, no userdb of the file (a service account has no mailbox), and
+// the worker limit.
+func TestDirectoryAsksThePasswdFileFirst(t *testing.T) {
+	for name, source := range map[string]*render.DirectorySource{"ldap": ldapSource(nil), "sql": sqlSource(nil)} {
+		res, err := New().Render(directoryRequest(t, source, true))
+		if err != nil {
+			t.Fatal(err)
+		}
+		conf := res.ConfigData["dovecot.conf"]
+		file := strings.Index(conf, "passdb passwd-file {\n  passwd_file_path = /etc/dovecot-users/passdb\n  passdb_use_worker = yes\n}\n")
+		dir := strings.Index(conf, "passdb "+name)
+		if file < 0 || dir < 0 || file > dir {
+			t.Errorf("%s: the passwd-file passdb is not before the directory's (%d, %d):\n%s", name, file, dir, conf)
+		}
+		if strings.Contains(conf, "userdb passwd-file") || !strings.Contains(conf, "\nservice auth-worker {\n  process_limit = 4\n}\n") {
+			t.Errorf("%s: a userdb of the file, or no worker limit:\n%s", name, conf)
+		}
+	}
+}
+
+// A service account is a login by its name alone, in the passdb file, and has no
+// userdb line: nothing is delivered to it.
+func TestServiceAccountIsALoginByNameWithoutUserdb(t *testing.T) {
+	const login = "sa.0123456789abcdef"
+	req := testRequest(t, nil)
+	req.Accounts = []render.Account{{
+		Name: login, PasswordHash: hashA, Address: "app@a.example", SendOnly: true,
+		Verdict: addresses.UserResult{Name: login, Rows: []addresses.Row{{
+			Address: "app@a.example", Kind: addresses.KindPrimary, Served: true, Reason: addresses.ReasonServed, MaySend: true,
+		}}},
+	}}
+	res, err := New().Render(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	conf := res.ConfigData["dovecot.conf"]
-	for _, not := range []string{"passdb_use_worker", "auth-worker", "passwd-file"} {
-		if strings.Contains(conf, not) {
-			t.Errorf("a directory render has %q", not)
-		}
+	passdb := res.LiveData[passdbFile]
+	if want := login + ":" + hashA + "::::::user=" + login + "\n"; !strings.Contains(passdb, want) {
+		t.Errorf("passdb misses %q:\n%s", want, passdb)
+	}
+	if strings.Contains(passdb, "app@a.example") {
+		t.Errorf("a service account logs in with its address:\n%s", passdb)
+	}
+	if userdb := res.LiveData[userdbFile]; strings.Contains(userdb, login) || strings.Contains(userdb, "app@a.example") {
+		t.Errorf("a service account is in the userdb:\n%s", userdb)
+	}
+	// ParseLive reads it back as a login with its hash, and no address.
+	live := ParseLive(passdb, res.LiveData[userdbFile])
+	if len(live) != 1 || live[0].Name != login || live[0].Credential != hashA || live[0].Primary != "" || !live[0].CanLogin() {
+		t.Errorf("ParseLive = %+v", live)
 	}
 }
 

@@ -21,8 +21,9 @@ Mail of authenticated senders is signed with the DKIM keys of the
 `MailDomain`; a served domain without a usable key defers its outbound
 mail (`451 4.7.1`) instead of sending it unsigned. Users come from a
 `MailDirectory` (LDAP or PostgreSQL), from `MailUser`s, or from the static
-test users (a test feature); a server has one of the three. Do not send production mail from
-a CNMS server yet.
+test users (a test feature); a server has one of the three, and applications
+send with `MailServiceAccount`s on top of any of them. Do not send production
+mail from a CNMS server yet.
 :::
 
 ## What CNMS gives you
