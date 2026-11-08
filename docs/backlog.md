@@ -118,8 +118,6 @@ Closed for Phase 4 by [ADR 0016](decisions/0016-mailbox-format-and-storage.md):
 
 Parked, with the reason:
 
-- A purge API (a field or a resource that removes a mailbox): the operator never
-  deletes mail, and a runbook step keeps the decision with a person.
 - A managed IMAP Service (a field on `MailServer` that creates a reachable
   Service): the exposure differs per cluster, so the how-to shows a Service of
   your own.
@@ -282,3 +280,6 @@ Parked, with the reason:
 - Tracing.
 - Webmail/UI, billing, multi-cluster federation.
 - IMAP horizontal scaling.
+- A purge API (a field or a resource that removes a mailbox), or any automation
+  of the purge: the operator never deletes mail, and a runbook step keeps the
+  decision with a person (ADR 0016).
