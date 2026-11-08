@@ -52,7 +52,7 @@ the code and the [status conditions](reference/status-conditions.md).
   a login by the name alone, the owner of the sender in the Postfix and Rspamd
   tables, and nothing delivered to it (3c).
 - **Mailboxes (Phase 4):** IMAP, LMTP delivery and the Maildir volume
-  work with the data plane. The mailbox format is proposed in [ADR
+  work with the data plane. The mailbox format is decided in [ADR
   0016](decisions/0016-mailbox-format-and-storage.md); the
   [mailboxes how-to](how-to/mailboxes.md) and the Dovecot failover and purge
   [runbooks](operations/index.md) exist. Open: quota (`spec.mailboxes.quota`
