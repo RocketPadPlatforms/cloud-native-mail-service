@@ -194,6 +194,13 @@ type DataPlane struct {
 	Base []client.Object
 	// Workloads are the StatefulSets and Deployments.
 	Workloads []client.Object
+	// LiveUsers is the Secret with the passdb and userdb files of Dovecot
+	// (ADR 0015, section 4.7). It has a stable name and is updated in place,
+	// outside the config hash: the pods mount the object by name, so a
+	// change of its content is no new revision and no rollout. The
+	// controller writes it before the workloads and outside the validation
+	// gate.
+	LiveUsers *corev1.Secret
 }
 
 // Build produces every object of the data plane of one MailServer.
@@ -225,7 +232,7 @@ func Build(req *render.RenderRequest, renders map[render.Component]*render.Rende
 		r.SecretDigest = secretDigest(req.HashKey, r.SecretData)
 	}
 
-	dp := &DataPlane{}
+	dp := &DataPlane{LiveUsers: LiveUsersSecret(server, renders[render.ComponentDovecot].LiveData)}
 	for _, c := range render.AllComponents() {
 		dp.Configs = append(dp.Configs, configMap(server, c, renders[c]))
 		if s := secret(server, c, renders[c]); s != nil {
@@ -726,5 +733,31 @@ func HashKeySecret(server *cnmsv1alpha1.MailServer, key []byte) *corev1.Secret {
 		},
 		Immutable: new(true),
 		Data:      map[string][]byte{HashKeyData: key},
+	}
+}
+
+// LiveUsersSecretName is the name of the live users Secret of Dovecot (ADR
+// 0015, section 4.7): stable, so that the pods mount it by name and an
+// update of its content needs no rollout.
+func LiveUsersSecretName(server *cnmsv1alpha1.MailServer) string {
+	return render.ServiceName(server.Name, render.ComponentDovecot) + "-users"
+}
+
+// LiveUsersSecret is the mutable Secret with the passdb and userdb files.
+// It is not immutable and not named by its content; the owner reference is
+// set by the controller, which updates it in place with the resourceVersion
+// it read.
+func LiveUsersSecret(server *cnmsv1alpha1.MailServer, files map[string]string) *corev1.Secret {
+	data := make(map[string][]byte, len(files))
+	for k, v := range files {
+		data[k] = []byte(v)
+	}
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      LiveUsersSecretName(server),
+			Namespace: server.Namespace,
+			Labels:    objectLabels(server, render.ComponentDovecot),
+		},
+		Data: data,
 	}
 }

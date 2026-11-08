@@ -20,9 +20,13 @@ import (
 	"context"
 	"slices"
 	"testing"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/util/workqueue"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	cnmsv1alpha1 "github.com/RocketPadPlatforms/cloud-native-mail-service/api/v1alpha1"
 	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/addresses"
@@ -155,7 +159,7 @@ func TestServerAddressInput(t *testing.T) {
 	}
 	in, failures := serverAddressInput(testServerName, users, domains, ev)
 
-	if len(in.Users) != 2 || in.Users[0].Name != apiUserName || in.Users[1].Name != "bob" {
+	if len(in.Users) != 2 || in.Users[0].Name != apiUserName || in.Users[1].Name != userBob {
 		t.Fatalf("users = %+v, want alice and bob", in.Users)
 	}
 	if !in.Users[1].Disabled || in.Users[0].Disabled {
@@ -215,3 +219,47 @@ const (
 	objB = "dom-b"
 	objX = "dom-x"
 )
+
+// The MailServer is woken by its accounts: the one a MailUser names, and for
+// an update the old one as well.
+func TestMapUserServerNamesTheServerOfTheAccount(t *testing.T) {
+	r := &MailServerReconciler{}
+	got := requestKeys(r.mapUserServer(context.Background(), userIn("a", apiUserName, testServerName, objA)))
+	if want := []string{"a/" + testServerName}; !slices.Equal(got, want) {
+		t.Errorf("mapUserServer = %v, want %v", got, want)
+	}
+	if got := r.mapUserServer(context.Background(), userIn("a", apiUserName, "", objA)); len(got) != 0 {
+		t.Errorf("mapUserServer of an account without server = %v, want none", got)
+	}
+	if got := r.mapUserServer(context.Background(), serverIn("a", "s")); len(got) != 0 {
+		t.Errorf("mapUserServer of another kind = %v, want none", got)
+	}
+}
+
+// A burst of events is one request, after the delay, and a status-only update
+// is an event too (no generation predicate: a new credentialRevision is a
+// status write).
+func TestDebouncedEnqueuesOnceAfterTheDelay(t *testing.T) {
+	r := &MailServerReconciler{}
+	h := debounced(r.mapUserServer, 50*time.Millisecond)
+	q := workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[reconcile.Request]())
+	defer q.ShutDown()
+	old, updated := userIn("a", apiUserName, testServerName, objA), userIn("a", apiUserName, testServerName, objA)
+	updated.Status.CredentialRevision = "42"
+	ctx := context.Background()
+	for range 5 {
+		h.Update(ctx, event.UpdateEvent{ObjectOld: old, ObjectNew: updated}, q)
+	}
+	h.Create(ctx, event.CreateEvent{Object: userIn("a", userBob, testServerName, objA)}, q)
+	if q.Len() != 0 {
+		t.Fatalf("the request is queued at once: %d", q.Len())
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for q.Len() == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if q.Len() != 1 {
+		t.Errorf("queue length = %d, want one request for the server", q.Len())
+	}
+}

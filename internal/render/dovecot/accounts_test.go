@@ -44,8 +44,8 @@ func TestRenderPassdbAndUserdb(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		checkGolden(t, "default.passdb", res.SecretData[passdbFile])
-		checkGolden(t, "default.userdb", res.SecretData[userdbFile])
+		checkGolden(t, "default.passdb", res.LiveData[passdbFile])
+		checkGolden(t, "default.userdb", res.LiveData[userdbFile])
 	})
 	t.Run("aliases, disabled and suspended accounts", func(t *testing.T) {
 		req := testRequest(t, nil)
@@ -54,8 +54,8 @@ func TestRenderPassdbAndUserdb(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		checkGolden(t, "accounts.passdb", res.SecretData[passdbFile])
-		checkGolden(t, "accounts.userdb", res.SecretData[userdbFile])
+		checkGolden(t, "accounts.passdb", res.LiveData[passdbFile])
+		checkGolden(t, "accounts.userdb", res.LiveData[userdbFile])
 	})
 }
 
@@ -69,7 +69,7 @@ func TestPassdbAndUserdbDiffer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	passdb, userdb := res.SecretData[passdbFile], res.SecretData[userdbFile]
+	passdb, userdb := res.LiveData[passdbFile], res.LiveData[userdbFile]
 	for _, in := range []string{"alice@a.example:", "alice:", "testuser:"} {
 		if !strings.Contains("\n"+passdb, "\n"+in) {
 			t.Errorf("passdb misses a line for %q", in)
@@ -108,7 +108,7 @@ func TestNoAuthorizedDomainsRendersNoUsers(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, f := range []string{passdbFile, userdbFile} {
-		for line := range strings.Lines(res.SecretData[f]) {
+		for line := range strings.Lines(res.LiveData[f]) {
 			if !strings.HasPrefix(line, "#") && strings.TrimSpace(line) != "" {
 				t.Errorf("%s has a line without an authorized domain: %q", f, line)
 			}

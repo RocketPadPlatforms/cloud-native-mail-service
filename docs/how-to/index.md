@@ -9,6 +9,7 @@ Task-oriented guides:
 - Manual rDNS
 - IP pools
 - [Use an LDAP or PostgreSQL directory](directories.md)
+- [Use MailUsers and aliases](users-and-aliases.md)
 - Relay mode
 - Mailboxes
 - Observability with and without the Prometheus Operator

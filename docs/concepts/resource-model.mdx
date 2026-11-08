@@ -75,9 +75,9 @@ Key spec fields:
   the SPF record of the hostname, which is the HELO identity.
 - `directoryRef` — the `MailDirectory` used for recipient validation and
   authentication. Optional (ADR 0008): without it the server needs another
-  user source, otherwise it is not ready (`NoUserSource`). Until Phase 3
-  only its existence is checked; the users come from the test Secret
-  `submission.insecureStaticUsers`.
+  user source, otherwise it is not ready (`NoUserSource`): `MailUser`s that name
+  the server, or, for tests, `submission.insecureStaticUsers`. A server has one
+  source.
 - `outbound` — exactly one of `direct` (own sending addresses, optionally via
   a `MailIPPoolClaim`) or `relay` (a smart host; the `MailRelay` resource
   arrives with the relay phase).

@@ -534,14 +534,17 @@ func secretFilesVolume(name, secretName string) corev1.Volume {
 	}
 }
 
-// dovecotSecretVolumes is the users volume: the users file or the
-// directory password and CA. A directory without a bind password and CA
-// renders no Secret, so there is nothing to mount.
+// dovecotSecretVolumes are the Secret volumes of Dovecot: the live users
+// Secret, which always exists and is mounted whole (a subPath mount is never
+// updated by the kubelet, ADR 0015, section 4.7), and, for a directory with
+// a bind password or CA, the hash-named Secret of the revision. A directory
+// without either renders no Secret, so there is nothing to mount.
 func dovecotSecretVolumes(server *cnmsv1alpha1.MailServer, r *render.RenderResult) []corev1.Volume {
-	if len(r.SecretData) == 0 {
-		return nil
+	volumes := []corev1.Volume{secretFilesVolume(usersVolumeName, LiveUsersSecretName(server))}
+	if len(r.SecretData) > 0 {
+		volumes = append(volumes, secretFilesVolume(directoryVolumeName, secretName(server, render.ComponentDovecot, r)))
 	}
-	return []corev1.Volume{secretFilesVolume(usersVolumeName, secretName(server, render.ComponentDovecot, r))}
+	return volumes
 }
 
 // postfixSecretVolumes is the volume of the directory tables (they carry
@@ -695,13 +698,17 @@ func tlsMount() corev1.VolumeMount {
 }
 
 // dovecotMounts are the standard Dovecot volume mounts: the rendered
-// configuration (shadowing the image tree), the certificate, the
+// configuration (shadowing the image tree), the live users files, the
+// directory secrets when there are any, the certificate, the
 // shared runtime directory, and the mail volume when storage is
 // enabled.
-func dovecotMounts(withMailVolume, withSecret bool) []corev1.VolumeMount {
-	mounts := []corev1.VolumeMount{{Name: configVolumeName, MountPath: "/etc/dovecot", ReadOnly: true}}
-	if withSecret {
-		mounts = append(mounts, corev1.VolumeMount{Name: usersVolumeName, MountPath: render.DovecotUsersDir, ReadOnly: true})
+func dovecotMounts(withMailVolume, withDirectorySecret bool) []corev1.VolumeMount {
+	mounts := []corev1.VolumeMount{
+		{Name: configVolumeName, MountPath: "/etc/dovecot", ReadOnly: true},
+		{Name: usersVolumeName, MountPath: render.DovecotUsersDir, ReadOnly: true},
+	}
+	if withDirectorySecret {
+		mounts = append(mounts, corev1.VolumeMount{Name: directoryVolumeName, MountPath: render.DovecotSecretDir, ReadOnly: true})
 	}
 	mounts = append(mounts,
 		corev1.VolumeMount{Name: tlsVolumeName, MountPath: dovecotSSLDir(), ReadOnly: true},

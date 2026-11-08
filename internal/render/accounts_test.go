@@ -20,22 +20,27 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/addresses"
 )
 
 const (
-	domA       = "a.example"
-	domB       = "b.example"
-	nmZed      = "zed"
-	nmAmy      = "amy"
-	addrOff    = "off@a.example"
-	hashA      = "{X}a"
-	addrSales  = "sales@b.example"
-	addrAmy    = "amy@a.example"
-	addrShared = "shared@b.example"
-	addrX      = "x@b.example"
-	errClaimed = "claimed by"
-	errBlank   = "blank"
-	errInvalid = "not a valid address"
+	domA         = "a.example"
+	domB         = "b.example"
+	nmZed        = "zed"
+	nmAmy        = "amy"
+	nmBob        = "bob"
+	addrBob      = "bob@a.example"
+	addrAmyUpper = "AMY@a.example"
+	addrOff      = "off@a.example"
+	hashA        = "{X}a"
+	addrSales    = "sales@b.example"
+	addrAmy      = "amy@a.example"
+	addrShared   = "shared@b.example"
+	addrX        = "x@b.example"
+	errClaimed   = "claimed by"
+	errBlank     = "blank"
+	errInvalid   = "not a valid address"
 )
 
 var authorized = []string{domA, domB}
@@ -126,22 +131,18 @@ func TestPlanAccountsRefusals(t *testing.T) {
 		accounts []Account
 		want     string
 	}{
-		"name twice":                 {[]Account{base, {Name: "AMY", Address: "amy2@a.example", PasswordHash: hashA}}, "used twice"},
-		"primary twice":              {[]Account{base, {Name: "amy2", Address: "AMY@a.example", PasswordHash: hashA}}, errClaimed},
-		"alias is another's primary": {[]Account{base, {Name: "bob", Address: "bob@a.example", PasswordHash: hashA, Aliases: []string{addrAmy}}}, errClaimed},
-		"alias twice in one account": {with(func(a *Account) { a.Aliases = []string{addrX, "X@b.example"} }), errClaimed},
-		"alias is the primary":       {with(func(a *Account) { a.Aliases = []string{addrAmy} }), errClaimed},
-		"name with a slash":          {with(func(a *Account) { a.Name = "a/b" }), "not valid"},
-		"empty name":                 {with(func(a *Account) { a.Name = "" }), "not valid"},
-		"hash with a colon":          {with(func(a *Account) { a.PasswordHash = "{X}a:b" }), "must not contain"},
-		"primary with a blank":       {with(func(a *Account) { a.Address = "a b@a.example" }), errBlank},
-		"primary without domain":     {with(func(a *Account) { a.Address = nmAmy }), "exactly one @"},
-		"alias with a newline":       {with(func(a *Account) { a.Aliases = []string{"x\ny@b.example"} }), errBlank},
-		"alias with a comma":         {with(func(a *Account) { a.Aliases = []string{"x,y@b.example"} }), errBlank},
-		"alias with a plus":          {with(func(a *Account) { a.Aliases = []string{"x+y@b.example"} }), errInvalid},
-		"alias with two dots":        {with(func(a *Account) { a.Aliases = []string{"x..y@b.example"} }), errInvalid},
-		"alias with a bad domain":    {with(func(a *Account) { a.Aliases = []string{"x@b_example"} }), errInvalid},
-		"alias too long":             {with(func(a *Account) { a.Aliases = []string{strings.Repeat("x", 65) + "@b.example"} }), errInvalid},
+		"name twice":              {[]Account{base, {Name: "AMY", Address: "amy2@a.example", PasswordHash: hashA}}, "used twice"},
+		"name with a slash":       {with(func(a *Account) { a.Name = "a/b" }), "not valid"},
+		"empty name":              {with(func(a *Account) { a.Name = "" }), "not valid"},
+		"hash with a colon":       {with(func(a *Account) { a.PasswordHash = "{X}a:b" }), "must not contain"},
+		"primary with a blank":    {with(func(a *Account) { a.Address = "a b@a.example" }), errBlank},
+		"primary without domain":  {with(func(a *Account) { a.Address = nmAmy }), "exactly one @"},
+		"alias with a newline":    {with(func(a *Account) { a.Aliases = []string{"x\ny@b.example"} }), errBlank},
+		"alias with a comma":      {with(func(a *Account) { a.Aliases = []string{"x,y@b.example"} }), errBlank},
+		"alias with a plus":       {with(func(a *Account) { a.Aliases = []string{"x+y@b.example"} }), errInvalid},
+		"alias with two dots":     {with(func(a *Account) { a.Aliases = []string{"x..y@b.example"} }), errInvalid},
+		"alias with a bad domain": {with(func(a *Account) { a.Aliases = []string{"x@b_example"} }), errInvalid},
+		"alias too long":          {with(func(a *Account) { a.Aliases = []string{strings.Repeat("x", 65) + "@b.example"} }), errInvalid},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := PlanAccounts(tc.accounts, authorized, nil)
@@ -150,10 +151,13 @@ func TestPlanAccountsRefusals(t *testing.T) {
 			}
 		})
 	}
+	// An alias of another account's primary, the same alias twice and an alias
+	// that is the primary address are decided by addresses.Decide: nothing
+	// reaches a table that is refused here (TestPlanAccountsAppliesTheDecision).
 	// A primary address never loses a conflict (ADR 0015, section 4.2):
 	// a verdict that names one would give a half-served account.
 	t.Run("conflicted address is a primary", func(t *testing.T) {
-		_, err := PlanAccounts([]Account{base}, authorized, []string{"AMY@a.example"})
+		_, err := PlanAccounts([]Account{base}, authorized, []string{addrAmyUpper})
 		if err == nil || !strings.Contains(err.Error(), "never loses") {
 			t.Fatalf("PlanAccounts() = %v, want an error containing %q", err, "never loses")
 		}
@@ -178,5 +182,89 @@ func TestPlanAccountsIsDeterministic(t *testing.T) {
 	in[0], in[1] = in[1], in[0]
 	if second := plan(t, in, []string{domB, domA}, nil); !reflect.DeepEqual(first, second) {
 		t.Errorf("the plan depends on the order of the input:\n%+v\n%+v", first, second)
+	}
+}
+
+// The claims that used to be refused are decided by addresses.Decide: an
+// alias never takes another's primary address, an alias named twice is one,
+// and an alias that is the primary address is the primary address.
+func TestPlanAccountsAppliesTheDecision(t *testing.T) {
+	p := plan(t, []Account{
+		{Name: nmAmy, Address: addrAmy, PasswordHash: hashA, Aliases: []string{addrX, "X@b.example", addrAmy}},
+		{Name: nmBob, Address: addrBob, PasswordHash: hashA, Aliases: []string{addrAmyUpper, addrBob}},
+	}, authorized, nil)
+	if want := []Pair{{addrX, addrAmy}}; !reflect.DeepEqual(p.Aliases, want) {
+		t.Errorf("aliases = %v, want %v", p.Aliases, want)
+	}
+	if want := []Pair{{addrAmy, nmAmy}, {addrBob, nmBob}, {addrX, nmAmy}}; !reflect.DeepEqual(p.Senders, want) {
+		t.Errorf("senders = %v, want %v", p.Senders, want)
+	}
+	if len(p.Deferred) != 0 {
+		t.Errorf("deferred = %v: a lost claim of a lower rank is no conflict", p.Deferred)
+	}
+}
+
+// An account whose verdict is given is served exactly as its rows say; a
+// verdict that two accounts share an address in, or that does not belong to
+// the account, is refused.
+func TestPlanAccountsRefusesAVerdictThatDoesNotFit(t *testing.T) {
+	row := func(addr string, kind addresses.Kind, served bool) addresses.Row {
+		return addresses.Row{Address: addr, Kind: kind, Served: served, MaySend: served}
+	}
+	decided := func(name, primary string, rows ...addresses.Row) Account {
+		return Account{Name: name, Address: primary, PasswordHash: hashA, Verdict: addresses.UserResult{
+			Name: name, Rows: append([]addresses.Row{row(primary, addresses.KindPrimary, true)}, rows...)}}
+	}
+	for name, tc := range map[string]struct {
+		accounts []Account
+		want     string
+	}{
+		"an alias served twice": {[]Account{
+			decided(nmAmy, addrAmy, row(addrX, addresses.KindAlias, true)),
+			decided(nmBob, addrBob, row(addrX, addresses.KindAlias, true)),
+		}, errClaimed},
+		"a verdict of another primary": {[]Account{decided(nmAmy, "other@a.example")}, ""},
+		"some accounts undecided": {[]Account{
+			decided(nmAmy, addrAmy),
+			{Name: nmBob, Address: addrBob, PasswordHash: hashA},
+		}, "no verdict"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if name == "a verdict of another primary" {
+				tc.accounts[0].Address = addrAmy // the row says other@
+			}
+			_, err := PlanAccounts(tc.accounts, authorized, nil)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("PlanAccounts() = %v, want an error containing %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// An account without a password hash has no login and still receives mail:
+// its credential may be missing for a while, and mail must not be lost.
+func TestPlanAccountsWithoutAHashKeepsReceiving(t *testing.T) {
+	p := plan(t, []Account{{Name: nmAmy, Address: addrAmy}, {Name: nmBob, Address: addrBob, PasswordHash: hashA}}, authorized, nil)
+	if got := names(p.Logins); !reflect.DeepEqual(got, []string{nmBob}) {
+		t.Errorf("logins = %v, want only the account with a hash", got)
+	}
+	if want := []string{addrAmy, addrBob}; !reflect.DeepEqual(p.Mailboxes, want) {
+		t.Errorf("mailboxes = %v, want %v", p.Mailboxes, want)
+	}
+}
+
+// The same primary address twice is a tie of the decision (two objects that
+// name one DNS name): both lose, nothing is served, the address is deferred,
+// and the render does not fail.
+func TestPlanAccountsTwoEqualPrimariesAreDeferred(t *testing.T) {
+	p := plan(t, []Account{
+		{Name: nmAmy, Address: addrAmy, PasswordHash: hashA},
+		{Name: "amy2", Address: addrAmyUpper, PasswordHash: hashA},
+	}, authorized, nil)
+	if len(p.Mailboxes) != 0 || len(p.Senders) != 0 {
+		t.Errorf("mailboxes %v, senders %v: a tied primary address is served by nobody", p.Mailboxes, p.Senders)
+	}
+	if want := []string{addrAmy}; !reflect.DeepEqual(p.Deferred, want) {
+		t.Errorf("deferred = %v, want %v", p.Deferred, want)
 	}
 }

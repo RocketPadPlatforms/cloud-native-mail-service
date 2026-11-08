@@ -85,12 +85,13 @@ type hashKeyFunc func() ([]byte, error)
 // object set.
 func renderDataPlane(server *cnmsv1alpha1.MailServer, authorized []string, hostname string, src userSource, keys []render.DomainKeys, hashKey hashKeyFunc) (*manifests.DataPlane, error) {
 	req := &render.RenderRequest{
-		Server:            server,
-		AuthorizedDomains: authorized,
-		Hostname:          hostname,
-		Accounts:          src.accounts,
-		Directory:         src.directory,
-		DKIMKeys:          keys,
+		Server:              server,
+		AuthorizedDomains:   authorized,
+		Hostname:            hostname,
+		Accounts:            src.accounts,
+		ConflictedAddresses: src.conflicted,
+		Directory:           src.directory,
+		DKIMKeys:            keys,
 	}
 	renders := make(map[render.Component]*render.RenderResult, len(render.AllComponents()))
 	for _, renderer := range []render.EngineRenderer{
@@ -120,7 +121,7 @@ func renderDataPlane(server *cnmsv1alpha1.MailServer, authorized []string, hostn
 // workloads only when every validation Job for a changed
 // configuration succeeded. A rejected or running validation leaves
 // the existing workloads untouched (fail closed, ADR 0009).
-func (r *MailServerReconciler) applyDataPlane(ctx context.Context, server *cnmsv1alpha1.MailServer, authorized []string, hostname string, src userSource, keys []render.DomainKeys, certCRDs bool) (*gate, error) {
+func (r *MailServerReconciler) applyDataPlane(ctx context.Context, server *cnmsv1alpha1.MailServer, authorized []string, hostname string, src userSource, keys []render.DomainKeys, certCRDs, writeLive bool) (*gate, error) {
 	plane, err := renderDataPlane(server, authorized, hostname, src, keys, func() ([]byte, error) {
 		return r.hashKey(ctx, server)
 	})
@@ -132,6 +133,20 @@ func (r *MailServerReconciler) applyDataPlane(ctx context.Context, server *cnmsv
 	for _, obj := range plane.Configs {
 		if err := createOwned(ctx, r.Client, r.APIReader, r.Scheme, server, obj); err != nil {
 			return nil, fmt.Errorf("create %T %s: %w", obj, obj.GetName(), err)
+		}
+	}
+	// The live users of Dovecot are written now, before the workloads and
+	// outside the validation gate: they are no revision (ADR 0015, section
+	// 4.7). A removed or disabled account loses its login as soon as the
+	// kubelet has projected the Secret; the Postfix maps follow with the
+	// validated rollout, and mail that Postfix still accepts for a removed
+	// user is deferred by soft_bounce on the lmtp service. Only the render
+	// that is meant to run writes it (writeLive): the fail-closed fallback of
+	// a revocation (applyGuarded) must not empty the logins of the accounts
+	// whose domains are still authorized.
+	if writeLive && plane.LiveUsers != nil {
+		if err := r.applyLiveUsers(ctx, server, plane.LiveUsers, true); err != nil {
+			return nil, fmt.Errorf("apply Secret %s: %w", plane.LiveUsers.Name, err)
 		}
 	}
 	for _, obj := range plane.Base {
@@ -304,6 +319,7 @@ func (r *MailServerReconciler) cleanupStale(ctx context.Context, server *cnmsv1a
 		keep[v.Job.Name] = true
 	}
 	keep[manifests.HashKeySecretName(server)] = true
+	keep[manifests.LiveUsersSecretName(server)] = true
 	for _, c := range render.AllComponents() {
 		name := render.ServiceName(server.Name, c)
 		key := types.NamespacedName{Name: name, Namespace: server.Namespace}

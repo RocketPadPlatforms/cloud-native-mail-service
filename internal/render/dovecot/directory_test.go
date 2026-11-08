@@ -130,7 +130,7 @@ func TestDirectorySecretsStayInTheSecret(t *testing.T) {
 					t.Errorf("dovecot.conf holds %q", leak)
 				}
 			}
-			if !strings.Contains(conf, "<"+render.DovecotUsersDir+"/"+tc.file+"\n") {
+			if !strings.Contains(conf, "<"+render.DovecotSecretDir+"/"+tc.file+"\n") {
 				t.Errorf("the password is not read from %s:\n%s", tc.file, conf)
 			}
 			if res.SecretData[tc.file] != tc.secret {
@@ -151,7 +151,7 @@ func TestDirectoryLDAPVariants(t *testing.T) {
 		files  []string
 	}{
 		"StartTLS with a CA": {
-			want:  []string{"ldap_uris = ldap://ldap.example.com:389\n", "ldap_starttls = yes\n", "ssl_client_ca_file = /etc/dovecot-users/ca.crt\n", "ldap_auth_dn = \"cn=lookup,ou=services,dc=example,dc=org\"\n"},
+			want:  []string{"ldap_uris = ldap://ldap.example.com:389\n", "ldap_starttls = yes\n", "ssl_client_ca_file = /etc/dovecot-secret/ca.crt\n", "ldap_auth_dn = \"cn=lookup,ou=services,dc=example,dc=org\"\n"},
 			files: []string{caFile, ldapPasswordFile},
 		},
 		"LDAPS": {
@@ -228,7 +228,7 @@ func TestDirectoryPgSQLVariants(t *testing.T) {
 		files  []string
 	}{
 		"verify-full with a CA": {
-			want:  []string{"    sslmode = verify-full\n", "    sslrootcert = /etc/dovecot-users/ca.crt\n", "    password = </etc/dovecot-users/sql-password\n"},
+			want:  []string{"    sslmode = verify-full\n", "    sslrootcert = /etc/dovecot-secret/ca.crt\n", "    password = </etc/dovecot-secret/sql-password\n"},
 			files: []string{caFile, sqlPasswordFile},
 		},
 		"verify-full without a CA": {
@@ -238,7 +238,7 @@ func TestDirectoryPgSQLVariants(t *testing.T) {
 		},
 		"require with a CA": {
 			mutate: func(s *directory.SQLTarget) { s.TLSMode = directory.SQLRequire },
-			want:   []string{"    sslmode = require\n", "    sslrootcert = /etc/dovecot-users/ca.crt\n"},
+			want:   []string{"    sslmode = require\n", "    sslrootcert = /etc/dovecot-secret/ca.crt\n"},
 			files:  []string{caFile, sqlPasswordFile},
 		},
 		"require without a CA": {

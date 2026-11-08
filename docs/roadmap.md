@@ -38,9 +38,10 @@ the code and the [status conditions](reference/status-conditions.md).
   ServiceMonitors when the Prometheus Operator CRDs exist.
 - **Users (Phase 3, 3a):** a `directoryRef` (LDAP or PostgreSQL) feeds
   recipient validation, aliases and logins in Postfix and Dovecot; the
-  static test users (`--enable-insecure-test-features`) are the only other
+  static test users (`--enable-insecure-test-features`) are another
   source, and a server has one source (`UserSourceConflict`). The
-  `MailUser` API exists (3b), but nothing reads it yet. The envelope
+  `MailUser`s are the third: the server renders their addresses, passwords
+  and aliases (3b). The envelope
   sender of an authenticated user is bound to the addresses it owns, for
   static users and directory users alike (3b); the header From binding for
   operator-managed accounts and `MailServiceAccount` are not there yet.

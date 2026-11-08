@@ -26,15 +26,17 @@ import (
 	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/addresses"
 )
 
-// PlanAccounts applies the verdict of addresses.Decide: the two must agree
-// on who receives, who may send, who logs in and what answers 450. These
-// tests feed the verdict of Decide to PlanAccounts, as the MailServer
-// controller will, and compare the two on scenarios and on random servers.
+// PlanAccounts applies the verdict of addresses.Decide and decides nothing:
+// the plan must equal what the rows of the verdict say about who receives,
+// who may send, who logs in and what answers 450. These tests give the
+// accounts of NewAccounts (the verdict attached, as the MailServer controller
+// does) to PlanAccounts, and compare the plan with the rows on scenarios and
+// on random servers.
 
 func domainStates() map[string]addresses.Domain {
 	return map[string]addresses.Domain{
 		"dom-a":   {Name: domA, State: addresses.DomainOK},
-		"dom-b":   {Name: "b.example", State: addresses.DomainOK},
+		"dom-b":   {Name: domB, State: addresses.DomainOK},
 		"dom-rev": {Name: "rev.example", State: addresses.DomainNotAuthorized},
 		"dom-oth": {Name: "oth.example", State: addresses.DomainNotServed},
 	}
@@ -58,7 +60,7 @@ func consistent(t *testing.T, label string, in addresses.Input) {
 			authorized = append(authorized, d.Name)
 		}
 	}
-	accounts := make([]Account, 0, len(res.Users))
+	accounts := NewAccounts(res, in.Users, func(string) string { return "{X}h" })
 	wantMailboxes := make([]string, 0, len(res.Users))
 	wantLogins := make([]string, 0, len(res.Users))
 	wantUsers := make([]string, 0, len(res.Users))
@@ -66,10 +68,6 @@ func consistent(t *testing.T, label string, in addresses.Input) {
 	for _, u := range res.Users {
 		src := in.Users[indexOf(in.Users, u.Name)]
 		primary := u.Rows[0]
-		accounts = append(accounts, Account{
-			Name: u.Name, PasswordHash: "{X}h", Address: primary.Address,
-			Aliases: u.Aliases(), Disabled: src.Disabled,
-		})
 		wantUsers = append(wantUsers, u.Name)
 		if !u.Suspended && !src.Disabled {
 			wantLogins = append(wantLogins, u.Name)
@@ -196,3 +194,36 @@ func TestPlanAccountsAgreesOnRandomServers(t *testing.T) {
 		consistent(t, "seed "+strconv.Itoa(int(seed)), addresses.Input{Users: users, Senders: senders, Domains: domains})
 	}
 }
+
+// An account whose primary domain does not exist has a primary row named
+// after the reference of the missing MailDomain. When that text is an address
+// that another account serves as an alias (a MailDomain of that name exists
+// for a different object), the unserved row is no claim: the render of the
+// others does not fail, and the address stays with the account that serves it.
+func TestPlanAccountsAnUnservedPrimaryClaimsNothing(t *testing.T) {
+	in := addresses.Input{
+		Users: []addresses.User{
+			au("alice", "b.example", false), // no MailDomain object of that name
+			au("bob", "dom-a", false, aa("alice", "dom-b")),
+		},
+		Domains: domainStates(),
+	}
+	res := addresses.Decide(in)
+	accounts := NewAccounts(res, in.Users, func(string) string { return "{X}h" })
+	if got := res.Users[0].Rows[0]; got.Address != addrAliceB || got.Served {
+		t.Fatalf("setup: the primary row of alice = %+v, want an unserved alice@b.example", got)
+	}
+	p, err := PlanAccounts(accounts, []string{domA, "b.example"}, res.Conflicted)
+	if err != nil {
+		t.Fatalf("PlanAccounts() = %v: one unserved primary must not fail the render", err)
+	}
+	if want := []Pair{{addrAliceB, "bob@" + domA}}; !slices.Equal(p.Aliases, want) {
+		t.Errorf("aliases = %v, want %v", p.Aliases, want)
+	}
+	// The conflicted case: the same text is in the conflicted set.
+	if _, err := PlanAccounts(accounts, []string{domA, "b.example"}, []string{addrAliceB}); err != nil {
+		t.Errorf("PlanAccounts() with the text conflicted = %v, want no error", err)
+	}
+}
+
+const addrAliceB = "alice@" + domB

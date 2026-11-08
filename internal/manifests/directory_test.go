@@ -180,10 +180,11 @@ func TestConfigHashCoversTheEnvironment(t *testing.T) {
 	}
 }
 
-// A directory without a bind password and CA renders no Dovecot Secret: no
-// users volume and no mount, instead of a reference to a Secret that does
-// not exist. Without a directory the users Secret is mounted as before.
-func TestDovecotUsersVolumeFollowsTheSecret(t *testing.T) {
+// A directory without a bind password and CA renders no hash-named Dovecot
+// Secret: no directory volume and no mount, instead of a reference to a Secret
+// that does not exist. The live users Secret is always mounted, whatever the
+// user source (ADR 0015, section 4.7).
+func TestDovecotDirectoryVolumeFollowsTheSecret(t *testing.T) {
 	for name, tc := range map[string]struct {
 		d    *render.DirectorySource
 		want bool
@@ -195,11 +196,14 @@ func TestDovecotUsersVolumeFollowsTheSecret(t *testing.T) {
 			dp := buildWithDirectory(t, tc.d)
 			sts := find(t, slices.Concat(dp.Configs, dp.Workloads), kindStatefulSet, "mail-dovecot").(*appsv1.StatefulSet)
 			spec := sts.Spec.Template.Spec
-			if got := volumeByName(spec.Volumes, usersVolumeName) != nil; got != tc.want {
-				t.Errorf("users volume present = %v, want %v", got, tc.want)
+			if got := volumeByName(spec.Volumes, directoryVolumeName) != nil; got != tc.want {
+				t.Errorf("directory volume present = %v, want %v", got, tc.want)
 			}
-			if got := mountByName(spec.Containers[0].VolumeMounts, usersVolumeName) != nil; got != tc.want {
-				t.Errorf("users mount present = %v, want %v", got, tc.want)
+			if m := mountByName(spec.Containers[0].VolumeMounts, directoryVolumeName); (m != nil) != tc.want || (m != nil && m.MountPath != render.DovecotSecretDir) {
+				t.Errorf("directory mount = %+v, want present %v at %s", m, tc.want, render.DovecotSecretDir)
+			}
+			if volumeByName(spec.Volumes, usersVolumeName) == nil || mountByName(spec.Containers[0].VolumeMounts, usersVolumeName) == nil {
+				t.Error("the live users volume is not mounted")
 			}
 			if !tc.want {
 				for _, o := range dp.Configs {
@@ -210,11 +214,11 @@ func TestDovecotUsersVolumeFollowsTheSecret(t *testing.T) {
 			}
 		})
 	}
-	// The static case keeps its volume.
+	// Users without a directory have no directory volume, and keep the live one.
 	dp := buildPlane(t, nil, []render.Account{{Name: "u", PasswordHash: "{SHA512-CRYPT}z", Address: "u@" + domainA}})
 	sts := find(t, slices.Concat(dp.Configs, dp.Workloads), kindStatefulSet, "mail-dovecot").(*appsv1.StatefulSet)
-	if volumeByName(sts.Spec.Template.Spec.Volumes, usersVolumeName) == nil {
-		t.Error("the users volume is gone for static users")
+	if volumeByName(sts.Spec.Template.Spec.Volumes, usersVolumeName) == nil || volumeByName(sts.Spec.Template.Spec.Volumes, directoryVolumeName) != nil {
+		t.Error("the users volumes are wrong for static users")
 	}
 }
 
@@ -275,29 +279,34 @@ func pgSecretFiles(s *corev1.Secret) map[string]string {
 func TestBuildNeedsAHashKey(t *testing.T) {
 	server := testServer(t, nil)
 	req := &render.RenderRequest{Server: server, AuthorizedDomains: []string{domainA}, Hostname: testHostname,
-		Accounts: []render.Account{{Name: "alice", PasswordHash: testCryptHash, Address: "alice@" + domainA}}}
-	renders := map[render.Component]*render.RenderResult{}
-	for _, r := range []render.EngineRenderer{postfix.New(), rspamd.New(), dovecot.New(), valkey.New()} {
-		res, err := r.Render(req)
-		if err != nil {
-			t.Fatal(err)
+		Directory: ldapDirectory(false)}
+	build := func() error {
+		renders := map[render.Component]*render.RenderResult{}
+		for _, r := range []render.EngineRenderer{postfix.New(), rspamd.New(), dovecot.New(), valkey.New()} {
+			res, err := r.Render(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			renders[r.Component()] = res
 		}
-		renders[r.Component()] = res
+		_, err := Build(req, renders)
+		return err
 	}
-	if _, err := Build(req, renders); err == nil {
+	if err := build(); err == nil {
 		t.Error("Build accepted secret files without a hash key")
+	}
+
+	// The password hashes of the accounts are live data, outside the
+	// revision: they need no key either.
+	req.Directory = nil
+	req.Accounts = []render.Account{{Name: "alice", PasswordHash: testCryptHash, Address: "alice@" + domainA}}
+	if err := build(); err != nil {
+		t.Errorf("Build needs a hash key for accounts: %v", err)
 	}
 
 	// Without secret content there is nothing to key: no key is needed.
 	req.Accounts = nil
-	for _, r := range []render.EngineRenderer{postfix.New(), rspamd.New(), dovecot.New(), valkey.New()} {
-		res, err := r.Render(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		renders[r.Component()] = res
-	}
-	if _, err := Build(req, renders); err != nil {
+	if err := build(); err != nil {
 		t.Errorf("Build needs a hash key for a render without secret content: %v", err)
 	}
 }

@@ -130,7 +130,7 @@ var _ = Describe("MailUser Controller", func() {
 	source := func(name, password string) {
 		Expect(k8sClient.Create(ctx, &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
-			Data:       map[string][]byte{"password": []byte(password)},
+			Data:       map[string][]byte{keyPassword: []byte(password)},
 		})).To(Succeed())
 	}
 	cond := func(u *cnmsv1alpha1.MailUser, t string) *metav1.Condition {
@@ -515,7 +515,7 @@ var _ = Describe("MailUser Controller", func() {
 			Expect(cond(bob, conditionReady).Status).To(Equal(metav1.ConditionTrue))
 
 			By("bob gives the alias up: alice has it")
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: ns, Name: "bob"}, bob)).To(Succeed())
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: ns, Name: userBob}, bob)).To(Succeed())
 			bob.Spec.Aliases = nil
 			Expect(k8sClient.Update(ctx, bob)).To(Succeed())
 			reconcile("bob")

@@ -76,8 +76,8 @@ ldap_uris = ldap://ldap.example.com:389
 ldap_starttls = yes
 ldap_base = "ou=people,dc=example,dc=org"
 ldap_auth_dn = "cn=lookup,ou=services,dc=example,dc=org"
-ldap_auth_dn_password = </etc/dovecot-users/ldap-password
-ssl_client_ca_file = /etc/dovecot-users/ca.crt
+ldap_auth_dn_password = </etc/dovecot-secret/ldap-password
+ssl_client_ca_file = /etc/dovecot-secret/ca.crt
 passdb ldap {
   bind = yes
   filter = "(&(&(objectClass=PostfixBookMailAccount)(mailEnabled=TRUE))(|(uid=%{user})(mail=%{user}))(uid=*)(mail=*)(!(uid=.*))(!(uid=*/*))(!(uid=sa.*)))"

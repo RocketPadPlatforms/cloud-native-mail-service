@@ -250,7 +250,8 @@ func TestFailClosedRenderHasEmptyAccountTables(t *testing.T) {
 
 // The values of the accounts reach files that Postfix parses by blanks
 // and lines. The renderer refuses what would split a line or start a
-// new one, and an address that two accounts claim.
+// new one. An address that two accounts claim is no input to refuse: the
+// decision of addresses.Decide gives it to one of them or defers it.
 func TestRenderRefusesUnsafeAddresses(t *testing.T) {
 	for name, a := range map[string][]render.Account{
 		"blank in an alias":      {{Name: "u", PasswordHash: hashA, Address: "u@" + domainA, Aliases: []string{"a b@" + domainB}}},
@@ -259,14 +260,6 @@ func TestRenderRefusesUnsafeAddresses(t *testing.T) {
 		"comment in an alias":    {{Name: "u", PasswordHash: hashA, Address: "u@" + domainA, Aliases: []string{"#x@" + domainB}}},
 		"plus in an alias":       {{Name: "u", PasswordHash: hashA, Address: "u@" + domainA, Aliases: []string{"a+b@" + domainB}}},
 		"two dots in an alias":   {{Name: "u", PasswordHash: hashA, Address: "u@" + domainA, Aliases: []string{"a..b@" + domainB}}},
-		"alias is a primary": {
-			{Name: "u", PasswordHash: hashA, Address: "u@" + domainA},
-			{Name: "v", PasswordHash: hashA, Address: "v@" + domainA, Aliases: []string{"u@" + domainA}},
-		},
-		"alias claimed twice": {
-			{Name: "u", PasswordHash: hashA, Address: "u@" + domainA, Aliases: []string{"s@" + domainB}},
-			{Name: "v", PasswordHash: hashA, Address: "v@" + domainA, Aliases: []string{"S@" + domainB}},
-		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			req := accountRequest(t)

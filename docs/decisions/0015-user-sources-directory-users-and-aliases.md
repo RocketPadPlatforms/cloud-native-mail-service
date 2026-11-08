@@ -4,7 +4,12 @@
   Postfix image, the `activeFilter` rename, the `MailDirectory` controller,
   the render seam and the directory maps, `UserSourceConflict` with the e2e
   fixtures); the Rspamd header `From` check 1 is delivered ahead of 3a in its
-  own pull request (#40); 3b and 3c are not
+  own pull request (#40); 3b is under way (the `MailUser` API, the controller,
+  the address decision and the sender binding are there, and the `MailServer`
+  serves the `MailUser`s with the live Dovecot Secret of section 4.7; the
+  limits of section 4.7, the Rspamd check 2 and the load test of section 3,
+  point 4 (cgroup `memory.peak`, delivery during the flood) are not done);
+  3c is not
 - **Date:** 2026-11-06
 
 ## Context
@@ -767,6 +772,50 @@ passwd-files an explicit exception:
 - **The cleanup of ADR 0009** deletes Secrets that are neither referenced
   nor in the desired set; the users Secret is in the desired set and is
   created before the first workload (empty files are valid).
+- **Implementation of the live Secret (3b).** The `MailServer` controller
+  writes `<server>-dovecot-users` with the `resourceVersion` it read (a
+  conflict retries the reconcile), **before** the validation gate and the
+  workloads and whether or not the gate passes, because the files need no
+  validation: a user is added, changed or removed in the same reconcile that
+  sees it. The order against Postfix is therefore *Dovecot first*: a new
+  user is known to Dovecot (after the projection) before the validated
+  Postfix revision accepts mail for it; for a removed or disabled user the
+  login goes with the projection and Postfix follows with the rollout, and
+  `soft_bounce` defers the mail it still accepts. The directory password and
+  CA are not in this Secret: they stay in the hash-named Secret of the
+  revision and are mounted at `/etc/dovecot-secret` (the path named in 4.8,
+  point 6); only the `passdb` and `userdb` files are live. The Secret is
+  rendered whatever the user source is (a directory leaves it without a
+  line), so the pod always has the mount. The fail-closed render writes it
+  empty. A server whose last `MailUser` is gone has no user source
+  (`NoUserSource`, the running Postfix revision stays) and gets the empty
+  files as well: a removed account must not keep its login. A `MailUser` event
+  reaches the server after a debounce of three seconds (the delaying queue
+  keeps one entry per key), and the watch has no generation predicate.
+  An account whose credential Secret is missing or does not hold a hash of the
+  form the operator writes is left out of the passdb file and stays in the
+  userdb file and the Postfix maps: it cannot log in, and its mail is delivered.
+  **The live Secret follows only the render that is meant to run.** The
+  fail-closed fallback that Postfix gets while a narrowed revision (one domain
+  revoked) validates does not write it: the accounts of the domains that stay
+  authorized keep their logins, and only the revoked addresses leave the
+  maps (section 4.6, per address). Only a real fail-closed render (no
+  authorized domain, or a block with a domain still served) writes it empty.
+  **While the server is blocked for another reason** (a render error,
+  `UserSourceConflict`, `DirectoryInvalid`, `ClusterIssuerNotAllowed`, relay,
+  IP pool claim) the live Secret is not written either: an account that is
+  disabled or deleted meanwhile keeps its login until the block clears. The
+  rule "logins are never blocked" below is for the limit blocks only, and is
+  not implemented yet; extending it to every block is in the backlog. A
+  conflict on the update (another writer) is not an error: the reconcile
+  requeues after a second and leaves `Ready` alone.
+  **Known limits, not covered by user docs.** The Secret is written before the
+  gate; above 1 MiB the API server refuses the update and the rollout is
+  blocked until the byte guard of the next commit refuses the render first.
+  That a running Dovecot pod keeps the files it last got when the Secret is
+  deleted is expected of the kubelet and **not verified**; a pod that is
+  rescheduled meanwhile cannot start until the Secret is written again by the
+  next reconcile (Secrets are not watched).
 - **Alternative: restart.** One restart-based rollout per user change is the
   design this replaces. It stays in the backlog as the option for clusters
   that cannot grant `update`.
@@ -1529,6 +1578,8 @@ written down from its result, so anyone can repeat it.
 | 38 | The `domain` parameter of the sender tables (3b, the account tables) | The rendered `ldap-sender.cf` and `pgsql-sender.cf` with `domain = a.example, b.example`, the `587` entry of the rendered `master.cf` and the Postfix image of row 31; the fixtures of rows 34 and 35 extended with the alias `alice@c.example` of `alice` (LDAP `mailAlias`, a row of the aliases relation) and an account `dave` with `dave@c.example`; Dovecot 2.4.5 with a passwd-file passdb for `alice` as the SASL backend (the login name equals the login of the directory); `AUTH PLAIN` as `alice`, `MAIL FROM` / `RCPT` (the check runs at `RCPT`); the same with the `domain` line deleted (control); the directory stopped; `postmap -q` against the stopped directory | With the line: `alice@a.example` and `sales@b.example` pass the sender check; `alice@c.example`, which the directory gives to `alice` but in a domain the server does not serve, and `dave@c.example` are `553 5.7.1 ... not owned by user alice`, for LDAP and PostgreSQL. Control without the line: `alice@c.example` passes (the gap). With the directory stopped, `alice@c.example` is still `553` and `postmap -q` of it prints no connection warning (the directory is not asked), while `alice@a.example` is `451 4.3.0` and `postmap -q` warns that it cannot contact the server (LDAP) or resolve the host (PostgreSQL). The fail-closed render has no authorized domain, no submission and no sender table (`TestDirectoryOnlyWhereRead`); a domain name that is not a plain name (a path, a list, a blank) is refused by the renderer. |
 | 39 | A hash made by the Go code, read by Dovecot (3b, the MailUser controller) | The hash of `hashWithSalt("correct horse battery", 00 01 ... 0f)` of `internal/controller/mailuser_credential.go` (`{ARGON2ID}$argon2id$v=19$m=19456,t=2,p=1$AAECAwQFBgcICQoLDA0ODw$quyusfeeuAGbpiw09i+j4VKJ+I/5h3mugd4HghmS/x8`, 107 bytes); in the pinned `dovecot/dovecot:2.4.5` image `doveadm pw -t '<hash>' -p '<password>'` with the right and a wrong password, and `doveadm auth test` against a passwd-file passdb (`login:hash::::::user=alice`, the rendered `dovecot.conf` with `passdb_use_worker` and `service auth-worker { process_limit = 4 }`) by name and by address; `doveadm pw -s ARGON2ID -p 'correct horse battery'` of the same image | Dovecot answers `(verified)` (exit 0) for the right password and `Fatal: reverse password verification check failed: Password mismatch` (exit 75) for a wrong one; `doveadm auth test` succeeds for `alice` and `alice@a.example` and fails for a wrong password. The hash that Dovecot makes (`m=65536,t=3,p=1`) is recomputed by the Go Argon2 library from the parameters it carries, in `TestTheLibraryVerifiesTheHashDovecotMade`; the verifier of the operator reads **only** the pinned parameters (`m=19456,t=2,p=1`, a 16-byte salt, a 32-byte tag) and treats any other hash, such as one of Dovecot's own, as not matching, so that a hash edited into the Secret cannot make a verification cost more (`TestVerifyHash`). The known answer is fixed in `TestHashKnownAnswer`. This closes "a hash made by the Go Argon2id library read by Dovecot". |
 | 40 | The load of the hash on a Dovecot with the worker limit (3b, the MailUser controller) | One `dovecot/dovecot:2.4.5` container, `docker run -m 512m --memory-swap 512m`, the rendered conf (`passdb_use_worker = yes`, `process_limit = 4`) and the passdb of row 39; five rounds in 65 s of 50 parallel failing `doveadm auth test` logins each (`docker exec`), with one correct login started in each round; the memory of the container sampled with `docker stats` about every 2 s | The container used 20.7 MiB before the load, and the **sampled peak was 95.6 MiB** (limit 512 MiB; a sample every 2 s can miss a higher peak); every correct login succeeded, in 8.6 to 15.6 s while the flood ran. The latency was **not analysed**: it is much more than 50 hashes of well under 0.1 s on 4 workers would take, so the 50 parallel `docker exec` clients or the failure delay of the auth service are the likelier causes than the worker limit; this row says nothing about the latency of a real login. One login alone takes well under 0.1 s. **The load-test criterion of section 3, point 4 is not met by this row and remains a 3b done item:** the `memory.peak` of the cgroup (not readable on this host, rootless Docker), IMAP logins, and mail delivered during the flood were not measured. The numbers are of one host and are no guarantee. |
+| 41 | The live users Secret read by Dovecot without a restart, and the latency of the kubelet projection (3b, the `MailServer` serves the `MailUser`s) | e2e suite on kind v0.33.0 with the node image `kindest/node:v1.37.0`, one node, the pinned Dovecot 2.4.5 pod `mail-dovecot-0`; `MailUser`s with `passwordSecretRef`; the account is created, its password Secret patched, and the object deleted, and a SASL login on 587 is repeated every 3 s until it succeeds (or is refused); the pod UID and the restart counts of its containers are compared before and after | Three runs: an added account logged in after **56 s** to **1 min 21 s**, the new password worked after **1 min 3 s** to **1 min 28 s** (the old one was refused 2 s later in the first run), a removed account was refused after **1 min 6 s** to **1 min 22 s**, and a re-enabled one logged in after **21 s** to **42 s**. All accounts had a `passwordSecretRef`; the operator-generated path was not measured. The times include the operator (the object event and its debounce of 3 s; for the password up to the polling interval of one minute), the kubelet sync (1 minute by default) and the cache delay, so they are what a user of that cluster sees, not a bound. The UID and the restart counts of the Dovecot pod did not change: Dovecot re-read the passwd-files after the kubelet swapped the projected directory (the symlink swap and the two files, which row 32 and section 4.7 listed as not verified, work). `doveadm who` in the `dovecot` container reaches the master; `doveadm kick mulate` for an account without a session answers `0 connections kicked`, exit 0. **Not verified:** that `doveadm kick` ends an open IMAP session. Three runs, one node, no load. |
+| 42 | Sender binding, the null sender and the revoked alias domain on a `MailServer` with `MailUser`s (3b) | the same e2e run: an account with the aliases `mailuser@e2etwo.example.org` and `sales@e2etwo.example.org` in a second `MailDomain`; `swaks` through 587 with `--quit-after RCPT` | Postfix judges the sender when it sees the first recipient (`smtpd_delay_reject`), so `MAIL FROM` is answered `250` and the refusal comes with `RCPT TO`: `553 5.7.1` for another account's address, an address nobody owns and a foreign domain, `554 5.7.1` for `MAIL FROM:<>`; a message from each of the three own addresses reached the Mailpit sink. Mail to the three addresses was delivered into one mailbox, once each, read over IMAP by name and by primary address and found in no other mailbox. A disabled account was refused over SASL and IMAP, still received mail, and read it after it was enabled again. Deleting the `MailDomain` of the aliases made them `554 5.7.1` and `553 5.7.1` as senders while the account kept its primary address and its login, also while Postfix was fail closed and the narrowed revision still validated (checked in the last two runs; the live files come from the narrowed render only). The whole suite (50 specs, the MailUser block adds nine) took 1240 s, 1253 s and 1124 s. |
 
 
 

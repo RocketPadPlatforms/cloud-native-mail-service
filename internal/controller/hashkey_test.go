@@ -19,16 +19,20 @@ package controller
 import (
 	"bytes"
 	"errors"
+	"strings"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	cnmsv1alpha1 "github.com/RocketPadPlatforms/cloud-native-mail-service/api/v1alpha1"
+	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/directory"
 	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/render"
 )
 
 // noHashKey is the key function of a render that must not need one: it
 // fails when called.
+const usersTestDomain = "users.example.net"
+
 func noHashKey() ([]byte, error) { return nil, errors.New("the render asked for the hash key") }
 
 func hashKeyTestServer() *cnmsv1alpha1.MailServer {
@@ -53,19 +57,36 @@ func TestRenderWithoutSecretContentNeedsNoHashKey(t *testing.T) {
 	}
 }
 
-// A render with accounts does hold secret content and gets the key.
+// A render with the secret of a directory does hold secret content and gets
+// the key; the accounts of the MailUsers do not: their hashes are live data
+// outside the config hash (ADR 0015, section 4.7).
 func TestRenderWithSecretContentUsesTheHashKey(t *testing.T) {
-	users := userSource{accounts: []render.Account{{Name: "alice", PasswordHash: "{SHA512-CRYPT}x", Address: "alice@users.example.net"}}}
+	src := userSource{directory: &render.DirectorySource{LDAP: &directory.LDAPTarget{
+		Host: ldapTestHost, BaseDN: exampleBaseDN, TLSMode: directory.LDAPStartTLS,
+		Attributes: directory.Attributes{Login: directory.DefaultLogin, Mail: directory.DefaultMail},
+		BindDN:     "cn=lookup,dc=example,dc=org", BindPassword: "secret",
+	}}}
 	called := 0
-	plane, err := renderDataPlane(hashKeyTestServer(), []string{"users.example.net"}, "mail.example.net", users, nil,
+	plane, err := renderDataPlane(hashKeyTestServer(), []string{usersTestDomain}, "mail.example.net", src, nil,
 		func() ([]byte, error) { called++; return bytes.Repeat([]byte{7}, hashKeyLength), nil })
 	if err != nil || plane == nil {
-		t.Fatalf("render with accounts: %v", err)
+		t.Fatalf("render with a directory secret: %v", err)
 	}
 	if called != 1 {
 		t.Errorf("the key was fetched %d times, want once", called)
 	}
-	if _, err := renderDataPlane(hashKeyTestServer(), []string{"users.example.net"}, "mail.example.net", users, nil, noHashKey); err == nil {
-		t.Error("a render with accounts did not ask for the key")
+	if _, err := renderDataPlane(hashKeyTestServer(), []string{usersTestDomain}, "mail.example.net", src, nil, noHashKey); err == nil {
+		t.Error("a render with a directory secret did not ask for the key")
+	}
+}
+
+func TestRenderWithAccountsNeedsNoHashKey(t *testing.T) {
+	users := userSource{accounts: []render.Account{{Name: apiUserName, PasswordHash: "{SHA512-CRYPT}x", Address: "alice@users.example.net"}}}
+	plane, err := renderDataPlane(hashKeyTestServer(), []string{usersTestDomain}, "mail.example.net", users, nil, noHashKey)
+	if err != nil || plane.LiveUsers == nil {
+		t.Fatalf("render with accounts: %v", err)
+	}
+	if !strings.Contains(string(plane.LiveUsers.Data["passdb"]), "alice:{SHA512-CRYPT}x") {
+		t.Error("the hash is not in the live users Secret")
 	}
 }

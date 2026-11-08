@@ -9,6 +9,12 @@ committed.
 Scoped in [ADR 0015](decisions/0015-user-sources-directory-users-and-aliases.md)
 (three pull requests, see the roadmap):
 
+- Apply the revocation-only rule of ADR 0015, section 4.7 (logins are never
+  blocked) to every block that has `MailUser`s, not only to a limit: while
+  a render error, `UserSourceConflict`, `DirectoryInvalid`,
+  `ClusterIssuerNotAllowed`, a relay or an IP pool claim keeps the running
+  revision, the live users Secret is not written, so an account that is
+  disabled or deleted meanwhile keeps its login until the block clears.
 - The `MailUser` controller runs the address decision over the whole server in
   every reconcile, so a restart at 1,000 accounts costs about a million
   account visits (the list is read without copies, and the decision is
