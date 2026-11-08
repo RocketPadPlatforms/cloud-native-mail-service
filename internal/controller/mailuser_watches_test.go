@@ -157,7 +157,7 @@ func TestServerAddressInput(t *testing.T) {
 		*disabled,
 		*userIn("a", "carol", otherServer, objA), // another server: left out
 	}
-	in, failures := serverAddressInput(testServerName, users, domains, ev)
+	in, failures := serverAddressInput(testServerName, users, nil, domains, ev)
 
 	if len(in.Users) != 2 || in.Users[0].Name != apiUserName || in.Users[1].Name != userBob {
 		t.Fatalf("users = %+v, want alice and bob", in.Users)

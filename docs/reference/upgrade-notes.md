@@ -170,15 +170,23 @@ the new CRDs reject or prune the old field names.
   `namespace`) and the one address it may send as in `spec.sender`.
   `allowedNamespaces` is a list of objects with a `name` and optional
   `senderDomains`; the names are unique and there are at most 64 of them.
-  Nothing existing changes, and the API is all there is: the operator
-  registers a controller for `MailServiceAccount`s that does nothing, so no
-  credential Secret, NetworkPolicy, status or sender check exists yet and
-  `allowedNamespaces` is not evaluated. Install the new CRDs (`make
-  install`) before the new operator: the operator watches
-  `MailServiceAccount`s and exits at startup while the CRD is missing (the
-  data plane keeps running). The operator role gains `get`, `list` and
-  `watch` on `mailserviceaccounts` and `patch` on
-  `mailserviceaccounts/status`.
+  Nothing existing changes. The operator reconciles a `MailServiceAccount`
+  ([how-to](../how-to/service-accounts.md)): it checks the consent, the sender
+  and, for a server with a directory, the directory, writes the status, and
+  makes a credential Secret `<name>-credential` and a NetworkPolicy
+  `<name>-submission` **in the namespace of the account**, which for an account of
+  another namespace is a namespace the `MailServer` does not live in. The
+  `MailServer` does not serve the accounts yet, so they have no effect on mail.
+  Install the new CRDs (`make install`) before the new operator: the operator
+  watches `MailServiceAccount`s and exits at startup while the CRD is missing
+  (the data plane keeps running). The operator role gains `get`, `list` and
+  `watch` on `mailserviceaccounts`, `patch` on `mailserviceaccounts/status`
+  and `update` on `mailserviceaccounts/finalizers`; it already had `create`,
+  `update` and `delete` on `networkpolicies` and `secrets` in every namespace,
+  and uses them in the namespaces of the accounts now, and it reads the
+  `ca.crt` key of the TLS Secret of the `MailServer` for the credential. The
+  controller also reads the `MailDirectory` of a server that has one (with the
+  Secrets it names), and asks that directory about the sender of an account.
 - **Storage sizes are immutable:** `spec.postfix.queueStorage` and
   `spec.mailboxes.storage` cannot be edited once set, and decreasing
   `spec.postfix.replicas` is rejected. Resize the PersistentVolumeClaims

@@ -39,8 +39,10 @@ hands the active keys to Rspamd ([DKIM signing](dkim-signing.md)).
 The `MailDirectory` controller validates its configuration and probes the
 directory, but nothing renders a directory into Postfix or Dovecot yet: the
 `MailServer` controller reads only its existence. The `MailServiceAccount`
-API is defined and admitted, but its controller does nothing yet: no
-credential, no status and no check of `serverRef` or `sender`. See the
+controller checks the consent, the sender and the directory and makes the
+credential Secret and the egress policy, but the `MailServer` does not serve
+the accounts yet, so they have no effect on mail
+([how-to](../how-to/service-accounts.md)). See the
 [roadmap](../roadmap.md) for the phase of each part.
 :::
 
@@ -99,8 +101,8 @@ Key spec fields:
   `name` and optional `senderDomains` (domain names of the server's domains
   that the namespace may send from; unset means every served domain, and an
   empty list is refused). Unset or empty, no other namespace may; accounts of
-  the namespace of the server need no entry. The list is accepted and
-  validated, but nothing evaluates it yet.
+  the namespace of the server need no entry. The `MailServiceAccount`
+  controller evaluates it ([how-to](../how-to/service-accounts.md)).
 - `tls` — the cert-manager issuer the server certificate comes from.
 - `submission`, `mailboxes` — enable submission (on by default) and Dovecot
   mail storage (off by default). With submission on and mailboxes off,
@@ -217,12 +219,14 @@ ASCII letters, digits and `.` `_` `-`, starting and ending with a letter or
 digit, no `..`, no `+`) and whose domain follows the rule of
 `MailDomain.spec.domain`. That the domain is served by the server and
 authorized for the namespace cannot be checked by the API server; the
-controller will.
+controller does.
 
-`status` has the `observedGeneration` and the conditions. No controller writes
-them yet, so a `MailServiceAccount` stays without a status, and without a
-credential Secret and NetworkPolicy, until the controller arrives
-(Phase 3c).
+`status` has the `observedGeneration`, the conditions, the name and the
+revision of the credential Secret, and the `admittedSender`. The controller
+makes a Secret `<name>-credential` with the connection values for the
+application and a NetworkPolicy `<name>-submission` in the namespace of the
+account, and removes both when the namespace or the sender is revoked. The
+`MailServer` does not serve the account yet.
 
 <CodeBlock language="yaml" title="config/samples/cnms_v1alpha1_mailserviceaccount.yaml">{ServiceAccountSample}</CodeBlock>
 

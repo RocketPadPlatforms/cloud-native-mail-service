@@ -249,3 +249,44 @@ checked every ten, because Secrets are not watched. Warning Events are emitted
 when `Ready` or `CredentialReady` change for the worse; a Normal Event when
 `Ready` returns. The messages are fixed texts: no password or hash is ever in
 a condition, an Event or the log.
+
+## MailServiceAccount
+
+The `MailServiceAccount` controller decides whether the account may send as
+its sender and, if so, makes the credential Secret and the egress
+NetworkPolicy in the namespace of the account ([ADR
+0008](../decisions/0008-user-sources-and-service-accounts.md), [ADR
+0015](../decisions/0015-user-sources-directory-users-and-aliases.md), section
+4.9). `kubectl get mailserviceaccounts` shows `Sender`, `Server`, `Server
+Namespace` and `Ready`. The `MailServer` does not serve the accounts yet: until
+it does, a `Ready` account has a credential and a policy and no effect on mail.
+
+`Ready` shows the first failure of the checks, in the order of this table.
+
+| Condition | Status | Reason | Meaning |
+|---|---|---|---|
+| `Ready` | `True` | `Ready` | The checks pass and the credential and the policy are in place |
+| `Ready` | `False` | `ServerNotFound` | `spec.serverRef` names no `MailServer` in the namespace of the account. Only for a server of the account's own namespace: a server of another namespace that does not exist gives `NamespaceNotAllowed`, so that a namespace cannot find out whether a server exists elsewhere. What was made stays |
+| `Ready` | `False` | `NamespaceNotAllowed` | The server does not list the namespace of the account in `spec.serviceAccounts.allowedNamespaces` (the namespace of the server needs no entry), or the account names a server of another namespace that does not exist (the same message, and nothing is removed then). For a server that exists, the credential and the policy are removed, and `status.admittedSender` and `status.admittedFor` are cleared |
+| `Ready` | `False` | `SenderNotAuthorized` | The server limits the namespace to `senderDomains` and the domain of the sender is not among them, or the domain is not one the server serves and authorizes: no `MailDomain` of the namespace of the server carries it, it names another server, or it is not authorized (grant, duplicate, public suffix). The message says which. The credential and the policy are removed |
+| `Ready` | `False` | `SenderConflict` | Another account of the server claims the same sender, a `MailUser` has the address (a primary address or an alias wins), or the directory of the server has an account with the address. When accounts tie, every one of them loses the address. What was made stays; the message names no other namespace |
+| `Ready` | `False` | `DirectoryUnavailable` | The server has a directory, the account is new, has a new sender, names another server, or the server gained or changed its directory, and the directory could not be asked whether the sender is taken (down, unreachable, or the `MailDirectory` is missing or invalid). Nothing is admitted; the directory is asked again after about a minute. An account admitted for this sender, server and directory is not asked again, so it keeps working while the directory is down |
+| `Ready` | `False` | `SubmissionDisabled` | The server has `spec.submission.enabled: false`, so there is nothing to send through |
+| `Ready` | `False` | the reason of `CredentialReady` or `EgressPolicyReady` | The credential or the policy is not ready (below) |
+| `CredentialReady` | `True` | `Ready` | The Secret `<name>-credential` is in place. The message says when `ca.crt` is omitted because the certificate of the server has no CA chain (cert-manager is optional) |
+| `CredentialReady` | `False` | `CredentialSecretConflict` | A Secret `<name>-credential` exists and the account does not own it: it is never taken over, because its author would choose the hash |
+| `CredentialReady` | `False` | `HashFailed` | Reserved; not expected in practice. The random source of the operator could not give a salt or a password. A credential that exists stays |
+| `EgressPolicyReady` | `True` | `Ready` | The NetworkPolicy `<name>-submission` is in place |
+| `EgressPolicyReady` | `False` | `OwnershipConflict` | A NetworkPolicy `<name>-submission` exists and the account does not own it: it is not taken over |
+
+`CredentialReady` and `EgressPolicyReady` are absent while an earlier check
+fails; the Secret, the policy and `status.credentialSecretName` stay unless the
+account was revoked (`NamespaceNotAllowed` for a server that exists,
+`SenderNotAuthorized`). `status.admittedSender` and `status.admittedFor` say
+what passed the checks, including the one against the directory: the sender, and
+the server and directory it was checked for. `status.credentialSecretName` and
+`status.credentialRevision` (the `resourceVersion` of the Secret after the last
+write that changed the hash) are set when the credential exists. A Warning
+Event is emitted when `Ready` changes for the worse or changes its reason, a
+Normal Event when it returns. The messages are fixed texts: no password or hash
+is ever in a condition, an Event or the log.

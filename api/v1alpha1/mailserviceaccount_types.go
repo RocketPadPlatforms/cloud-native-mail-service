@@ -62,11 +62,46 @@ type MailServiceAccountStatus struct {
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
 	// Conditions represent the current state of the MailServiceAccount.
-	// The "Ready" condition is true when the credential works.
+	// The "Ready" condition is true when the credential and the egress
+	// policy of the account are in place.
 	// +listType=map
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// CredentialSecretName is the name of the Secret in the namespace
+	// of the account that holds the credential for the application.
+	// +kubebuilder:validation:MaxLength=253
+	// +optional
+	CredentialSecretName string `json:"credentialSecretName,omitempty"`
+
+	// CredentialRevision is the resourceVersion of the credential
+	// Secret after the last write that changed the password hash. It is
+	// not secret; its change tells the MailServer to pick up the new
+	// hash.
+	// +kubebuilder:validation:MaxLength=253
+	// +optional
+	CredentialRevision string `json:"credentialRevision,omitempty"`
+
+	// AdmittedSender is the spec.sender the credential was issued for:
+	// set once the sender passed the checks, including the one against
+	// the directory of a server that has one (ADR 0015, section 4.9),
+	// and cleared when the namespace or the sender is revoked. A server
+	// serves the account only while it equals spec.sender, so a changed
+	// sender is not served before it was checked.
+	// +kubebuilder:validation:MaxLength=318
+	// +optional
+	AdmittedSender string `json:"admittedSender,omitempty"`
+
+	// AdmittedFor says what the admission was checked against:
+	// `<server namespace>/<server>/<directory>`, with the name of the
+	// directory of the server, empty for a server without one. A server
+	// that gains a directory, or another one, and an account that names
+	// another server, are checked again; a server serves the account only
+	// while this matches its own. It is not secret.
+	// +kubebuilder:validation:MaxLength=700
+	// +optional
+	AdmittedFor string `json:"admittedFor,omitempty"`
 }
 
 // +kubebuilder:object:root=true

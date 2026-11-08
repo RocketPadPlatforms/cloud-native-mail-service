@@ -85,44 +85,63 @@ func (NetProber) ProbeLDAP(ctx context.Context, t LDAPTarget) Outcome {
 	if err != nil {
 		return InvalidFilter
 	}
+	conn, closeConn, o := connectLDAP(ctx, t)
+	if conn == nil {
+		return o
+	}
+	defer closeConn()
+	res, err := conn.Search(ldap.NewSearchRequest(t.BaseDN, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases,
+		1, int(probeTimeout/time.Second), false, filter, []string{"1.1"}, nil))
+	return searchOutcome(res, err)
+}
+
+// connectLDAP connects (with the TLS mode of the target) and binds. A nil
+// connection comes with the outcome that says why; otherwise the caller
+// closes it with the function that is returned.
+func connectLDAP(ctx context.Context, t LDAPTarget) (*ldap.Conn, func(), Outcome) {
 	cfg, ok := tlsConfig(t.Host, t.CA)
 	if !ok {
-		return TLSFailed
+		return nil, nil, TLSFailed
 	}
 	addr := net.JoinHostPort(t.Host, strconv.Itoa(LDAPPort(t)))
 	dialer := &net.Dialer{Timeout: probeTimeout}
-	var conn *ldap.Conn
+	var (
+		conn *ldap.Conn
+		err  error
+	)
 	if t.TLSMode == LDAPS {
 		conn, err = ldap.DialURL("ldaps://"+addr, ldap.DialWithDialer(dialer), ldap.DialWithTLSConfig(cfg))
 	} else {
 		conn, err = ldap.DialURL("ldap://"+addr, ldap.DialWithDialer(dialer))
 	}
 	if err != nil {
-		return connectOutcome(err)
+		return nil, nil, connectOutcome(err)
 	}
-	defer func() { _ = conn.Close() }()
 	conn.SetTimeout(probeTimeout)
 	// The library has no context: close the connection when the
 	// reconcile is cancelled, which fails the pending request.
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
-	defer stop()
+	closeConn := func() {
+		stop()
+		_ = conn.Close()
+	}
 
 	if t.TLSMode == LDAPStartTLS {
 		if err := conn.StartTLS(cfg); err != nil {
+			closeConn()
 			if isTLSError(err) || ldap.IsErrorAnyOf(err, ldap.LDAPResultProtocolError, ldap.LDAPResultUnavailable, ldap.LDAPResultOperationsError) {
-				return TLSFailed
+				return nil, nil, TLSFailed
 			}
-			return connectOutcome(err)
+			return nil, nil, connectOutcome(err)
 		}
 	}
 	if t.BindDN != "" {
 		if err := conn.Bind(t.BindDN, t.BindPassword); err != nil {
-			return bindOutcome(err)
+			closeConn()
+			return nil, nil, bindOutcome(err)
 		}
 	}
-	res, err := conn.Search(ldap.NewSearchRequest(t.BaseDN, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases,
-		1, int(probeTimeout/time.Second), false, filter, []string{"1.1"}, nil))
-	return searchOutcome(res, err)
+	return conn, closeConn, Reachable
 }
 
 // connectOutcome classifies a failure to connect or to start TLS (LDAP

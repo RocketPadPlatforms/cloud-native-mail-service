@@ -254,7 +254,7 @@ func (r *MailUserReconciler) loadView(ctx context.Context, user *cnmsv1alpha1.Ma
 	} else {
 		users = append(users, *user)
 	}
-	in, failures := serverAddressInput(user.Spec.ServerRef.Name, users, namespaceDomains(claims, user.Namespace), ev)
+	in, failures := serverAddressInput(user.Spec.ServerRef.Name, users, nil, namespaceDomains(claims, user.Namespace), ev)
 	v.failures = failures
 	for _, u := range addresses.Decide(in).Users {
 		if u.Name == user.Name {
@@ -410,7 +410,7 @@ func (r *MailUserReconciler) reconcileCredential(ctx context.Context, user *cnms
 	if err := r.shapeCredential(desired, user, name, sourceVersion); err != nil {
 		return credentialOutcome{}, err
 	}
-	final, retry, err := r.writeCredential(ctx, existing, desired)
+	final, retry, err := writeCredential(ctx, r.Client, existing, desired)
 	if err != nil || retry {
 		return credentialOutcome{retry: retry}, err
 	}
@@ -504,14 +504,17 @@ func decideCredential(ctx context.Context, existing *corev1.Secret, password, so
 // update carries the resourceVersion that was read: a write that raced with
 // this one is a conflict, as is a create that finds the Secret, and both are
 // reported as retry, to read again, never as an overwrite.
-func (r *MailUserReconciler) writeCredential(ctx context.Context, existing, desired *corev1.Secret) (final *corev1.Secret, retry bool, err error) {
+//
+// The MailServiceAccount controller writes its credential Secret with the
+// same function.
+func writeCredential(ctx context.Context, c client.Client, existing, desired *corev1.Secret) (final *corev1.Secret, retry bool, err error) {
 	switch {
 	case existing == nil:
-		if err := r.Create(ctx, desired); err != nil {
+		if err := c.Create(ctx, desired); err != nil {
 			return nil, apierrors.IsAlreadyExists(err), ignoreRace(err, apierrors.IsAlreadyExists)
 		}
 	case !equality.Semantic.DeepEqual(existing.Data, desired.Data) || !equality.Semantic.DeepEqual(existing.ObjectMeta, desired.ObjectMeta):
-		if err := r.Update(ctx, desired); err != nil {
+		if err := c.Update(ctx, desired); err != nil {
 			return nil, apierrors.IsConflict(err), ignoreRace(err, apierrors.IsConflict)
 		}
 	default:

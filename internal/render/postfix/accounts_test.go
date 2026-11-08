@@ -370,6 +370,11 @@ func TestDirectorySenderTableContent(t *testing.T) {
 		t.Fatal(err)
 	}
 	sql := res.SecretData[pgsqlSenderFile]
+	// The query is the one builder of internal/directory, which the lookup of
+	// a service account uses as well.
+	if want := "query = " + directory.SQLSenderQuery(*sqlSource(nil).SQL, true, "'%s'") + "\n"; !strings.Contains(sql, want) {
+		t.Errorf("pgsql sender table is not directory.SQLSenderQuery:\n%s", sql)
+	}
 	for _, want := range []string{
 		`SELECT login FROM "public"."cnms_users" WHERE lower(mail) = '%s' AND login ~ `,
 		`UNION SELECT u.login FROM "public"."cnms_aliases" a JOIN "public"."cnms_users" u ON lower(u.mail) = lower(a.target) WHERE lower(a.alias) = '%s' AND u.login ~ `,
