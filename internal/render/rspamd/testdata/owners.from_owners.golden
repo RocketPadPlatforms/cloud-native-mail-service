@@ -1,0 +1,7 @@
+# CNMS-rendered Rspamd from_owners -- do not edit.
+# Source: MailServer tenant1/mail (ADR 0015, section 4.4)
+# Format: address login (lower case, sorted)
+alice@a.example alice
+alice@b.example alice
+bob@a.example bob
+sales@b.example alice

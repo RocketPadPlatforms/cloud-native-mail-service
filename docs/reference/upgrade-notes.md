@@ -154,8 +154,8 @@ the new CRDs reject or prune the old field names.
   address in `domainRef`, up to 32 `aliases` and an optional
   `passwordSecretRef`. Nothing existing changes. The operator reconciles a
   `MailUser`: it writes its status and its credential Secret (see the
-  entry on `update` on Secrets below), but the `MailServer` does not read
-  it yet, so creating one has no effect on a running server. Install the
+  entry on `update` on Secrets below), and the `MailServer` renders the
+  accounts of its `MailUser`s (the entries below). Install the
   new CRD (`make install`) before the new operator: the operator watches
   `MailUser`s and exits at startup while the CRD is missing (the data plane
   keeps running). The operator role gains `get`, `list` and `watch` on
@@ -232,18 +232,40 @@ the new CRDs reject or prune the old field names.
   0015](../decisions/0015-user-sources-directory-users-and-aliases.md),
   section 4.7). Postfix still refuses an unknown recipient at `RCPT` with a
   permanent `550 5.1.1`.
-- **Dovecot's static users are two files.** The Secret of a server with
-  `insecureStaticUsers` has the keys `passdb` and `userdb` instead of
-  `users`, mounted at `/etc/dovecot-users`; `dovecot.conf` points the
-  passwd-file passdb and userdb at them, checks hashes in an auth worker
-  (`passdb_use_worker = yes`) and limits the workers to four
-  (`service auth-worker { process_limit = 4 }`). The passdb lines carry
-  `user=<username>`, so a login by address and by username is the same
-  account. The Dovecot pod rolls once. A static user whose mailbox domain is
-  not an authorized domain of the server can no longer log in or send (it is
-  suspended: it still has its userdb line, so mail that is already accepted
-  is delivered), and while no domain is authorized no static user can log in.
-  Before, Dovecot rendered every static user whatever its domain.
+- **Dovecot's users are two passwd-files in a live Secret, outside the config
+  hash** ([ADR 0015](../decisions/0015-user-sources-directory-users-and-aliases.md),
+  section 4.7). For static test users and `MailUser`s the passdb and userdb are
+  the keys `passdb` and `userdb` of the Secret `<server>-dovecot-users` (before:
+  the key `users` of the hash-named Secret `<server>-dovecot-<hash>`), which the
+  operator creates and updates in place and the pod mounts as a directory at
+  `/etc/dovecot-users`. `dovecot.conf` points the passwd-file passdb and userdb
+  at them, checks hashes in an auth worker (`passdb_use_worker = yes`) and
+  limits the workers to four (`service auth-worker { process_limit = 4 }`). The
+  passdb lines carry `user=<username>`, so a login by address and by username is
+  the same account. The first reconcile after the upgrade changes the Dovecot
+  pod template (a new volume; for a server with a directory the directory
+  password and CA are mounted at `/etc/dovecot-secret`, which changes the
+  rendered `dovecot.conf`), so every server gets **one validated rollout of
+  Dovecot (one restart)**. After that a changed, added or removed account is no
+  rollout. The superseded Secrets of the old scheme are removed by the cleanup
+  of the rollout; Postfix and Rspamd are not affected by the move. A static
+  user whose mailbox domain is not an authorized domain of the server can no
+  longer log in or send (it is suspended: it still has its userdb line, so mail
+  that is already accepted is delivered), and while no domain is authorized no
+  static user can log in. Before, Dovecot rendered every static user whatever
+  its domain. The Secret is owned by the `MailServer`; a Secret of that name
+  that it does not own is never overwritten (`OwnershipConflict`). The live
+  Secret is not watched: a deleted one is written again by the next reconcile.
+  The `MailServer` role gains `list` on `mailusers` and `update` on `secrets`
+  (see the entry above); an operator with a `ClusterRole` of its own needs
+  them too.
+- **Limits on accounts and on the size of the rendered objects** (ADR 0015,
+  section 4.7). A server with `MailUser`s or static test users is blocked with
+  `Ready=False` and the reason `UserLimitExceeded` (more than 1,000 accounts),
+  `AddressLimitExceeded` (more than 5,000 addresses, or more than 32 aliases
+  for an account) or `ConfigTooLarge` (a rendered object of 1,000,000 bytes or
+  more), and keeps its running revision. This also applies to existing servers
+  with static test users.
 - **A `MailServer` with a `directoryRef` now uses the directory** ([ADR
   0015](../decisions/0015-user-sources-directory-users-and-aliases.md),
   [how-to](../how-to/directories.md)). Before, the `MailDirectory` was
@@ -254,7 +276,7 @@ the new CRDs reject or prune the old field names.
   authenticates and finds the mailbox there. What you notice on a running
   server: the Postfix and Dovecot pods roll once, they mount a Secret
   with the directory password and CA (`/etc/postfix-secret`,
-  `/etc/dovecot-users`), and the Postfix container gets `PGSSLMODE` (and
+  `/etc/dovecot-secret`), and the Postfix container gets `PGSSLMODE` (and
   `PGSSLROOTCERT`) for a PostgreSQL directory. The `MailDirectory` Secrets
   must exist and be valid, or the server is `Ready=False` with the new
   reason `DirectoryInvalid` and keeps its running revision; a password with
@@ -293,14 +315,32 @@ the new CRDs reject or prune the old field names.
   `PGCONNECT_TIMEOUT` (5 s). The Postfix image installs `ca-certificates`, so
   a directory without a `caSecretRef` is verified against public roots; the
   image tag is unchanged because `3.11.7-1` was not released before.
+- **The header `From` of authenticated mail must be owned by the login, on a
+  server with `MailUser`s or static test users** ([ADR
+  0015](../decisions/0015-user-sources-directory-users-and-aliases.md),
+  section 4.4, check 2). Rspamd now rejects such a message with `554 5.7.1`
+  (`From address is not owned by the login`) when its `From` is another
+  account's address or an address nobody owns, even in a served domain; before,
+  only the envelope sender was bound. Mail clients that set a `From` other than
+  the account owns, "send as" features and mailing-list software must use an
+  alias of the account, or the account that owns the address. A server with a
+  `directoryRef` is not bound this way (the owned addresses are outside the
+  cluster). The table of the owned addresses is a new ConfigMap
+  `<server>-rspamd-d-<hash8>`, so every server rolls Rspamd once with this
+  version (a validated rolling update with `maxUnavailable: 0`), and a new,
+  removed, disabled or re-enabled account, or a changed alias, is a Rspamd
+  revision from then on, next to the Postfix one (a password change is
+  none). Check the `From` your applications send before the Rspamd pods roll. The guard-matrix script and its fixture changed with it
+  (`make test-rspamd-guard`).
 - **The hash of the secret files is keyed, for every server that has some.**
   The hash that names the Secrets of a revision and enters the config hash
   is an HMAC under the new Secret `<server>-hash-key` (created once, owned by
   the server, when a render holds secret content). This holds for a server
-  with a directory and equally for one with `submission.insecureStaticUsers`
-  (the users Secret of Dovecot): their Secrets and pods roll once with this
-  version, and once more if a restore from GitOps loses the key Secret. A
-  server without secret content needs no key.
+  with a directory (the Secret with its password and CA): its Secrets and
+  pods roll once with this version, and once more if a restore from GitOps
+  loses the key Secret. The password hashes of static test users and
+  `MailUser`s are live data and need no key; a server without secret content
+  needs none.
 - **Outbound mail now fails closed without a DKIM key.** Rspamd signs
   the mail of authenticated senders and Postfix's own non-SMTP mail with
   the active keys of the `MailDomain`s a server serves, and a guard defers
@@ -333,12 +373,12 @@ the new CRDs reject or prune the old field names.
   not lose it. Custom NetworkPolicies or probes that name the old
   container ports must follow.
 - **Configuration lives in immutable ConfigMaps named
-  `<server>-<component>-<hash8>`** (and an immutable Secret for the
-  Dovecot users). The operator creates them, validates the
-  configuration in a Job before the rollout and deletes the ones no
-  workload references after the rollout; a configuration object of the
-  previous naming that carries the CNMS labels falls under the same
-  cleanup ([ADR 0009](../decisions/0009-config-validation-gate.md)).
+  `<server>-<component>-<hash8>`** (and an immutable Secret for the directory
+  password and CA of Dovecot; the Dovecot users are a live Secret, see above).
+  The operator creates them, validates the configuration in a Job before the
+  rollout and deletes the ones no workload references after the rollout; a
+  configuration object of the previous naming that carries the CNMS labels
+  falls under the same cleanup ([ADR 0009](../decisions/0009-config-validation-gate.md)).
 - **The images are named `ghcr.io/rocketpadplatforms/cnms-postfix` and
   `ghcr.io/rocketpadplatforms/cnms-e2e-client`** (before `cnms/postfix`
   and `cnms/e2e-client`). Clusters without access to ghcr.io need a
@@ -366,25 +406,6 @@ the new CRDs reject or prune the old field names.
   garbage per hash.
   The hardening that limits the verb to Secrets with the managed-by label (a
   `ValidatingAdmissionPolicy`) is in the [backlog](../backlog.md).
-- **The Dovecot users are a live Secret, outside the config hash** ([ADR
-  0015](../decisions/0015-user-sources-directory-users-and-aliases.md),
-  section 4.7). The passdb and userdb files are no longer in the
-  hash-named Secret `<server>-dovecot-<hash>`; they are two keys of the
-  Secret `<server>-dovecot-users`, which the operator creates and updates
-  in place, and which the pod mounts as a directory at `/etc/dovecot-users`.
-  The first reconcile after the upgrade changes the Dovecot pod template (a
-  new volume, and for a server with a directory the directory password and CA
-  move to a mount at `/etc/dovecot-secret`, which changes the rendered
-  `dovecot.conf`), so every server gets **one validated rollout of Dovecot
-  (one restart)**. After that a changed, added or removed account is no
-  rollout. The superseded Secrets of the old scheme are removed by the
-  cleanup of the rollout. Postfix and Rspamd are not affected by the
-  move. The Secret is owned by the `MailServer`; a Secret of that name that
-  it does not own is never overwritten (`OwnershipConflict`). The `MailServer`
-  role gains the verbs
-  `update` on `secrets` (already above) and `list` on `mailusers`; an
-  operator with a `ClusterRole` of its own needs them too. The live Secret is
-  not watched: a deleted one is written again by the next reconcile.
 - **The operator no longer renders `cnms-no-port25-egress`.** Port-25
   egress for other pods is denied by an admin-owned
   `CiliumClusterwideNetworkPolicy`; start from the example in

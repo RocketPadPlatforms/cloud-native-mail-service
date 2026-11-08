@@ -1,6 +1,6 @@
 # ADR 0003: Security defaults and domain ownership
 
-- **Status:** Accepted (2026-10-25)
+- **Status:** Accepted (2026-10-25), partially amended by ADR 0014 and ADR 0015
 - **Supersedes:** ADR 0002, item 4 (submission test users)
 
 ## Context
@@ -164,6 +164,12 @@ When a grant is deleted or no longer covers a domain:
   direction. Not configurable in v1.
 - **kept**: the DKIM `Secret`, so a domain that is granted again does not
   rotate its key.
+
+Amended by ADR 0015 (sections 4.2 and 4.6): revocation extends to user data.
+The `MailServer` renders the address maps in the same pass as the domains, so
+an alias in a revoked domain leaves the maps with it, an account whose
+primary domain is revoked is suspended as a whole, and a revoked domain stops
+being a sender in the same render.
 
 Amended by ADR 0014: a `MailServer` evaluates the `MailDomain`s that
 reference it in `spec.serverRef` (a filter of the claim list), so a domain

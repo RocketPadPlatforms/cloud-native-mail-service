@@ -133,10 +133,24 @@ server serves:
   status notifications and message disposition notifications (RFC 8098) must
   not be submitted on port 587; whatever generates them (later: a Sieve
   vacation action) has to reach Postfix on another path;
-- the header `From` must be an address in a domain the server serves (the
-  guard of Rspamd). A check that it is **owned by the login** is not there
-  yet: an account can put another served address in the header `From`, and
-  the message is signed for that domain.
+- the **header `From`** must be an address in a domain the server serves and
+  **owned by the login** (the guard of Rspamd): the primary address or a served
+  alias of the account, compared in lower case. An address in a domain that is
+  not served is refused with `554 5.7.1` (`From must be an address in a served
+  domain`), for every user source. Another account's address and an address
+  nobody owns are refused with `554 5.7.1` (`From address is not owned by the
+  login`); the message is neither delivered nor signed. This holds for
+  `MailUser`s and for the static test users, and it is the same set of
+  addresses as the envelope check, from the same decision. When an account is
+  added, Postfix and Rspamd roll independently, so a new login can briefly get
+  the `554` from the old Rspamd table: the refusal is synchronous at
+  submission and nothing is lost, the client sends again. **A directory user is
+  not bound this way**: the owned
+  addresses of a directory are outside the cluster, so such a user can still put
+  any address of a served domain in the header `From` and have it signed (the
+  served-domain check applies). A client, a "send as" feature or mailing-list
+  software that sets another `From` than the account owns must use an alias of
+  the account instead.
 
 Each alias domain signs with the key of its own domain: sending as
 `alice@b.example` while `b.example` has no usable key is deferred

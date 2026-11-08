@@ -19,6 +19,7 @@ package manifests
 import (
 	"bytes"
 	"fmt"
+	"maps"
 	"os/exec"
 	"regexp"
 	"slices"
@@ -206,19 +207,20 @@ func TestBuildObjectSet(t *testing.T) {
 			t.Errorf("missing %s %q", wk.kind, wk.name)
 		}
 	}
-	// Four hash-named ConfigMaps; the Dovecot users Secret is the live one,
-	// outside the object set of the revision.
+	// Four hash-named ConfigMaps and the data ConfigMap of Rspamd (the owned
+	// header From addresses); the Dovecot users Secret is the live one, outside
+	// the object set of the revision.
 	configs := 0
 	for _, o := range objs {
 		if k := kindOf(o); k == kindConfigMap || k == kindSecret {
 			configs++
-			if !configNameRE.MatchString(o.GetName()) {
+			if !configNameRE.MatchString(o.GetName()) && !dataNameRE.MatchString(o.GetName()) {
 				t.Errorf("%s %q is not named <server>-<component>-<hash8>", k, o.GetName())
 			}
 		}
 	}
-	if configs != 4 {
-		t.Errorf("config objects = %d, want 4", configs)
+	if configs != 5 {
+		t.Errorf("config objects = %d, want 5", configs)
 	}
 	if len(objs) != len(want)+configs {
 		t.Errorf("object count = %d, want %d", len(objs), len(want)+configs)
@@ -882,6 +884,10 @@ func TestConfigHashIsDeterministicAndConfigBound(t *testing.T) {
 // configNameRE matches "<server>-<component>-<hash8>".
 var configNameRE = regexp.MustCompile(`^` + testName + `-(postfix|rspamd|dovecot|valkey)-[0-9a-f]{8}$`)
 
+// dataNameRE matches the name of the data ConfigMap of Rspamd,
+// "<server>-rspamd-d-<hash8>".
+var dataNameRE = regexp.MustCompile(`^` + testName + `-rspamd-d-[0-9a-f]{8}$`)
+
 // assertConfigVolumeExists checks that the config volume of a pod
 // references an immutable ConfigMap of the object set whose name has
 // the component prefix and the hash suffix.
@@ -993,10 +999,11 @@ func TestDovecotUsersLiveInAMutableSecret(t *testing.T) {
 	if other.LiveUsers.Name != sec.Name || string(other.LiveUsers.Data["passdb"]) == string(sec.Data["passdb"]) {
 		t.Error("a user change must change the content of the live Secret and keep its name")
 	}
-	// The Postfix maps do change (a revision, behind the validation Job); the
-	// Dovecot, Rspamd and Valkey configuration does not.
+	// The Postfix maps and the owned header From addresses of Rspamd do change
+	// (a revision each, behind the validation Job); the Dovecot and Valkey
+	// configuration does not.
 	for i := range dp.Validations {
-		if c := dp.Validations[i].Component; c != render.ComponentPostfix && dp.Validations[i].Hash != other.Validations[i].Hash {
+		if c := dp.Validations[i].Component; !revisedByUsers(c) && dp.Validations[i].Hash != other.Validations[i].Hash {
 			t.Errorf("%s: a user change gives a new validation Job", c)
 		}
 	}
@@ -1037,7 +1044,7 @@ func TestValidationJobs(t *testing.T) {
 		// The Job mounts the config of the workload's pod template.
 		var cm string
 		for _, vol := range pod.Volumes {
-			if vol.ConfigMap != nil {
+			if vol.ConfigMap != nil && vol.Name == configVolumeName {
 				cm = vol.ConfigMap.Name
 			}
 		}
@@ -1368,5 +1375,88 @@ func TestEveryPostfixFileIsMounted(t *testing.T) {
 		if !hasMount(mounts, configVolumeName, "/etc/postfix/"+file) {
 			t.Errorf("the rendered Postfix file %s is not mounted", file)
 		}
+	}
+}
+
+// The table of the owned header From addresses (ADR 0015, section 4.4) is the
+// data ConfigMap of Rspamd: immutable, named by its content, mounted as a
+// directory where the guard reads it, by the pod and by the validation Job, and
+// part of the config hash, so a new account rolls Rspamd. A server with a
+// directory has no such object.
+func TestRspamdDataConfigMap(t *testing.T) {
+	dp := buildPlane(t, nil, []render.Account{{Name: "u", PasswordHash: testCryptHash, Address: "u@" + domainA}})
+	var data *corev1.ConfigMap
+	for _, o := range dp.Configs {
+		if cm, ok := o.(*corev1.ConfigMap); ok && dataNameRE.MatchString(cm.Name) {
+			data = cm
+		}
+	}
+	if data == nil {
+		t.Fatal("no data ConfigMap for Rspamd")
+	}
+	if data.Immutable == nil || !*data.Immutable || data.Labels[componentLabel] != string(render.ComponentRspamd) {
+		t.Errorf("data ConfigMap %s must be immutable and labelled for Rspamd", data.Name)
+	}
+	if !strings.Contains(data.Data[render.RspamdOwnersFile], "\nu@"+domainA+" u\n") {
+		t.Errorf("the table of the owners = %q", data.Data[render.RspamdOwnersFile])
+	}
+	dep := mustFind[*appsv1.Deployment](t, find(t, dp.Workloads, kindDeployment, testName+"-rspamd"), "rspamd")
+	pod := dep.Spec.Template.Spec
+	vol := volumeByName(pod.Volumes, dataVolumeName)
+	if vol == nil || vol.ConfigMap == nil || vol.ConfigMap.Name != data.Name {
+		t.Fatalf("the Rspamd pod must mount the data ConfigMap %s: %v", data.Name, vol)
+	}
+	if m := mountByName(pod.Containers[0].VolumeMounts, dataVolumeName); m == nil || m.MountPath != render.RspamdDataDir || !m.ReadOnly || m.SubPath != "" {
+		t.Errorf("data mount = %+v, want the read-only directory %s", m, render.RspamdDataDir)
+	}
+	for _, v := range dp.Validations {
+		if v.Component != render.ComponentRspamd {
+			continue
+		}
+		jv := volumeByName(v.Job.Spec.Template.Spec.Volumes, dataVolumeName)
+		if jv == nil || jv.ConfigMap == nil || jv.ConfigMap.Name != data.Name {
+			t.Errorf("the validation Job of Rspamd must mount %s: %v", data.Name, jv)
+		}
+	}
+
+	// A new account is a new table, a new Rspamd revision, and nothing else of
+	// Rspamd changes.
+	other := buildPlane(t, nil, []render.Account{{Name: "v", PasswordHash: testCryptHash, Address: "v@" + domainA}})
+	odep := mustFind[*appsv1.Deployment](t, find(t, other.Workloads, kindDeployment, testName+"-rspamd"), "rspamd")
+	if odep.Spec.Template.Annotations[ConfigHashAnnotation] == dep.Spec.Template.Annotations[ConfigHashAnnotation] {
+		t.Error("a new table of owners must change the Rspamd pod-template hash")
+	}
+	// The main ConfigMap is the same: only the data object is new.
+	names := func(dp *DataPlane) map[string]bool {
+		out := map[string]bool{}
+		for _, o := range dp.Configs {
+			if _, ok := o.(*corev1.ConfigMap); ok && strings.HasPrefix(o.GetName(), testName+"-rspamd-") && !dataNameRE.MatchString(o.GetName()) {
+				out[o.GetName()] = true
+			}
+		}
+		return out
+	}
+	if a, b := names(dp), names(other); len(a) != 1 || !maps.Equal(a, b) {
+		t.Errorf("the main Rspamd ConfigMap changed with an account: %v, %v", a, b)
+	}
+}
+
+// revisedByUsers reports whether a change of the accounts is a revision of the
+// component: the Postfix maps and the owned header From addresses of Rspamd.
+func revisedByUsers(c render.Component) bool {
+	return c == render.ComponentPostfix || c == render.ComponentRspamd
+}
+
+// A directory owns its addresses outside the cluster: no table, no mount.
+func TestRspamdDirectoryHasNoDataConfigMap(t *testing.T) {
+	dir := buildWithDirectory(t, ldapDirectory(true))
+	for _, o := range dir.Configs {
+		if dataNameRE.MatchString(o.GetName()) {
+			t.Errorf("a directory server has the data ConfigMap %s", o.GetName())
+		}
+	}
+	ddep := mustFind[*appsv1.Deployment](t, find(t, dir.Workloads, kindDeployment, testName+"-rspamd"), "rspamd")
+	if volumeByName(ddep.Spec.Template.Spec.Volumes, dataVolumeName) != nil {
+		t.Error("a directory server mounts a data volume in Rspamd")
 	}
 }

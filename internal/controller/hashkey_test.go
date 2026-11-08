@@ -29,10 +29,10 @@ import (
 	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/render"
 )
 
-// noHashKey is the key function of a render that must not need one: it
-// fails when called.
 const usersTestDomain = "users.example.net"
 
+// noHashKey is the key function of a render that must not need one: it
+// fails when called.
 func noHashKey() ([]byte, error) { return nil, errors.New("the render asked for the hash key") }
 
 func hashKeyTestServer() *cnmsv1alpha1.MailServer {

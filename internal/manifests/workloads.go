@@ -332,6 +332,10 @@ func rspamdDeployment(server *cnmsv1alpha1.MailServer, r *render.RenderResult, d
 		},
 	}
 	mounts := append(rspamdConfigMounts(), corev1.VolumeMount{Name: stateVolumeName, MountPath: rspamdStateDir})
+	if len(r.DataFiles) > 0 {
+		volumes = append(volumes, dataVolume(dataConfigMapName(server, render.ComponentRspamd, r)))
+		mounts = append(mounts, dataMount(render.RspamdDataDir))
+	}
 	if dkim != nil {
 		volumes = append(volumes, *dkim)
 		mounts = append(mounts, corev1.VolumeMount{Name: dkimVolumeName, MountPath: render.DKIMDir, ReadOnly: true})
@@ -627,6 +631,21 @@ func configSubPathMounts() []corev1.VolumeMount {
 		})
 	}
 	return mounts
+}
+
+// dataVolume is the volume of the immutable, hash-named data ConfigMap of a
+// component (dataConfigMap), mounted as a whole directory.
+func dataVolume(name string) corev1.Volume {
+	return corev1.Volume{
+		Name: dataVolumeName,
+		VolumeSource: corev1.VolumeSource{
+			ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: name}},
+		},
+	}
+}
+
+func dataMount(path string) corev1.VolumeMount {
+	return corev1.VolumeMount{Name: dataVolumeName, MountPath: path, ReadOnly: true}
 }
 
 // rspamdConfigMounts mounts the Rspamd ConfigMap over the image's

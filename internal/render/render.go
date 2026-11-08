@@ -142,6 +142,13 @@ type RenderResult struct {
 	// is mounted read-only into the component containers.
 	ConfigData map[string]string
 
+	// DataFiles holds rendered files that grow with the accounts and that the
+	// engine reads from a directory of their own (the Rspamd table of the owned
+	// header From addresses). The controller places them in an immutable,
+	// hash-named ConfigMap of its own, mounted next to the main one; they are
+	// part of the config hash, so a change rolls the workload. Empty for most
+	// components.
+	DataFiles map[string]string
 	// SecretData holds rendered files that must not live in a
 	// ConfigMap (the directory password and CA). The controller places
 	// them in an immutable Secret that is mounted next to the ConfigMap.

@@ -19,7 +19,10 @@ limitations under the License.
 // hack/test-rspamd-guard.sh (ADR 0013, section 6):
 //
 //	<out>/local.d/*           the rendered local.d overrides
-//	<out>/rspamd.local.lua    the never-unsigned guard
+//	<out>/rspamd.local.lua    the never-unsigned guard, with check 2 on
+//	<out>/data/from_owners    the owned header From addresses of the accounts
+//	<out>/directory/rspamd.local.lua   the guard of a server with a directory (check 2 off)
+//	<out>/empty/                       the guard and the (empty) table of a server without accounts
 //	<out>/dkim/<domain>/*.key generated test keys (RSA and Ed25519)
 //	<out>/validate.args       the validation command, one argument per line
 //
@@ -83,8 +86,10 @@ func run(out string) error {
 	req := &render.RenderRequest{
 		Server: &v1alpha1.MailServer{ObjectMeta: metav1.ObjectMeta{Name: "mail", Namespace: "tenant1"}},
 	}
+	var domainNames []string
 	for domain, keys := range scenario {
 		req.AuthorizedDomains = append(req.AuthorizedDomains, domain)
+		domainNames = append(domainNames, domain)
 		dk := render.DomainKeys{Domain: domain}
 		for _, k := range keys {
 			dk.Keys = append(dk.Keys, render.DKIMKey{Selector: k.selector, Available: k.available})
@@ -99,31 +104,83 @@ func run(out string) error {
 			if err != nil {
 				return err
 			}
-			if err := write(filepath.Join(out, "dkim", render.DKIMKeyPath(domain, k.selector)), pem, 0o444); err != nil {
+			if err := write(filepath.Join(out, "dkim", render.DKIMKeyPath(domain, k.selector)), pem); err != nil {
 				return err
 			}
 		}
 		req.DKIMKeys = append(req.DKIMKeys, dk)
 	}
+	// The accounts: alice owns an address in every domain of the scenario and a
+	// second one in dual.example, bob one in dual.example. The test messages are
+	// from alice, so check 2 lets them through, and the cases of the matrix that
+	// name bob, a stranger or no account are the ones it must refuse.
+	alice := render.Account{
+		Name: "alice", Address: "alice@dual.example", PasswordHash: "{SHA512-CRYPT}x",
+		Aliases: []string{"sales@dual.example"},
+	}
+	for _, d := range domainNames {
+		if d != "dual.example" {
+			alice.Aliases = append(alice.Aliases, "alice@"+d)
+		}
+	}
+	req.Accounts = []render.Account{alice, {Name: "bob", Address: "bob@dual.example", PasswordHash: "{SHA512-CRYPT}y"}}
 	res, err := rspamd.New().Render(req)
 	if err != nil {
 		return err
 	}
-	for name, content := range res.ConfigData {
-		path := filepath.Join(out, "local.d", name)
-		if name == render.RspamdLocalLua {
-			path = filepath.Join(out, name)
-		}
-		if err := write(path, []byte(content), 0o444); err != nil {
+	if err := writeVariant(out, "", res); err != nil {
+		return err
+	}
+	// A server with a directory: check 2 is off and there is no table.
+	dir := *req
+	dir.Accounts, dir.Directory = nil, &render.DirectorySource{}
+	dirRes, err := rspamd.New().Render(&dir)
+	if err != nil {
+		return err
+	}
+	if err := writeVariant(out, "directory", dirRes); err != nil {
+		return err
+	}
+	// An operator-managed server without a single account: the table is empty
+	// and check 2 stays on.
+	none := *req
+	none.Accounts = nil
+	noneRes, err := rspamd.New().Render(&none)
+	if err != nil {
+		return err
+	}
+	if err := writeVariant(out, "empty", noneRes); err != nil {
+		return err
+	}
+	return write(filepath.Join(out, "validate.args"), []byte(strings.Join(res.ValidateCommand, "\n")+"\n"))
+}
+
+// writeVariant writes the guard, the data files and, for the main variant, the
+// local.d files of a rendering under out/<variant>.
+func writeVariant(out, variant string, res *render.RenderResult) error {
+	for name, content := range res.DataFiles {
+		if err := write(filepath.Join(out, variant, "data", name), []byte(content)); err != nil {
 			return err
 		}
 	}
-	return write(filepath.Join(out, "validate.args"), []byte(strings.Join(res.ValidateCommand, "\n")+"\n"), 0o444)
+	for name, content := range res.ConfigData {
+		if variant != "" && name != render.RspamdLocalLua {
+			continue
+		}
+		path := filepath.Join(out, variant, "local.d", name)
+		if name == render.RspamdLocalLua {
+			path = filepath.Join(out, variant, name)
+		}
+		if err := write(path, []byte(content)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // write creates the file and its directories world-readable: the
 // container runs as the Rspamd user, not as the owner of the files.
-func write(path string, data []byte, mode os.FileMode) error {
+func write(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
@@ -131,5 +188,5 @@ func write(path string, data []byte, mode os.FileMode) error {
 	if err := os.Chmod(dir, 0o755); err != nil { // MkdirAll honours the umask
 		return err
 	}
-	return os.WriteFile(path, data, mode)
+	return os.WriteFile(path, data, 0o444)
 }

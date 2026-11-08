@@ -1,6 +1,7 @@
 # ADR 0014: Domain-to-server binding and server hostname
 
-- **Status:** Accepted; part A (binding) and part B (hostname) are implemented
+- **Status:** Accepted; part A (binding) and part B (hostname) are implemented;
+  partially amended by ADR 0015
 - **Date:** 2026-11-05
 
 ## Context
@@ -39,6 +40,10 @@ implementation").
    server serves are the `MailDomain`s of its namespace whose
    `spec.serverRef.name` names it. A domain belongs to one server: a
    second server of the namespace that wants it needs its own domain.
+   (Amended by ADR 0015: a `MailUser` names its server in `spec.serverRef`
+   too, and its controller checks that the `domainRef` of the primary
+   address and of every alias resolves to a `MailDomain` of that same
+   server (`DomainNotServed`, `AliasDomainNotServed` for an alias).)
 
 2. **Evaluation is a filter.** The authorization of a server (ADR 0003)
    is still a pure function of grants and claims. It filters the

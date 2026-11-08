@@ -19,10 +19,9 @@ change. Upgrade notes are published for every release.
 :::danger
 Mail of authenticated senders is signed with the DKIM keys of the
 `MailDomain`; a served domain without a usable key defers its outbound
-mail (`451 4.7.1`) instead of sending it unsigned. Users come only from
-the static test users (a test feature); a `MailDirectory` is validated and
-probed but not yet used by Postfix and Dovecot (Phase 3), so recipient
-validation and login know no other user. Do not send production mail from
+mail (`451 4.7.1`) instead of sending it unsigned. Users come from a
+`MailDirectory` (LDAP or PostgreSQL), from `MailUser`s, or from the static
+test users (a test feature); a server has one of the three. Do not send production mail from
 a CNMS server yet.
 :::
 

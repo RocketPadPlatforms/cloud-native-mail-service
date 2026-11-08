@@ -7,9 +7,9 @@
   own pull request (#40); 3b is under way (the `MailUser` API, the controller,
   the address decision and the sender binding are there, and the `MailServer`
   serves the `MailUser`s with the live Dovecot Secret of section 4.7; the
-  limits of section 4.7 are enforced; the Rspamd check 2 and the load test of
-  section 3, point 4 (cgroup `memory.peak`, delivery during the flood) are not
-  done);
+  limits of section 4.7 are enforced; the Rspamd check 2 (header `From`) is
+  done; the load test of section 3, point 4 (cgroup `memory.peak`, delivery
+  during the flood) is not);
   3c is not
 - **Date:** 2026-11-06
 
@@ -109,7 +109,6 @@ spec:
   aliases:                        # optional, at most 32
     - {localPart: alice, domainRef: {name: b-example}}   # alice@b.example
     - {localPart: sales, domainRef: {name: b-example}}   # sales@b.example
-  displayName: Alice Example      # optional
   disabled: false
   passwordSecretRef: {name: alice-password}   # optional; key "password"
 ```
@@ -554,7 +553,22 @@ same reasoning as ADR 0013's several-`From` rule):
    the lookup, not only the domain, as Postfix does for `sender_login`),
    from a map `address login` rendered
    into its own immutable Rspamd ConfigMap (section 4.7 gives the size),
-   for operator-managed accounts only. For a directory the owned set is not
+   for operator-managed accounts only. **Implemented.** The map `from_owners`
+   is the data ConfigMap `<server>-rspamd-d-<hash8>`, mounted as a directory at
+   `/etc/rspamd/cnms` in the Rspamd pod and in its validation Job; it is part of
+   the config hash, so a new account is a validated rolling update of Rspamd
+   (`maxUnavailable: 0`). Its lines are the rows of `smtpd_sender_login_maps`
+   (the served addresses of the accounts that may send), so the owner of a
+   header `From` is the owner of the same envelope sender. The guard reads a
+   rendered **mode**, `owners_mode` `"on"` for every operator-managed server
+   (also one without a single account: the table is then empty and every
+   address is refused) and `"off"` for a server with a directory (no table, no
+   data ConfigMap); the mode is not inferred from an empty table. The login it
+   compares with is `task:get_user()` in lower case (row 45). A table that is
+   missing, unreadable or has a malformed line makes the check fail with an
+   error, and the error path of ADR 0013 defers the mail of logins (`451`), as
+   for a key that cannot be read. The reply is `554 5.7.1 From address is not
+   owned by the login`, without an address. For a directory the owned set is not
    in the cluster; the **residual risk** is that a directory user can put any
    *served* address in the header `From` and have it signed. Options for
    later: a directory lookup from Rspamd (`ldap`/SQL module), or a policy
@@ -564,8 +578,8 @@ same reasoning as ADR 0013's several-`From` rule):
 Both checks use the guard's existing view (`task:get_user()`,
 `task:get_from('mime')`, the served-domain table). Check 1 is implemented
 and verified (row 19 of Verification; the reply is `554 5.7.1`, message
-`From must be an address in a served domain`); check 2 is **not verified
-here**: the matrix run is the done criterion of 3b. Check 1 also refuses
+`From must be an address in a served domain`); check 2 is verified by the
+matrix (row 46) and the e2e suite (row 45). Check 1 also refuses
 several From addresses none of which is served (authenticated mail only);
 a served one keeps the several-From message of ADR 0013.
 
@@ -685,11 +699,10 @@ passwd-files an explicit exception:
 - **Cost 1: propagation.** The kubelet projects a changed Secret into the
   pod after its next sync: the sync period (one minute by default) plus the
   cache propagation delay, so typically a minute or two, and longer under
-  load; not measured here. Dovecot re-reads a changed passwd-file by itself
-  (verified for an in-place edit and an atomic replace of one file; the
-  kubelet's symlink swap and two files are **not verified**, an e2e test of
-  3b does exactly that: add a user and log in, change a password, disable,
-  delete).
+  load; row 41 measured 21 s to 1 min 28 s. Dovecot re-reads a changed
+  passwd-file by itself (verified for an in-place edit and an atomic replace
+  of one file, and through the kubelet's symlink swap in the e2e of row 41:
+  add a user and log in, change a password, disable, delete).
 - **Cost 2: Dovecot and Postfix disagree for a while.** The Dovecot files
   change after the projection (a minute or two), the Postfix maps after the
   validated rollout (minutes), and nothing orders the two: a rolling Postfix
@@ -902,10 +915,17 @@ enforced by the `MailServer` controller in the same pass that renders:
   `ConfigTooLarge` and the message names the object and its size. `from_owners`
   is its own immutable object for this reason: it is the only table that
   grows with every address by 384 bytes, and it must not push the guard and
-  DKIM tables of the main Rspamd ConfigMap over the limit. Splitting the
-  Postfix tables into one object each (the files are `subPath` mounts, so
-  the source object does not matter) is in the backlog. It is a modest gain,
-  not a fix: `valias` is 638 of the 1,022 worst-case bytes per alias, so one
+  DKIM tables of the main Rspamd ConfigMap over the limit. It is not split: it
+  is one object, `<server>-rspamd-d-<hash8>`, checked like the others. A line
+  is `address login` and a newline, so about 40 bytes at realistic sizes (the
+  cap of 5,000 addresses makes 200 KB) and 384 bytes in the worst case (a
+  318-byte address and a 64-byte login), which fills the guard at about 2,600
+  addresses. Beyond that the revision is refused with
+  `ConfigTooLarge`, like any other object, and the message names the object; a
+  shard per range of addresses would be the answer if it ever shows, and is not
+  built. Splitting the Postfix tables into one object each (the files are
+  `subPath` mounts, so the source object does not matter) is in the backlog. It
+  is a modest gain, not a fix: `valias` is 638 of the 1,022 worst-case bytes per alias, so one
   object that holds only `valias` fits 1,000,000 / 638, about 1,567 aliases,
   against about 978 now (a factor of about 1.6), and even split the tables
   do not fit at the caps in the worst case: `sender_login` with 5,000 x 384
@@ -1324,8 +1344,8 @@ because an uncached `List` rejects field selectors (ADR 0014).
 | Condition | Reasons |
 |---|---|
 | `Ready` | `Ready`, or the reason of the first failing condition below; plus `ServerNotFound`, `DirectoryConfigured`, `UserSourceConflict`, `DomainNotFound`, `DomainNotServed`, `DomainNotAuthorized`, `Disabled` (not a failure: `Ready=True`, reason `Disabled`) |
-| `CredentialReady` | `Ready`, `SecretNotFound` (the existing reason, for the Secret or its key), `PasswordInvalid`, `HashFailed` |
-| `AddressesServed` (warning, never feeds `Ready`) | `AllServed`, `PartiallyServed` (the message names the addresses and their reasons, conflicts included) |
+| `CredentialReady` | `Ready`, `SecretNotFound` (the existing reason, for the Secret or its key), `CredentialSecretConflict` (a Secret `<name>-credential` exists that the `MailUser` does not own; it is never taken over), `PasswordInvalid`, `HashFailed` |
+| `AddressesServed` (warning, never feeds `Ready`) | `AllServed`, `PartiallyServed` (the message names the addresses and their reasons, conflicts included); `Unknown` with the reason of `Ready` (`ServerNotFound`, `DirectoryConfigured` or `UserSourceConflict`) when nothing serves the account, so no address is decided |
 
 The reasons of one **address** are in `status.addresses[]`, not on the
 condition: `Served`, `AliasDomainNotFound`, `AliasDomainNotServed`,
@@ -1456,11 +1476,13 @@ Each item is a place the change reaches that is easy to forget.
   in the kustomization.
 - Register the `MailUser` indexes in `IndexFields` once (`cmd/main.go`) and
   in the envtest helper.
-- **The DKIM e2e** (`test/e2e/dkimutil.go`, `submitFromDomain`) sends as
-  `e2eUser@<domain>` for several domains; strict sender binding refuses
-  every address the static user does not own. The suite moves to `MailUser`s
-  with aliases in those domains (which also exercises aliases); static users
-  stay for the tests that do not send as a specific domain.
+- **The DKIM e2e** (`test/e2e/dkimutil.go`, `submitFromDomain`) sends with
+  the mailbox that the directory user owns as the envelope sender and
+  `--h-From` set to `<user>@<domain>` for the domain under test. Rspamd signs
+  by the domain of the header `From`, and check 2 is off for a directory
+  server, so those specs stay on the directory. The `MailUser` specs
+  (aliases, sender binding, the header `From` binding) are their own block in
+  `test/e2e/mailuser_test.go`.
 - Who writes `status.addresses[]`: the `MailUser` controller, with the shared
   decision function (section 3, point 6).
 - The `update` verb on `secrets` (`kubebuilder:rbac` markers and
@@ -1505,10 +1527,10 @@ Each item is a place the change reaches that is easy to forget.
 
 ### 11. Amendments to earlier ADRs
 
-The text of the earlier decisions stays. ADR 0008 and ADR 0004 (item 6)
-carry their pointers now, inline, as the amendments of ADR 0014 do; the
-pointers in the other ADRs are added by the pull request that implements
-the change (3a, 3b), so an ADR never points at behaviour that does not
+The text of the earlier decisions stays. ADR 0008, ADR 0004 (item 6),
+ADR 0003, ADR 0009, ADR 0013 and ADR 0014 carry their pointers now, inline,
+as the amendments of ADR 0014 do; each was added by the pull request that
+implements the change, so an ADR never points at behaviour that does not
 exist.
 
 - **ADR 0004, item 6:** the CNMS image tags are
@@ -1547,7 +1569,7 @@ exist.
   more for a changed provided password), with open IMAP sessions surviving it
   until someone ends them by hand (4.7); Dovecot and Postfix can disagree for
   a while, which `soft_bounce` on the `lmtp` service turns into deferrals
-  (4.7, unverified); Postfix map changes are still a validated rollout;
+  (4.7, row 31); Postfix map changes are still a validated rollout;
   the map files get no real validation from the Job; check 2 needs Rspamd
   work in 3b and leaves a documented residual for directories; the Postfix image gains libpq, a
   rebuild and a build revision in its tag (section 9).
@@ -1618,6 +1640,8 @@ written down from its result, so anyone can repeat it.
 | 42 | Sender binding, the null sender and the revoked alias domain on a `MailServer` with `MailUser`s (3b) | the same e2e run: an account with the aliases `mailuser@e2etwo.example.org` and `sales@e2etwo.example.org` in a second `MailDomain`; `swaks` through 587 with `--quit-after RCPT` | Postfix judges the sender when it sees the first recipient (`smtpd_delay_reject`), so `MAIL FROM` is answered `250` and the refusal comes with `RCPT TO`: `553 5.7.1` for another account's address, an address nobody owns and a foreign domain, `554 5.7.1` for `MAIL FROM:<>`; a message from each of the three own addresses reached the Mailpit sink. Mail to the three addresses was delivered into one mailbox, once each, read over IMAP by name and by primary address and found in no other mailbox. A disabled account was refused over SASL and IMAP, still received mail, and read it after it was enabled again. Deleting the `MailDomain` of the aliases made them `554 5.7.1` and `553 5.7.1` as senders while the account kept its primary address and its login, also while Postfix was fail closed and the narrowed revision still validated (checked in the last two runs; the live files come from the narrowed render only). The whole suite (50 specs, the MailUser block adds nine) took 1240 s, 1253 s and 1124 s. |
 | 43 | What the API server counts against the 1 MiB of a Secret and a ConfigMap, and the margin of the byte guard (3b, the limits) | envtest with the `kube-apiserver` 1.37.0 of `make test`, spec "the size limit of the API server" in `internal/controller/mailserver_limits_test.go`: a Secret and a ConfigMap with one key `k` and a value of 999,998, 1,048,576 and 1,048,577 bytes | A Secret of 999,999 bytes (key and value, `addresses.ObjectSize`) is accepted. A value of exactly 1,048,576 bytes is accepted, a value of 1,048,577 bytes is refused: `Secret "over" is invalid: data: Too long: may not be more than 1048576 bytes`; the ConfigMap behaves the same. **The API server counts the values only, not the keys** (a one-byte key does not move the limit), so the guard of 1,000,000 bytes over keys and values is the conservative reading, with a margin of 48,576 bytes; the 1 MiB limit is not reached by anything the guard lets through. |
 | 44 | A limit blocks a revision, and what still applies (3b, the limits) | envtest, specs "MailServer limits" in `internal/controller/mailserver_limits_test.go`, the caps lowered through `MailServerReconciler.Limits`; every step after the first block runs in a reconciler that has seen nothing before (nothing is kept in memory) | Over the cap of 3 accounts (5 given) and over the cap of 5 addresses (6 given), and over the byte guard (the live Secret just too large for one account more): `Ready=False` with `UserLimitExceeded`, `AddressLimitExceeded` and `ConfigTooLarge`, the message with the counts, or the live Secret and its size; the pod-template hash of Postfix and the Postfix tables are those of the running revision, no validation Job is created, the new accounts and aliases are in no file; a Warning Event is emitted once. A changed provided password replaces the hash in the passdb file and leaves the userdb file byte-identical; a disabled account loses its passdb lines and keeps its userdb lines and its Postfix entries; a deleted account loses its login and keeps its mailbox lines. When the count falls to the cap the next reconcile applies the whole revision (the new account in the Postfix tables, the removed one gone from userdb). The byte guard does not send the oversized Secret: its `resourceVersion` is unchanged. A first revision that a limit blocks creates no live Secret. No condition or Event holds an address, a domain or a hash. |
+| 45 | Rspamd check 2 on a real `MailServer` with `MailUser`s: which login `task:get_user()` sees, and the refusal (3b, the header `From` binding) | the full e2e suite on kind v0.33.0, 51 of 51 specs in 1,224 s, spec "binds the header From to the login": `swaks` through 587 with the envelope sender the account owns and `--h-From` set | A login typed as the account name and a login typed as the primary address both pass with the owned header `From` and the message in the Mailpit sink carries a `DKIM-Signature` of the domain. So the name that Rspamd receives in `{auth_authen}` is the account name that Dovecot reports (`user=`), not the typed login, the same one that Postfix compares for `sender_login`; the guard lower-cases it anyway. Another account's address in the same domain and an address nobody owns are answered `554 5.7.1 From address is not owned by the login` and nothing reaches the sink. The directory specs of the suite (DKIM, header `From` of another domain, check 2 off) and the other MailUser specs passed unchanged. The e2e installed cert-manager from its chart because the release download was unavailable. |
+| 46 | The guard matrix with check 2 (3b) | `make test-rspamd-guard` against `rspamd/rspamd:4.2.3@sha256:47e00f62105f8a60009a30a590ebcf3bfd0b992d45468222d34afa5ca2103690`, rendered configuration and table of the production renderer (`hack/render-rspamd-fixture`), `rspamc --user` with header `From` variants | 70 checks, 0 failed (29 new ones for check 2 and the 41 of check 1 and signing that were there). Owned address, owned alias, a case variant of the address (`Alice@DUAL.Example`), a display name with a comma, and the login in other case pass and are signed; another account's address, an address nobody owns, a login that owns another address and a login that is no account give `reject` with `From address is not owned by the login`; unauthenticated mail with such a `From` gives no action and loopback mail is signed. The directory variant (`owners_mode` `"off"`, no table) passes the address of another account and still refuses an unserved domain. The variant without accounts (mode `"on"`, empty table) refuses every address of a login. A table that is missing, unreadable (mode 000) or has a line of three words defers the mail of logins (`451`, `DKIM signing unavailable`), is logged as `CNMS DKIM guard failed`, and leaves unauthenticated mail untouched and loopback mail signed |
 
 
 
@@ -1639,28 +1663,26 @@ extra field and `passdb_use_worker` (passdb page,
 `https://doc.dovecot.org/2.4.5/core/config/auth/passdb.html`); the OWASP
 Argon2id profiles (Password Storage Cheat Sheet, section 3, point 4).
 
-**Not verified:** the Rspamd header-`From` check 2 (check 1 is row 19); the
-memory of Argon2id under load measured with the cgroup (`memory.peak`), with
-IMAP logins and with mail delivery running (row 40 used `docker stats`,
-`doveadm auth test` and no delivery; that the passwd-file passdb uses a
-worker, and the spelling of the limit, are row 33); the `nologin` alternative on 2.4.5, including
-whether it stops SASL; the kubelet's symlink swap for the live Dovecot
-Secret (row 31 appended to a file in place, which Dovecot read
-without a restart); the use of `doveadm kick` in the Dovecot pod; whether
-the API server counts only the values of `data` toward the 1 MiB limit (the
-guard counts keys as well, the conservative reading); Dovecot's start with
-LDAP down; `unionmap` errors inside a daemon (only `postmap` was run); the
-LDAP guards `(!(<login>=*/*))` and `(!(<login>=sa.*))` against an attribute
-**without** a SUBSTR rule (rows 22 and 23 ran them on `uid`, which has one),
-and a multi-valued `mail` attribute; the `ldap:` and `pgsql:` tables of the
-Postfix pod as the manifests start them (rows 21 to 23 used the
-image entrypoint with the rendered files, not the StatefulSet), the
-`PGSSLMODE` and `PGSSLROOTCERT` of the pod environment through the master
-in a pod, `LDAPS` and `StartTLS` against a CA that is a public one, and a
-`pgsql` or `ldap` table through `proxy:`; a `+` in a local part; the SMTP behaviour of Dovecot's
+**Not verified:** the memory of Argon2id under load measured with the cgroup
+(`memory.peak`), with IMAP logins and with mail delivery running (row 40 used
+`docker stats`, `doveadm auth test` and no delivery; that the passwd-file
+passdb uses a worker, and the spelling of the limit, are row 33); the
+`nologin` alternative on 2.4.5, including whether it stops SASL; the use of
+`doveadm kick` in the Dovecot pod (row 41 only shows that `doveadm who` and
+`kick` reach the master; that `kick` ends an open IMAP session is not
+verified); Dovecot's start with LDAP down; `unionmap` errors inside a daemon
+(only `postmap` was run); the LDAP guards `(!(<login>=*/*))` and
+`(!(<login>=sa.*))` against an attribute **without** a SUBSTR rule (rows 22
+and 23 ran them on `uid`, which has one), and a multi-valued `mail`
+attribute; the `ldap:` and `pgsql:` tables of the Postfix pod as the
+manifests start them (rows 21 to 23 used the image entrypoint with the
+rendered files, not the StatefulSet), the `PGSSLMODE` and `PGSSLROOTCERT` of
+the pod environment through the master in a pod, `LDAPS` and `StartTLS`
+against a CA that is a public one, and a `pgsql` or `ldap` table through
+`proxy:`; a `+` in a local part; the SMTP behaviour of Dovecot's
 `auth_username_chars` for LMTP recipients; several `passdb`s with a file
 first and a directory second; whether error texts of Dovecot, `pgx` or
 `go-ldap` can contain credentials; the `Sender:` header (not bound, not
-looked at); the Postfix `-DHAS_PGSQL`
-build for arm64 and on the published `ghcr.io` image (row 19 is a local
-amd64 build; the multi-arch build shows in CI).
+looked at); the Postfix `-DHAS_PGSQL` build for arm64 and on the published
+`ghcr.io` image (row 19 is a local amd64 build; the multi-arch build shows in
+CI).

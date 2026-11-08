@@ -72,9 +72,16 @@ same data plane behaviour.
 
 ## Limits
 
-- The guard does not check that the login matches the sender address:
-  any authenticated user can send as any served domain until the envelope
-  sender binding and the header From ownership check exist (backlog).
+- For the accounts that the operator manages (`MailUser`s and the static test
+  users) the header `From` of authenticated mail must be an address the login
+  owns: the primary address or a served alias. The table of the owned addresses
+  is its own ConfigMap and part of the Rspamd revision, so adding, removing,
+  disabling or enabling an account, or changing its aliases, rolls Rspamd (a
+  password change rolls nothing). Another account's address, or one nobody owns, is rejected with
+  `554 5.7.1` (`From address is not owned by the login`). For a server with a
+  directory the check is off, because the addresses are outside the cluster: a
+  directory user can put any address of a served domain in the header `From`
+  and have it signed. The envelope sender is bound for every user source.
 - A message with several `From` addresses, one of them in a served
   domain, is rejected with `554 5.7.1`, because it can never be signed.
 - Authenticated mail whose `From` header is missing, has no domain, or

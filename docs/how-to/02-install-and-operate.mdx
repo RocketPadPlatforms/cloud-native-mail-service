@@ -287,7 +287,8 @@ started.
 | Mount | Source | Notes |
 |-------|--------|-------|
 | `/etc/dovecot` | rendered immutable ConfigMap | self-contained `dovecot.conf` |
-| `/etc/dovecot-users` | rendered immutable Secret | the `users` passwd-file (password hashes) |
+| `/etc/dovecot-users` | live mutable Secret `<server>-dovecot-users` | the passwd-files `passdb` and `userdb` (password hashes); updated in place without a rollout, Dovecot re-reads them |
+| `/etc/dovecot-secret` | rendered immutable Secret | the password and CA of the directory, when the server has one |
 | `/srv/mail` | RWO PVC (`spec.mailboxes.storage`) | mail storage; must be writable by vmail (uid/gid 1000), enforced by the manifest (fsGroup) |
 | `/var/run/dovecot` | `emptyDir` | runtime sockets/state; lost on pod restart (rebuildable) |
 

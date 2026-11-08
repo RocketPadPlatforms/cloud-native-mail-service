@@ -2,6 +2,27 @@ local rspamd_logger = require 'rspamd_logger'
 
 local skip_actions = { reject = true, drop = true, discard = true, ['soft reject'] = true }
 
+-- owners maps every address that an account of the operator may use in the header
+-- From to its login (check 2, owners_mode and owners_path are rendered above).
+-- It stays nil when the table cannot be read or has a line that is not
+-- "address login": the check then fails, and the error path below defers the
+-- mail of logins, as for a key that cannot be read.
+local owners = nil
+if owners_mode == 'on' then
+  local f = io.open(owners_path, 'r')
+  if f then
+    owners = {}
+    for line in f:lines() do
+      if line ~= '' and line:sub(1, 1) ~= '#' then
+        local addr, login = line:match('^(%S+) (%S+)$')
+        if not addr then owners = nil; break end
+        owners[addr] = login:lower()
+      end
+    end
+    f:close()
+  end
+end
+
 local function defer(task)
   task:set_pre_result('soft reject', 'DKIM signing unavailable, try again later', 'cnms_dkim_guard')
 end
@@ -37,6 +58,17 @@ local function check(task)
     end
     if not ok then
       return task:set_pre_result('reject', 'From must be an address in a served domain', 'cnms_dkim_guard')
+    end
+    -- Check 2: every From address is owned by the login. The whole address is
+    -- lower-cased, as Postfix does for the envelope sender.
+    if owners_mode == 'on' then
+      if not owners then error('the table of the owned From addresses cannot be read') end
+      local login = tostring(task:get_user()):lower()
+      for _, a in ipairs(hfrom) do
+        if owners[(a.addr or ''):lower()] ~= login then
+          return task:set_pre_result('reject', 'From address is not owned by the login', 'cnms_dkim_guard')
+        end
+      end
     end
   end
   if hfrom and hfrom[2] then return end                   -- loopback, several From addresses, none served

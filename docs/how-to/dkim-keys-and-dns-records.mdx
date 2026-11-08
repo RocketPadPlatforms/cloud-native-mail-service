@@ -123,11 +123,12 @@ carries an RSA and an Ed25519 signature.
   configuration, so it goes through the validation Job and a rolling
   update of Rspamd, like any other configuration change. Pending and
   retiring keys are not mounted: only the keys that sign are.
-- **Not covered:** the check does not bind the login to the sender
-  address, so any authenticated user can send as any served domain until
-  the envelope sender binding and the header From ownership check exist
-  (backlog). Authenticated mail whose `From` is missing, has no domain
-  or is not in a served domain is rejected with `554 5.7.1`. A message
+- **Not covered:** the guard itself does not bind the login to the sender;
+  that is the envelope sender binding of Postfix and, for the accounts that
+  the operator manages, the header From check of the guard (see
+  [DKIM signing](../concepts/dkim-signing.md)). Authenticated mail whose `From`
+  is missing, has no domain or is not in a served domain is rejected with
+  `554 5.7.1`. A message
   with several `From` addresses, one of them in a served domain, is
   rejected with `554 5.7.1`, because it can never be signed; locally
   submitted mail of that kind bounces to its sender

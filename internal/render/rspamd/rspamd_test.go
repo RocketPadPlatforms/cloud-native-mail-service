@@ -18,6 +18,7 @@ package rspamd
 
 import (
 	"flag"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -268,5 +269,127 @@ func TestRenderHoldsNoKeyMaterial(t *testing.T) {
 				t.Errorf("%s contains %q", file, secret)
 			}
 		}
+	}
+}
+
+// ownerRequest is a server with accounts: alice owns two addresses, bob one,
+// an account that is disabled none, and one in a domain that is not served
+// none.
+func ownerRequest(t *testing.T) *render.RenderRequest {
+	t.Helper()
+	req := testRequest(t)
+	req.Accounts = []render.Account{
+		{Name: "bob", Address: "Bob@" + domainA, PasswordHash: "{X}b"},
+		{Name: "alice", Address: "alice@" + domainA, PasswordHash: "{X}a", Aliases: []string{"Sales@" + domainB, "alice@" + domainB}},
+		{Name: "off", Address: "off@" + domainA, PasswordHash: "{X}o", Disabled: true, Aliases: []string{"off@" + domainB}},
+		{Name: "gone", Address: "gone@revoked.example", PasswordHash: "{X}g", Aliases: []string{"gone@" + domainA}},
+	}
+	return req
+}
+
+// Check 2 of ADR 0015, section 4.4: the header From of authenticated mail
+// must be owned by the login. The table is the one of the envelope: the served
+// addresses of the accounts that may send, lower case and sorted, in a data
+// file of its own; the mode is rendered, not guessed from the table.
+func TestRenderFromOwners(t *testing.T) {
+	res, err := New().Render(ownerRequest(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	owners, ok := res.DataFiles[render.RspamdOwnersFile]
+	if !ok || len(res.DataFiles) != 1 {
+		t.Fatalf("data files = %v, want %s alone", slices.Collect(maps.Keys(res.DataFiles)), render.RspamdOwnersFile)
+	}
+	checkGolden(t, "owners.from_owners", owners)
+	checkGolden(t, "owners.rspamd.local.lua", res.ConfigData[render.RspamdLocalLua])
+	if _, leaked := res.ConfigData[render.RspamdOwnersFile]; leaked {
+		t.Error("the table of the owners is in the main ConfigMap, which it would push over its limit")
+	}
+	for line := range strings.SplitSeq(strings.TrimSpace(owners), "\n") {
+		if strings.HasPrefix(line, "#") {
+			continue
+		}
+		addr, login, found := strings.Cut(line, " ")
+		if !found || addr != strings.ToLower(addr) || strings.ContainsAny(login, " \t") {
+			t.Errorf("line %q is not 'address login' in lower case", line)
+		}
+		for _, who := range []string{"off", "gone"} {
+			if login == who {
+				t.Errorf("line %q: a disabled or suspended account owns no header From", line)
+			}
+		}
+	}
+}
+
+// The table of the owners is the envelope table: the same addresses and the
+// same logins as smtpd_sender_login_maps, from the same rows.
+func TestFromOwnersAreTheSendersOfThePlan(t *testing.T) {
+	req := ownerRequest(t)
+	res, err := New().Render(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := render.PlanAccounts(req.Accounts, req.AuthorizedDomains, req.ConflictedAddresses)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := make([]string, 0, len(plan.Senders))
+	for _, s := range plan.Senders {
+		want = append(want, s.Key+" "+s.Value)
+	}
+	var got []string
+	for line := range strings.SplitSeq(res.DataFiles[render.RspamdOwnersFile], "\n") {
+		if line != "" && !strings.HasPrefix(line, "#") {
+			got = append(got, line)
+		}
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("from_owners = %v, want the senders %v", got, want)
+	}
+}
+
+// A directory owns its addresses outside the cluster: no table, and the mode
+// is off. A server of the operator without a single account has an empty table
+// and the mode on: it refuses every address instead of letting every one pass.
+func TestFromOwnersModeIsRenderedNotInferred(t *testing.T) {
+	dir := testRequest(t)
+	dir.Directory = &render.DirectorySource{}
+	res, err := New().Render(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.DataFiles) != 0 {
+		t.Errorf("a directory server renders data files %v", slices.Collect(maps.Keys(res.DataFiles)))
+	}
+	if !strings.Contains(res.ConfigData[render.RspamdLocalLua], `local owners_mode = "off"`) {
+		t.Error("a directory server does not switch check 2 off")
+	}
+	checkGolden(t, "directory.rspamd.local.lua", res.ConfigData[render.RspamdLocalLua])
+
+	empty, err := New().Render(testRequest(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(empty.ConfigData[render.RspamdLocalLua], `local owners_mode = "on"`) {
+		t.Error("a server without accounts does not keep check 2 on")
+	}
+	table, ok := empty.DataFiles[render.RspamdOwnersFile]
+	if !ok {
+		t.Fatal("a server without accounts has no table: the guard could not tell it from a missing file")
+	}
+	for line := range strings.SplitSeq(table, "\n") {
+		if line != "" && !strings.HasPrefix(line, "#") {
+			t.Errorf("line %q in the table of a server without accounts", line)
+		}
+	}
+	checkGolden(t, "empty.from_owners", table)
+}
+
+// An account that the renderer refuses stops the render of the table too.
+func TestFromOwnersRefusesWhatThePlanRefuses(t *testing.T) {
+	req := testRequest(t)
+	req.Accounts = []render.Account{{Name: "a/b", Address: "a@" + domainA, PasswordHash: "{X}a"}}
+	if _, err := New().Render(req); err == nil {
+		t.Error("an account name with a slash was rendered")
 	}
 }

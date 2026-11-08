@@ -163,9 +163,11 @@ For a `MailServer` this means:
   issuer is missing), a running server that still serves a revoked domain
   gets the fail-closed configuration instead, so the remaining
   domains of that server stop too until the problem is fixed.
-- Sender-address binding on submission is not enforced yet (backlog), so a
-  login that still exists can use a revoked domain as sender address until
-  the Phase 3 binding lands. The data plane no longer signs for the revoked
+- The envelope sender is bound to the login for every user source, and a
+  revoked domain stops being a sender in the same render ([ADR
+  0015](../decisions/0015-user-sources-directory-users-and-aliases.md), row 42
+  of its verification table): a login that still exists cannot use a revoked
+  domain as sender address. The data plane no longer signs for the revoked
   domain (its keys are removed from the Rspamd configuration and the key
   Secrets are kept), and the guard rejects authenticated mail with a
   header `From` in that domain with `554 5.7.1`, because the domain is no

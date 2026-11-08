@@ -103,6 +103,38 @@ func renderLocalLua(req *render.RenderRequest) string {
 		b.WriteString("  [" + strconv.Quote(d) + "] = " + list + ",\n")
 	}
 	b.WriteString("}\n\n")
+	b.WriteString("-- Check 2 of ADR 0015, section 4.4: the header From of authenticated mail\n")
+	b.WriteString("-- must be owned by the login. \"on\" for the accounts the operator manages\n")
+	b.WriteString("-- (the table is read from owners_path), \"off\" for a directory, whose\n")
+	b.WriteString("-- addresses are outside the cluster. The mode is rendered, not guessed from\n")
+	b.WriteString("-- an empty table: a server without accounts refuses every address.\n")
+	mode := "on"
+	if req.Directory != nil {
+		mode = "off"
+	}
+	b.WriteString("local owners_mode = " + strconv.Quote(mode) + "\n")
+	b.WriteString("local owners_path = " + strconv.Quote(render.RspamdDataDir+"/"+render.RspamdOwnersFile) + "\n\n")
 	b.WriteString(guardBody)
 	return b.String()
+}
+
+// renderFromOwners renders the table of the owned header From addresses: one
+// "address login" per line, sorted, lower case. The rows are those of the
+// envelope (smtpd_sender_login_maps): the served addresses of accounts that
+// may send, so the owner of a header From is the owner of the same envelope
+// sender. A server without accounts has a table without a line, and the
+// check refuses every address (fail closed).
+func renderFromOwners(req *render.RenderRequest) (string, error) {
+	plan, err := render.PlanAccounts(req.Accounts, req.AuthorizedDomains, req.ConflictedAddresses)
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	b.WriteString("# CNMS-rendered Rspamd " + render.RspamdOwnersFile + " -- do not edit.\n")
+	b.WriteString("# Source: MailServer " + req.Server.Namespace + "/" + req.Server.Name + " (ADR 0015, section 4.4)\n")
+	b.WriteString("# Format: address login (lower case, sorted)\n")
+	for _, s := range plan.Senders {
+		b.WriteString(s.Key + " " + s.Value + "\n")
+	}
+	return b.String(), nil
 }

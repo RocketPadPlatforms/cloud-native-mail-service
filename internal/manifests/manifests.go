@@ -127,6 +127,7 @@ const (
 	usersVolumeName           = "users"
 	directoryVolumeName       = "directory"
 	dkimVolumeName            = "dkim"
+	dataVolumeName            = "data"
 	tlsVolumeName             = "tls"
 	stateVolumeName           = "state"
 	runVolumeName             = "run"
@@ -235,6 +236,9 @@ func Build(req *render.RenderRequest, renders map[render.Component]*render.Rende
 	dp := &DataPlane{LiveUsers: LiveUsersSecret(server, renders[render.ComponentDovecot].LiveData)}
 	for _, c := range render.AllComponents() {
 		dp.Configs = append(dp.Configs, configMap(server, c, renders[c]))
+		if cm := dataConfigMap(server, c, renders[c]); cm != nil {
+			dp.Configs = append(dp.Configs, cm)
+		}
 		if s := secret(server, c, renders[c]); s != nil {
 			dp.Configs = append(dp.Configs, s)
 		}
@@ -342,6 +346,30 @@ func configMap(server *cnmsv1alpha1.MailServer, c render.Component, r *render.Re
 		Immutable: new(true),
 		Data:      r.ConfigData,
 	}
+}
+
+// dataConfigMap places the data files of a component (nil when there are
+// none) in an immutable ConfigMap of its own, named by their content hash:
+// "<server>-<component>-d-<hash8>". It is separate from the main ConfigMap
+// because it grows with the accounts and must not push the configuration over
+// the size limit of an object (ADR 0015, section 4.7).
+func dataConfigMap(server *cnmsv1alpha1.MailServer, c render.Component, r *render.RenderResult) *corev1.ConfigMap {
+	if len(r.DataFiles) == 0 {
+		return nil
+	}
+	return &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      dataConfigMapName(server, c, r),
+			Namespace: server.Namespace,
+			Labels:    objectLabels(server, c),
+		},
+		Immutable: new(true),
+		Data:      r.DataFiles,
+	}
+}
+
+func dataConfigMapName(server *cnmsv1alpha1.MailServer, c render.Component, r *render.RenderResult) string {
+	return render.ServiceName(server.Name, c) + "-d-" + hashSuffix(dataHash(r.DataFiles))
 }
 
 // secret places the rendered secret files of a component (nil when
@@ -466,6 +494,11 @@ func digestOf(r *render.RenderResult) string {
 // part of the render, so renewals do not change the hash (D5).
 func configHash(c render.Component, r *render.RenderResult) string {
 	h := componentImage(c) + "\x00" + dataHash(r.ConfigData) + digestOf(r)
+	if len(r.DataFiles) > 0 {
+		// The data ConfigMap changes the pod template; a component without
+		// one keeps the hash it had.
+		h += "\x00data\x00" + dataHash(r.DataFiles)
+	}
 	if len(r.Env) > 0 {
 		// The environment changes the pod template; an empty one leaves
 		// the hash of earlier revisions as it was.

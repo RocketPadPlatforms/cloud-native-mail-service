@@ -26,8 +26,10 @@ How domain authorization works is explained in
 
 :::note
 Not every resource has a controller yet. `MailServer`, `MailDomain` and
-`MailDomainGrant` are reconciled. `MailUser` is an API only: nothing
-reads it yet. `MailDomain` generates and rotates DKIM
+`MailDomainGrant` are reconciled, and so is `MailUser`: its controller
+writes the status and the credential Secret, and the `MailServer` renders the
+accounts (see [users and aliases](../how-to/users-and-aliases.md)).
+`MailDomain` generates and rotates DKIM
 keys and lists and verifies its DNS records
 ([how-to](../how-to/dkim-keys-and-dns-records.mdx)), and the `MailServer`
 hands the active keys to Rspamd ([DKIM signing](dkim-signing.md)).
@@ -181,8 +183,9 @@ operator, or comes from the key `password` of `passwordSecretRef`.
 `status` has room for the canonical `address`, one entry per address in
 `addresses` (`kind` primary or alias, `served`, `reason`), the
 `credentialSecretName`, a non-secret `credentialRevision`, and the
-conditions. A `MailServer` has either a `directoryRef` or `MailUser`s. No
-controller writes this status yet, and the server ignores `MailUser`s.
+conditions. The `MailUser` controller writes this status and the credential
+Secret, and the `MailServer` renders the accounts. A `MailServer` has either a
+`directoryRef` or `MailUser`s.
 
 <CodeBlock language="yaml" title="config/samples/cnms_v1alpha1_mailuser.yaml">{UserSample}</CodeBlock>
 

@@ -20,11 +20,6 @@ Scoped in [ADR 0015](decisions/0015-user-sources-directory-users-and-aliases.md)
   account visits (the list is read without copies, and the decision is
   O(n log n) per pass). If that shows, decide once per server and share the
   result, for example through the `MailServer` controller.
-- Bind the header From to the login: sender-login maps check only
-  `MAIL FROM`, so an authenticated user can still put any served domain in
-  the header From and get it signed (ADR 0013, section 3). The check that
-  the From address is owned by the login is PR 3b (ADR 0015, section 4.4,
-  check 2); the served-domain check (check 1) is done.
 - Directory lookup timeouts: the Postfix tables bound a lookup against a
   directory that drops packets (`timeout = 5` for LDAP, `PGCONNECT_TIMEOUT`
   for PostgreSQL; a `451` after 5 to 10 s, ADR 0015 row 27), and the
@@ -72,12 +67,6 @@ Not scoped (ADR 0015, "Limits" and section 4.7):
 - A restart-based rollout of user changes (a new immutable users Secret and
   a Dovecot restart per change) as the option for clusters that cannot grant
   the operator `update` on Secrets; the live users Secret is the decision
-  (ADR 0015, section 4.7).
-- Keep the userdb line of a removed user until the Postfix revision without
-  it has rolled out, so mail accepted in between is delivered. PR 3b covers
-  the disabled, suspended and revoked cases (their userdb line stays) and
-  makes the remaining window a deferral with `soft_bounce` on the `lmtp`
-  service; this item is the fix if that setting does not work per service
   (ADR 0015, section 4.7).
 - End the open IMAP sessions of a revoked account automatically, with
   `doveadm kick` from a sidecar: a change of the live Dovecot files does not
