@@ -21,7 +21,7 @@ See [TEMPLATE.md](TEMPLATE.md).
 
 | # | Title | Status |
 |---|---|---|
-| [0001](0001-engine-versions-and-licenses.md) | Engine versions, licenses, and image strategy | Accepted (amended: pinned versions) |
+| [0001](0001-engine-versions-and-licenses.md) | Engine versions, licenses, and image strategy | Accepted (amended: pinned versions, Dovecot verification in 0016) |
 | [0002](0002-v1alpha1-api-design.md) | v1alpha1 API design for `MailServer`, `MailDomain`, `MailDirectory` | Accepted (partially superseded by 0003, amended by 0014) |
 | [0003](0003-security-defaults-and-domain-ownership.md) | Security defaults and domain ownership (`MailDomainGrant`) | Accepted (partially amended by 0014 and 0015) |
 | [0004](0004-data-plane-images-and-build-strategy.md) | Data-plane images and build strategy | Accepted (partially amended by 0015, amended: pinned versions) |
@@ -35,6 +35,6 @@ See [TEMPLATE.md](TEMPLATE.md).
 | [0012](0012-dns-records-and-dmarc.md) | DNS records, DMARC and DNS verification | Accepted (partially amended by 0014) |
 | [0013](0013-never-unsigned-guard.md) | Never-unsigned guard | Accepted (partially amended by 0014 and 0015) |
 | [0014](0014-domain-server-binding-and-hostname.md) | Domain-to-server binding and server hostname | Accepted (partially amended by 0015) |
-| [0015](0015-user-sources-directory-users-and-aliases.md) | User sources, directory users and addresses | Accepted |
-| [0016](0016-mailbox-format-and-storage.md) | Mailbox format and storage | Proposed |
+| [0015](0015-user-sources-directory-users-and-aliases.md) | User sources, directory users and addresses | Accepted (partially amended by 0016) |
+| [0016](0016-mailbox-format-and-storage.md) | Mailbox format and storage | Accepted |
 

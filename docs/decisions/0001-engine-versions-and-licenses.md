@@ -1,7 +1,7 @@
 # ADR 0001: Engine versions, licenses, and image strategy
 
 - **Status:** Accepted, amended 2026-11-08 (pinned versions, see the note
-  after the table)
+  after the table; the Dovecot row, see ADR 0016)
 - **Date:** 2026-10-25
 
 ## Context
@@ -21,7 +21,7 @@ Pinned engine and toolchain versions (latest stable at verification time):
 | libpq | Debian `libpq5` (trixie) | PostgreSQL License ([licence](https://www.postgresql.org/about/licence/)) | Linked dynamically into the CNMS Postfix image for the `pgsql` map type (ADR 0015, section 9); not a pinned engine. |
 | ca-certificates | Debian `ca-certificates` (trixie) | MPL-2.0 (Mozilla root list), GPL-2+ (Debian scripts); [licence](https://www.mozilla.org/MPL/2.0/) | Installed in the CNMS Postfix image for the system roots of the directory tables (ADR 0015, section 4.8); not a pinned engine. |
 | Rspamd | 4.2.3 | Apache-2.0 | Start from the official `rspamd/rspamd` image; non-root and read-only suitability verified in Phase 2. |
-| Dovecot | 2.4.5 (incl. Pigeonhole) | Core LGPL-2.1, MIT parts | Prefer the official Dovecot image; verified in Phase 4. |
+| Dovecot | 2.4.5 (incl. Pigeonhole) | Core LGPL-2.1, MIT parts | Prefer the official Dovecot image; verified in Phase 4 (amended: Dovecot 2.4.5 verified for the mailbox layout in ADR 0016). |
 | Valkey | 9.1.2 | BSD-3-Clause | Official `valkey/valkey` image. |
 | Go (toolchain) | 1.27.x (go.mod 1.27.3) | BSD-3-Clause | `go-version-file: go.mod` in CI; the builder image (Dockerfile) and the devcontainer use `golang:1.27` pinned by digest. Renovate updates the go directive and both images together (group `go`). |
 | Kubebuilder | 4.16.0 | Apache-2.0 | Project scaffold tooling. |

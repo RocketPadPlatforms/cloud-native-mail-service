@@ -103,8 +103,7 @@ Not scoped (ADR 0015, "Limits" and section 4.7):
 
 ## Parked in Phase 4
 
-Closed for Phase 4 by [ADR 0016](decisions/0016-mailbox-format-and-storage.md)
-(proposed):
+Closed for Phase 4 by [ADR 0016](decisions/0016-mailbox-format-and-storage.md):
 
 - Mailbox retention when a `MailUser` is deleted: the data stays on the volume
   and a new user of the same name inherits it. Not decided in Phase 4 beyond a

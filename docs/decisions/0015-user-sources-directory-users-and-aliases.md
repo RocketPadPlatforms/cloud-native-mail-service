@@ -15,7 +15,8 @@
   and egress policy) and the `MailServer` that serves the accounts (section 4.9,
   point 8); the e2e of the second namespace is in row 47, which says what
   ran on kind for this code and what did not (the DKIM block and the specs
-  after it did not start, for lack of a host resource)
+  after it did not start, for lack of a host resource); partially amended by
+  ADR 0016 (sections 4.4, 4.6 and 4.7: the notes there)
 - **Date:** 2026-11-06
 
 ## Context
@@ -508,7 +509,9 @@ smtpd_sender_restrictions = check_sender_access texthash:/etc/postfix/null_sende
   in Phase 4, the replies of a Sieve vacation action): whatever generates
   them in Dovecot must reach Postfix on a path other than the authenticated
   587 listener. The path is a Phase 4 decision; this ADR only states that 587
-  will not take them.
+  will not take them. (Amended by ADR 0016: the path is not decided in
+  Phase 4. Phase 4 renders no Sieve and no `submission_host`, so Dovecot
+  generates no mail; the route waits for the phase that adds Sieve.)
 - **The owner must be the same string for every way of logging in** (4.5);
   otherwise `sender_login` would need an entry per login form.
 - **master.cf syntax.** A `-o` value that contains spaces must use the
@@ -668,6 +671,10 @@ revocation needs no extra mechanism.
   mailbox is keyed by the **name**, not by the object's UID: a UID is new
   after a restore from GitOps (AGENTS.md section 8). Consequence to settle
   in Phase 4: a new `MailUser` of the same name inherits the old mailbox.
+  (Amended by ADR 0016: the "explicit purge operation" is a runbook
+  procedure, not an API or an operation of the operator, and nothing is
+  deleted automatically. The inherit consequence is documented, not
+  changed: a recreated name gets the old mailbox until it is purged.)
 - **Operator down:** nothing changes; the data plane runs from the rendered
   objects (principle 4).
 
@@ -764,7 +771,9 @@ passwd-files an explicit exception:
   `kick` finds the session), or, if that does not work, restart the Dovecot
   pod with `kubectl rollout restart statefulset/<server>-dovecot`, which
   ends every session, and say so. Automation (a sidecar that kicks revoked
-  accounts) stays in the backlog.
+  accounts) stays in the backlog. (Amended by ADR 0016, S3: in a container
+  test with the pinned image `doveadm kick` ended an open IMAP session; that
+  it does so through `kubectl exec` in a pod is still not verified.)
 - **RBAC grows, and says so.** The operator has **no** `update` on Secrets
   today (`config/rbac/role.yaml`; the markers in `mailserver_controller.go`
   and `maildomain_controller.go` say `get;list;create;delete`). 3b adds the
@@ -1754,7 +1763,8 @@ passdb uses a worker, and the spelling of the limit, are row 33); the
 `nologin` alternative on 2.4.5, including whether it stops SASL; the use of
 `doveadm kick` in the Dovecot pod (row 41 only shows that `doveadm who` and
 `kick` reach the master; that `kick` ends an open IMAP session is not
-verified); Dovecot's start with LDAP down; `unionmap` errors inside a daemon
+verified; amended by ADR 0016, S3: it does in a container test, not yet
+checked through `kubectl exec` in a pod); Dovecot's start with LDAP down; `unionmap` errors inside a daemon
 (only `postmap` was run); the LDAP guards `(!(<login>=*/*))` and
 `(!(<login>=sa.*))` against an attribute **without** a SUBSTR rule (rows 22
 and 23 ran them on `uid`, which has one), and a multi-valued `mail`
