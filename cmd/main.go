@@ -275,8 +275,11 @@ func main() {
 		os.Exit(1)
 	}
 	if err := (&controller.MailUserReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:              mgr.GetClient(),
+		Scheme:              mgr.GetScheme(),
+		APIReader:           mgr.GetAPIReader(),
+		Recorder:            mgr.GetEventRecorder("mailuser-controller"),
+		DomainAuthorization: authMode,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "mailuser")
 		os.Exit(1)

@@ -188,3 +188,56 @@ carry a credential, so it is never copied into a condition or an Event.
 Warning Events are emitted when `Ready` or `Reachable` change for the worse;
 a Normal Event is emitted when `Reachable` becomes `True` again after it was
 `False`.
+
+## MailUser
+
+The `MailUser` controller decides the addresses of the account together with
+the other accounts of its server and makes the credential Secret with the
+password hash ([ADR
+0015](../decisions/0015-user-sources-directory-users-and-aliases.md), sections
+3, 4 and 8). **A `MailUser` has no effect on mail yet**: the `MailServer` does
+not read it, so no mailbox, login or sender comes of it. `kubectl get
+mailusers` shows `Address`, `Server` and `Ready`.
+
+| Condition | Status | Reason | Meaning |
+|---|---|---|---|
+| `Ready` | `True` | `Ready` | The server exists, the account is on it alone, the primary domain is served and authorized, and the credential is made |
+| `Ready` | `True` | `Disabled` | `spec.disabled` is true: no login and no sending, mail is still delivered |
+| `Ready` | `False` | `ServerNotFound` | `spec.serverRef` names no `MailServer` of the namespace |
+| `Ready` | `False` | `DirectoryConfigured` | The server uses a `MailDirectory`: a server has either a directory or `MailUser`s. No credential is made |
+| `Ready` | `False` | `UserSourceConflict` | The server has `submission.insecureStaticUsers`. No credential is made |
+| `Ready` | `False` | `DomainNotFound`, `DomainNotServed`, `DomainNotAuthorized` | The primary domain (`spec.domainRef`) does not exist, is served by another server, or is not authorized (grant, duplicate, public suffix). The account is suspended; its aliases in a served domain show the same reason on their rows |
+| `Ready` | `False` | the reason of `CredentialReady` | The credential is not ready (below) |
+| `CredentialReady` | `True` | `Ready` | The hash is in the Secret `<name>-credential` |
+| `CredentialReady` | `False` | `SecretNotFound` | `spec.passwordSecretRef` names a Secret that does not exist or has no key `password` (read again every minute). A credential that exists stays |
+| `CredentialReady` | `False` | `PasswordInvalid` | The provided password has fewer than 12 characters. A credential that exists stays |
+| `CredentialReady` | `False` | `HashFailed` | Reserved; not expected in practice. The random source of the operator (which does not fail in current Go versions) could not give a salt or a generated password |
+| `CredentialReady` | `False` | `CredentialSecretConflict` | A Secret `<name>-credential` exists and the `MailUser` does not own it: it is never taken over, because its author would choose the hash |
+| `AddressesServed` | `True` | `AllServed` | Every address of the account is served |
+| `AddressesServed` | `False` | `PartiallyServed` | Some address is not served; the message lists them with their reasons. A warning: it never feeds `Ready`, and the other addresses keep working |
+| `AddressesServed` | `Unknown` | `ServerNotFound`, `DirectoryConfigured` or `UserSourceConflict` | Nothing serves the account (the reason of `Ready`), so the addresses are not decided and `status.addresses` is empty |
+
+`status.addresses[]` has one row per address, with `kind` (`primary` or
+`alias`), `served` and `reason`: `Served`, `AliasDomainNotFound`,
+`AliasDomainNotServed`, `AliasDomainNotAuthorized` or `AddressConflict` for an
+alias; the primary address and the aliases of a suspended account show the
+domain reason above instead. An address that two accounts of the same rank
+claim (two aliases) is lost by both; an alias that names another account's
+primary address loses to it.
+
+The password rules: a provided password has at least 12 characters and is used
+as it is, byte for byte. A Secret made with `kubectl create secret generic
+--from-file` keeps the trailing newline of the file as part of the password, so
+the login must send it too; use `--from-literal` or a file without the
+newline. If the credential Secret of an account is deleted, a generated
+password is replaced by a new one, silently: use `passwordSecretRef` for a
+password that must survive a restore.
+
+`status.credentialSecretName` and `status.credentialRevision` are set when the
+credential exists. The revision (the `resourceVersion` of the Secret) changes
+only when the password hash changes, not when the Secret is written for another
+reason. A provided password is read again every minute, a generated one is
+checked every ten, because Secrets are not watched. Warning Events are emitted
+when `Ready` or `CredentialReady` change for the worse; a Normal Event when
+`Ready` returns. The messages are fixed texts: no password or hash is ever in
+a condition, an Event or the log.

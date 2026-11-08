@@ -32,6 +32,17 @@ They run every scenario with the input in several orders and require the same
 answer, check the invariants on random servers, and check that
 `render.PlanAccounts` agrees with the verdict.
 
+The `MailUser` controller has envtest specs (`mailuser_controller_test.go`)
+for the credential Secret (generated once and kept, a provided password hashed
+and not rehashed after a write that changes no password, a lost race on
+create or update, an owner reference, a 64-character name), the addresses and
+conditions (aliases that are not served, a suspended account, conflicts, a
+disabled account, the other user sources) and one spec through the watches of
+a running manager. Unit tests cover the Argon2id hash with a known answer that
+the pinned Dovecot accepts, the verification of a hash that Dovecot made, the
+bounds of a stored hash, and the map functions of the watches. The specs
+assert that no password or hash reaches a condition, an Event or the log.
+
 Unit tests check the decision behind them (`render.PlanAccounts`: logins,
 mailboxes, aliases, owners of senders, deferred addresses, refusals) and that
 no unsafe value (a blank, a newline, a colon, a `+`, `..`) reaches a table

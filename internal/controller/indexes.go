@@ -18,6 +18,8 @@ package controller
 
 import (
 	"context"
+	"slices"
+	"strings"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -46,11 +48,23 @@ const (
 	// spec.directoryRef.name: a MailDirectory event must reach the
 	// servers that use it, and no others (ADR 0015, section 7).
 	mailServerDirectoryIndex = "spec.directoryRef.name"
+
+	// mailUserServerIndex indexes MailUsers by spec.serverRef.name: a
+	// MailServer event must reach its accounts (ADR 0015, section 7).
+	mailUserServerIndex = "spec.serverRef.name"
+	// mailUserDomainIndex indexes MailUsers by every MailDomain they name:
+	// the primary domainRef and the domainRef of each alias.
+	mailUserDomainIndex = "spec.domainRefs"
+	// mailUserAddressIndex indexes MailUsers by every address they claim,
+	// as <server>/<local part>@<MailDomain object name> (ADR 0015, section
+	// 4.2, point 5), so that a conflict reaches the claimants and not every
+	// account of the server.
+	mailUserAddressIndex = "spec.claimedAddresses"
 )
 
-// IndexFields registers the field indexes of MailDomains and
-// MailServers. Call it exactly once per manager, before the MailServer
-// and MailDomain reconcilers are set up: both need the indexes, and a
+// IndexFields registers the field indexes of MailDomains, MailServers and
+// MailUsers. Call it exactly once per manager, before the MailServer,
+// MailDomain and MailUser reconcilers are set up: they need the indexes, and a
 // manager rejects the same index twice.
 func IndexFields(mgr ctrl.Manager) error {
 	idx := mgr.GetFieldIndexer()
@@ -67,6 +81,15 @@ func IndexFields(mgr ctrl.Manager) error {
 		mailServerDirectoryIndex: indexMailServerByDirectory,
 	} {
 		if err := idx.IndexField(context.Background(), &cnmsv1alpha1.MailServer{}, field, extract); err != nil {
+			return err
+		}
+	}
+	for field, extract := range map[string]client.IndexerFunc{
+		mailUserServerIndex:  indexMailUserByServer,
+		mailUserDomainIndex:  indexMailUserByDomain,
+		mailUserAddressIndex: indexMailUserByAddress,
+	} {
+		if err := idx.IndexField(context.Background(), &cnmsv1alpha1.MailUser{}, field, extract); err != nil {
 			return err
 		}
 	}
@@ -107,4 +130,55 @@ func indexMailServerByHostname(obj client.Object) []string {
 		return nil
 	}
 	return []string{s.Spec.Hostname}
+}
+
+// indexMailUserByServer is the extractor of mailUserServerIndex.
+func indexMailUserByServer(obj client.Object) []string {
+	u, ok := obj.(*cnmsv1alpha1.MailUser)
+	if !ok || u.Spec.ServerRef.Name == "" {
+		return nil
+	}
+	return []string{u.Spec.ServerRef.Name}
+}
+
+// indexMailUserByDomain is the extractor of mailUserDomainIndex: one value
+// per distinct MailDomain the account names.
+func indexMailUserByDomain(obj client.Object) []string {
+	u, ok := obj.(*cnmsv1alpha1.MailUser)
+	if !ok {
+		return nil
+	}
+	var out []string
+	add := func(ref string) {
+		if ref != "" && !slices.Contains(out, ref) {
+			out = append(out, ref)
+		}
+	}
+	add(u.Spec.DomainRef.Name)
+	for _, a := range u.Spec.Aliases {
+		add(a.DomainRef.Name)
+	}
+	return out
+}
+
+// indexMailUserByAddress is the extractor of mailUserAddressIndex.
+func indexMailUserByAddress(obj client.Object) []string {
+	u, ok := obj.(*cnmsv1alpha1.MailUser)
+	if !ok {
+		return nil
+	}
+	return claimKeys(u)
+}
+
+// claimKeys are the addresses an account claims, folded to lower case, in
+// the form of mailUserAddressIndex.
+func claimKeys(u *cnmsv1alpha1.MailUser) []string {
+	prefix := u.Spec.ServerRef.Name + "/"
+	keys := []string{prefix + strings.ToLower(u.Name) + "@" + u.Spec.DomainRef.Name}
+	for _, a := range u.Spec.Aliases {
+		if k := prefix + strings.ToLower(a.LocalPart) + "@" + a.DomainRef.Name; !slices.Contains(keys, k) {
+			keys = append(keys, k)
+		}
+	}
+	return keys
 }

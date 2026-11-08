@@ -39,7 +39,7 @@ var _ = Describe("MailServer status write", func() {
 		orig := stale.DeepCopy()
 
 		mutateServerG(ns, func(s *cnmsv1alpha1.MailServer) {
-			s.Labels = map[string]string{"touched": "yes"}
+			s.Labels = map[string]string{touchedKey: "yes"}
 		})
 		setCondition(&stale.Status.Conditions, stale.Generation, conditionReady,
 			metav1.ConditionFalse, "Test", "patched")
