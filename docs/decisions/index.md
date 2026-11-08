@@ -21,11 +21,11 @@ See [TEMPLATE.md](TEMPLATE.md).
 
 | # | Title | Status |
 |---|---|---|
-| [0001](0001-engine-versions-and-licenses.md) | Engine versions, licenses, and image strategy | Accepted |
+| [0001](0001-engine-versions-and-licenses.md) | Engine versions, licenses, and image strategy | Accepted (amended: pinned versions) |
 | [0002](0002-v1alpha1-api-design.md) | v1alpha1 API design for `MailServer`, `MailDomain`, `MailDirectory` | Accepted (partially superseded by 0003, amended by 0014) |
 | [0003](0003-security-defaults-and-domain-ownership.md) | Security defaults and domain ownership (`MailDomainGrant`) | Accepted (partially amended by 0014 and 0015) |
-| [0004](0004-data-plane-images-and-build-strategy.md) | Data-plane images and build strategy | Accepted (partially amended by 0015) |
-| [0005](0005-component-metrics-sources.md) | Component metrics sources | Accepted |
+| [0004](0004-data-plane-images-and-build-strategy.md) | Data-plane images and build strategy | Accepted (partially amended by 0015, amended: pinned versions) |
+| [0005](0005-component-metrics-sources.md) | Component metrics sources | Accepted (amended: pinned version) |
 | [0006](0006-network-policy-and-security-floor.md) | NetworkPolicy floor and security floor | Accepted |
 | [0007](0007-deployment-annotation-merge.md) | Merging operator-owned annotations and skipping no-op writes | Accepted |
 | [0008](0008-user-sources-and-service-accounts.md) | Operator-managed users and service accounts | Accepted (partially amended by 0015) |

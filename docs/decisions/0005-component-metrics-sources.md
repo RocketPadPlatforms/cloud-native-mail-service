@@ -1,6 +1,7 @@
 # ADR 0005: Component metrics sources
 
-- **Status:** Accepted
+- **Status:** Accepted, amended 2026-11-08 (pinned version, see the note
+  in decision 3)
 - **Date:** 2026-10-25
 
 ## Context
@@ -85,7 +86,8 @@ present. Metric sources per component, verified on 2026-10-25:
 3. **Valkey metrics:** `oliver006/redis_exporter` v1.96.0 (MIT) as a
    sidecar on the Valkey pod, targeting
    `redis://127.0.0.1:6379`, on named port `valkey-metrics`
-   (9121).
+   (9121). (Amended 2026-11-08: the pinned exporter is v1.97.0, see
+   `internal/images/images.go`.)
 4. **Integration model:** every metrics endpoint gets a Service. The
    operator checks at startup and periodically (API discovery) whether
    `monitoring.coreos.com/v1` CRDs are available; if available and

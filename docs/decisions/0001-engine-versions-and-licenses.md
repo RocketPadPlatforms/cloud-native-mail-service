@@ -1,6 +1,7 @@
 # ADR 0001: Engine versions, licenses, and image strategy
 
-- **Status:** Accepted
+- **Status:** Accepted, amended 2026-11-08 (pinned versions, see the note
+  after the table)
 - **Date:** 2026-10-25
 
 ## Context
@@ -25,6 +26,13 @@ Pinned engine and toolchain versions (latest stable at verification time):
 | Go (toolchain) | 1.27.x (go.mod 1.27.3) | BSD-3-Clause | `go-version-file: go.mod` in CI; the builder image (Dockerfile) and the devcontainer use `golang:1.27` pinned by digest. Renovate updates the go directive and both images together (group `go`). |
 | Kubebuilder | 4.16.0 | Apache-2.0 | Project scaffold tooling. |
 | controller-runtime | v0.25.2 | Apache-2.0 | Pinned in `go.mod`; k8s API v0.37.0. |
+
+(Amended 2026-11-08: Renovate has moved some pins since this table was
+written. The pinned versions are those of `internal/images/images.go` and
+`go.mod`, not the ones above: Valkey is 9.1.3 (not 9.1.2), `golang.org/x/crypto`
+is v0.58.0 (not v0.54.0) and the k8s API is v0.37.2 (not v0.37.0). Postfix
+3.11.7, Rspamd 4.2.3, Dovecot 2.4.5, Go 1.27.3, Kubebuilder 4.16.0 and
+controller-runtime v0.25.2 are unchanged.)
 
 Policy:
 

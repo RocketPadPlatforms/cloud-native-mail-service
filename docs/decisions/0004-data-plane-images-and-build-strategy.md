@@ -1,12 +1,15 @@
 # ADR 0004: Data-plane images and build strategy
 
-- **Status:** Accepted, partially amended by ADR 0015
+- **Status:** Accepted, partially amended by ADR 0015, amended 2026-11-08
+  (pinned versions, see the notes in the Context and in decisions 5 and 7)
 - **Date:** 2026-10-25
 
 ## Context
 
 ADR-0001 pins the engine versions (Postfix 3.11.7, Rspamd 4.2.3,
 Dovecot 2.4.5, Valkey 9.1.2) and defers the image strategy to Phase 2.
+(Amended 2026-11-08: the pinned versions are those of
+`internal/images/images.go`; Valkey is 9.1.3 and the others are unchanged.)
 The data plane runs four workloads per `MailServer`; each needs a
 container image with a known user, writable paths, and a log path
 (`stdout`). Facts verified against upstream on 2026-10-25:
@@ -94,7 +97,8 @@ container image with a known user, writable paths, and a log path
    (WORKDIR) to that user, so both the `emptyDir` and the PVC get
    correct ownership. Persistence: RWO PVC when enabled in `spec`,
    `emptyDir` otherwise. 9.1.2 has no config-check flag, so the
-   validation gate briefly starts the server and pings it.
+   validation gate briefly starts the server and pings it. (Amended
+   2026-11-08: the pinned Valkey is 9.1.3, see `internal/images/images.go`.)
 6. **Pin handling:** every engine/test image reference is a Go
    constant (version tag + digest) in one package, consumed by the
    renderers and the e2e suite; a Renovate custom manager updates them.
@@ -118,7 +122,8 @@ container image with a known user, writable paths, and a log path
    sink runs with `--smtp [::]:25`, API/UI on 8025) and
    `curlimages/curl`, which scrapes the operator metrics. Test-only,
    pinned by version and digest in the images package, not part of
-   the product.
+   the product. (Amended 2026-11-08: the pinned Mailpit is v1.33.0, see
+   `internal/images/images.go`.)
    The sink must listen on port 25: the kind cluster's NetworkPolicy
    enforcement (kindnet, nftables `queue` to a userspace evaluator)
    evaluates Service traffic on the post-DNAT tuple, so the Postfix
