@@ -30,6 +30,9 @@ import (
 	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/manifests"
 )
 
+// kindSecret is the kind in an ownershipConflictError for a Secret.
+const kindSecret = "Secret"
+
 // ownerMailServer names the owner kind in an ownershipConflictError.
 const ownerMailServer = "MailServer"
 
@@ -66,7 +69,7 @@ func (r *MailServerReconciler) hashKey(ctx context.Context, server *cnmsv1alpha1
 		return nil, err
 	}
 	if !metav1.IsControlledBy(s, server) {
-		return nil, &ownershipConflictError{kind: "Secret", name: name, owner: ownerMailServer}
+		return nil, &ownershipConflictError{kind: kindSecret, name: name, owner: ownerMailServer}
 	}
 	key := s.Data[manifests.HashKeyData]
 	if len(key) < hashKeyLength {

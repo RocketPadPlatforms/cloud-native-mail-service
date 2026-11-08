@@ -85,6 +85,22 @@ func domainOf(addr string) string {
 // for every producer of accounts. The second result is the list of
 // conflicted addresses. The accounts it is given are not changed.
 func DecideAccounts(accounts []Account, authorized []string) ([]Account, []string) {
+	res := addresses.Decide(AccountsInput(accounts, authorized))
+	out := slices.Clone(accounts)
+	for i := range out {
+		for _, u := range res.Users {
+			if u.Name == strings.ToLower(out[i].Name) {
+				out[i].Verdict = u
+			}
+		}
+	}
+	return out, res.Conflicted
+}
+
+// AccountsInput is the input of addresses.Decide, and of the limits of
+// addresses.CheckLimits, for accounts without MailDomain objects: the domain
+// of each address is named by its DNS name and is ok when it is in authorized.
+func AccountsInput(accounts []Account, authorized []string) addresses.Input {
 	authorized = lowerAll(authorized)
 	in := addresses.Input{Domains: map[string]addresses.Domain{}}
 	state := func(domain string) string {
@@ -105,16 +121,7 @@ func DecideAccounts(accounts []Account, authorized []string) ([]Account, []strin
 		}
 		in.Users = append(in.Users, u)
 	}
-	res := addresses.Decide(in)
-	out := slices.Clone(accounts)
-	for i := range out {
-		for _, u := range res.Users {
-			if u.Name == strings.ToLower(out[i].Name) {
-				out[i].Verdict = u
-			}
-		}
-	}
-	return out, res.Conflicted
+	return in
 }
 
 // PlanAccounts derives the AccountPlan from the verdict of addresses.Decide

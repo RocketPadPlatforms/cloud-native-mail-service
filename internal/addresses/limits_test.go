@@ -150,3 +150,47 @@ func TestObjectSizeOfBytes(t *testing.T) {
 	data["k2"] = nil
 	wantLimit(t, CheckObjects(map[string]map[string][]byte{"secret": data}), ReasonConfigTooLarge)
 }
+
+// The limits can be lowered by the caller (the specs of the MailServer
+// controller do); a zero field is the value of the ADR.
+func TestCheckLimitsWithOtherLimits(t *testing.T) {
+	in := Input{Users: usersWithAliases(4, 2), Domains: map[string]Domain{refA: {Name: "a.example", State: DomainOK}, refB: {Name: "b.example", State: DomainOK}}}
+	for name, tt := range map[string]struct {
+		l      Limits
+		reason string
+	}{
+		"the defaults":              {Limits{}, ""},
+		"3 accounts":                {Limits{Users: 3}, ReasonUserLimitExceeded},
+		"4 accounts":                {Limits{Users: 4}, ""},
+		"11 addresses of 12":        {Limits{Addresses: 11}, ReasonAddressLimitExceeded},
+		"12 addresses of 12":        {Limits{Addresses: 12}, ""},
+		"1 alias":                   {Limits{Aliases: 1}, ReasonAddressLimitExceeded},
+		"a zero field is a default": {Limits{Users: 0, Addresses: 0}, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := CheckLimitsWith(in, tt.l)
+			if tt.reason == "" {
+				if err != nil {
+					t.Fatalf("CheckLimitsWith() = %v", err)
+				}
+				return
+			}
+			wantLimit(t, err, tt.reason)
+		})
+	}
+}
+
+func TestCheckObjectsWithOtherLimit(t *testing.T) {
+	objects := map[string]map[string]string{"b": {"k": strings.Repeat("x", 99)}, "a": {"k": "x"}}
+	if err := CheckObjectsWith(objects, Limits{ObjectBytes: 101}); err != nil {
+		t.Errorf("100 bytes under a limit of 101 = %v", err)
+	}
+	err := CheckObjectsWith(objects, Limits{ObjectBytes: 100})
+	wantLimit(t, err, ReasonConfigTooLarge)
+	if !strings.Contains(err.Error(), "b holds 100 bytes") {
+		t.Errorf("message = %v, want the object and its size", err)
+	}
+	if err := CheckObjectsWith(objects, Limits{}); err != nil {
+		t.Errorf("the default limit = %v", err)
+	}
+}

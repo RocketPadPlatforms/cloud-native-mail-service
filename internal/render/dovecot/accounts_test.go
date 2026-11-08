@@ -20,6 +20,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/addresses"
 	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/render"
 )
 
@@ -178,5 +179,64 @@ func TestDirectoryHasNoAuthWorkerSettings(t *testing.T) {
 		if strings.Contains(conf, not) {
 			t.Errorf("a directory render has %q", not)
 		}
+	}
+}
+
+// ParseLive reads the live files back for the revocation-only rule of a
+// blocked revision (ADR 0015, section 4.7): what the renderers write, the
+// parser returns, with a disabled or suspended account (only in the userdb)
+// marked as unable to log in.
+func TestParseLiveReadsWhatTheRenderersWrite(t *testing.T) {
+	req := testRequest(t, nil)
+	req.Accounts = accounts()
+	res, err := New().Render(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := ParseLive(res.LiveData[passdbFile], res.LiveData[userdbFile])
+	byName := map[string]render.Account{}
+	for _, a := range req.Accounts {
+		byName[a.Name] = a
+	}
+	want := map[string]addresses.Entry{}
+	for name, a := range byName {
+		// Disabled and suspended accounts are only in the userdb.
+		w := addresses.Entry{Name: name, Credential: a.PasswordHash, Primary: a.Address}
+		if a.Disabled || strings.HasSuffix(a.Address, "@revoked.example") {
+			w.Disabled, w.Credential = true, ""
+		}
+		want[name] = w
+	}
+	if len(got) != len(want) {
+		t.Fatalf("ParseLive() = %+v, want %d accounts", got, len(want))
+	}
+	for _, e := range got {
+		w, ok := want[e.Name]
+		if !ok || e.Credential != w.Credential || e.Primary != w.Primary || e.Disabled != w.Disabled || e.CanLogin() == w.Disabled {
+			t.Errorf("ParseLive() has %+v, want %+v", e, w)
+		}
+	}
+	if len(ParseLive("# nothing\n", "garbage\n:::\n")) != 0 {
+		t.Error("lines that are not of the form of the renderers are ignored")
+	}
+}
+
+// RenderLogins is the function the passdb of a revision is rendered with: the
+// lines of a blocked revision are written the same way.
+func TestRenderLoginsIsTheFormOfThePassdb(t *testing.T) {
+	req := testRequest(t, nil)
+	req.Accounts = accounts()
+	res, err := New().Render(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logins []Login
+	for _, e := range ParseLive(res.LiveData[passdbFile], res.LiveData[userdbFile]) {
+		if e.CanLogin() {
+			logins = append(logins, Login{Address: e.Primary, Name: e.Name, Hash: e.Credential})
+		}
+	}
+	if got := RenderLogins(req.Server, logins); got != res.LiveData[passdbFile] {
+		t.Errorf("RenderLogins() =\n%s\nwant\n%s", got, res.LiveData[passdbFile])
 	}
 }

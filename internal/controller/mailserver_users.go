@@ -20,6 +20,7 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -85,6 +86,7 @@ func (r *MailServerReconciler) mailUserSource(ctx context.Context, server *cnmsv
 		accounts:   render.NewAccounts(res, in.Users, func(name string) string { return hashes[name] }),
 		conflicted: res.Conflicted,
 		verdict:    &res,
+		input:      in,
 	}, nil
 }
 
@@ -177,7 +179,13 @@ func (r *MailServerReconciler) applyLiveUsers(ctx context.Context, server *cnmsv
 		return err
 	}
 	if !metav1.IsControlledBy(existing, server) {
-		return &ownershipConflictError{kind: "Secret", name: desired.Name, owner: ownerMailServer}
+		return &ownershipConflictError{kind: kindSecret, name: desired.Name, owner: ownerMailServer}
+	}
+	// A write that was computed from a read carries that read's resourceVersion
+	// (settleLiveUsers): when the Secret has moved since, the computation is stale
+	// and must not overwrite what another writer just applied.
+	if desired.ResourceVersion != "" && desired.ResourceVersion != existing.ResourceVersion {
+		return errLiveUsersRaced
 	}
 	labelsChanged := false
 	for k, v := range desired.Labels {
@@ -281,4 +289,160 @@ func debounced(fn handler.MapFunc, delay time.Duration) handler.EventHandler {
 			enqueue(ctx, e.Object, q)
 		},
 	}
+}
+
+// ReasonUserLimitExceeded, ReasonAddressLimitExceeded and ReasonConfigTooLarge
+// are the Ready reasons of a MailServer whose new revision a limit blocks
+// (ADR 0015, sections 4.7 and 8). The running revision keeps serving.
+const (
+	ReasonUserLimitExceeded    = addresses.ReasonUserLimitExceeded
+	ReasonAddressLimitExceeded = addresses.ReasonAddressLimitExceeded
+	ReasonConfigTooLarge       = addresses.ReasonConfigTooLarge
+)
+
+// accountEntries turns the accounts of a render into the form that
+// addresses.Settle compares with the live files: who may log in (not disabled,
+// not suspended, with a hash), with which hash, and the addresses.
+func accountEntries(accounts []render.Account) []addresses.Entry {
+	out := make([]addresses.Entry, 0, len(accounts))
+	for _, a := range accounts {
+		e := addresses.Entry{
+			Name: a.Name, Disabled: a.Disabled || a.PasswordHash == "", Suspended: a.Suspended(),
+			Credential: a.PasswordHash, Primary: a.Address,
+		}
+		for _, row := range a.Verdict.Rows[min(1, len(a.Verdict.Rows)):] {
+			if row.Served {
+				e.Aliases = append(e.Aliases, row.Address)
+			}
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+// checkRendered applies the byte guard of ADR 0015, section 4.7 to every
+// ConfigMap and Secret of a revision, the live users Secret included, before
+// anything is sent to the API server: an object that stays under 1,000,000
+// bytes (keys and values) is below the 1 MiB limit with a margin. The result
+// is nil, or a *addresses.LimitError that names the object (a hash-named
+// object, no content).
+func checkRendered(plane *manifests.DataPlane, l addresses.Limits) error {
+	configMaps := map[string]map[string]string{}
+	secrets := map[string]map[string][]byte{}
+	for _, obj := range plane.Configs {
+		switch o := obj.(type) {
+		case *corev1.ConfigMap:
+			configMaps[o.Name] = o.Data
+		case *corev1.Secret:
+			secrets[o.Name] = o.Data
+		}
+	}
+	if plane.LiveUsers != nil {
+		secrets[plane.LiveUsers.Name] = plane.LiveUsers.Data
+	}
+	if err := addresses.CheckObjectsWith(configMaps, l); err != nil {
+		return err
+	}
+	return addresses.CheckObjectsWith(secrets, l)
+}
+
+// settleLiveUsers writes the live users Secret of a blocked revision (ADR
+// 0015, section 4.7, "what a blocked revision blocks"): the revocation-only
+// rule. The previous accepted set is what the Secret holds now, read back
+// with dovecot.ParseLive: it is in the cluster, so it survives a restart of
+// the operator, and it is exactly what Dovecot reads. The passdb file keeps
+// the lines that are already in it, with the current password, and drops those
+// of an account that is gone, disabled or suspended; no line is added. The
+// userdb file is not touched: the frozen Postfix maps still accept the mail of
+// those accounts, and they stay deliverable. It returns the number of changes
+// that wait for the blocking input to be fixed. A server without a live
+// Secret has nothing running, and nothing to settle.
+func (r *MailServerReconciler) settleLiveUsers(ctx context.Context, server *cnmsv1alpha1.MailServer, next []addresses.Entry) (held int, err error) {
+	existing := &corev1.Secret{}
+	err = r.APIReader.Get(ctx, types.NamespacedName{Namespace: server.Namespace, Name: manifests.LiveUsersSecretName(server)}, existing)
+	if errors.IsNotFound(err) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	if !metav1.IsControlledBy(existing, server) {
+		return 0, &ownershipConflictError{kind: kindSecret, name: existing.Name, owner: ownerMailServer}
+	}
+	userdb := string(existing.Data[dovecot.UserdbKey])
+	// The live files do not carry aliases, so they cannot be compared: the
+	// changes that wait are the ones of accounts.
+	next = slices.Clone(next)
+	for i := range next {
+		next[i].Aliases = nil
+	}
+	settled := addresses.Settle(dovecot.ParseLive(string(existing.Data[dovecot.PassdbKey]), userdb), next, true)
+	logins := make([]dovecot.Login, 0, len(settled.Logins))
+	for _, e := range settled.Logins {
+		logins = append(logins, dovecot.Login{Address: e.Primary, Name: e.Name, Hash: e.Credential})
+	}
+	files := map[string]string{dovecot.PassdbKey: dovecot.RenderLogins(server, logins), dovecot.UserdbKey: userdb}
+	desired := manifests.LiveUsersSecret(server, files)
+	// The settled files come from this read: the write is refused when the Secret
+	// is not at this resourceVersion any more (applyLiveUsers).
+	desired.ResourceVersion = existing.ResourceVersion
+	return len(settled.Held), r.applyLiveUsers(ctx, server, desired, false)
+}
+
+// emitLimitEvent records a Warning Event when the reason or the message of a
+// limit block changes while the server was not ready already (the change of
+// Ready itself has its Event): the message has counts and an object name,
+// never an address or a secret.
+func (r *MailServerReconciler) emitLimitEvent(server *cnmsv1alpha1.MailServer, prev *metav1.Condition, reason, message string) {
+	if r.Recorder == nil || prev == nil || prev.Status != metav1.ConditionFalse || (prev.Reason == reason && prev.Message == message) {
+		return
+	}
+	r.Recorder.Eventf(server, nil, corev1.EventTypeWarning, reason, "LimitExceeded", "%s", eventMessage(message))
+}
+
+// holdRunning is what a blocked render does to the running data plane: the
+// certificate and the live users Secret follow keepRunning. It returns the
+// reason and the message of Ready: for a limit block the message says what the
+// block does, and a Warning Event is emitted when it changes.
+func (r *MailServerReconciler) holdRunning(ctx context.Context, server *cnmsv1alpha1.MailServer, hostname string, blocked *blockedBy, src userSource, exists bool, prevReady *metav1.Condition) (reason, message string, err error) {
+	held := 0
+	if exists {
+		if held, err = r.keepRunning(ctx, server, hostname, blocked, src); err != nil {
+			return "", "", err
+		}
+	}
+	if !src.limited {
+		return blocked.reason, blocked.message, nil
+	}
+	message = limitMessage(blocked.message, held, exists)
+	r.emitLimitEvent(server, prevReady, blocked.reason, message)
+	return blocked.reason, message, nil
+}
+
+// holdRevision handles a revision that the byte guard refused after the
+// render: the running revision stays, and the live users Secret follows the
+// revocation-only rule. It returns the message of Ready.
+func (r *MailServerReconciler) holdRevision(ctx context.Context, server *cnmsv1alpha1.MailServer, limit *addresses.LimitError, src userSource, prevReady *metav1.Condition) (string, error) {
+	held, err := r.settleLiveUsers(ctx, server, src.entries)
+	if err != nil {
+		return "", err
+	}
+	message := limitMessage(limit.Message, held, true)
+	r.emitLimitEvent(server, prevReady, limit.Reason, message)
+	return message, nil
+}
+
+// recordGate records the outcome of the validation gate. A revision that the
+// byte guard refused is no validation result: it becomes the limit block of
+// the server (holdRevision) and replaces blocked.
+func (r *MailServerReconciler) recordGate(ctx context.Context, server *cnmsv1alpha1.MailServer, g *gate, src userSource, blocked *blockedBy, prevReady, prevValidated *metav1.Condition) (*blockedBy, error) {
+	if g.limit == nil {
+		r.setValidationCondition(server, g, prevValidated)
+		return blocked, nil
+	}
+	message, err := r.holdRevision(ctx, server, g.limit, src, prevReady)
+	if err != nil {
+		return blocked, err
+	}
+	return &blockedBy{g.limit.Reason, message}, nil
 }

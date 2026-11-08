@@ -18,8 +18,12 @@ package dovecot
 
 import (
 	"fmt"
+	"path"
+	"slices"
 	"strings"
 
+	cnmsv1alpha1 "github.com/RocketPadPlatforms/cloud-native-mail-service/api/v1alpha1"
+	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/addresses"
 	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/render"
 )
 
@@ -41,13 +45,28 @@ const (
 // user:password:uid:gid:gecos:home:shell:extra; the uid, gid and home of
 // the userdb are not repeated here.
 func renderPassdb(req *render.RenderRequest, plan *render.AccountPlan) string {
+	logins := make([]Login, 0, len(plan.Logins))
+	for _, u := range plan.Logins {
+		logins = append(logins, Login{Address: u.Address, Name: u.Name, Hash: u.PasswordHash})
+	}
+	return RenderLogins(req.Server, logins)
+}
+
+// Login is one account of the passdb file.
+type Login struct{ Address, Name, Hash string }
+
+// RenderLogins renders the passdb file for the given logins. The MailServer
+// controller uses it for the live Secret of a blocked revision, where only the
+// lines that are already in the file stay (ADR 0015, section 4.7); the
+// revision itself goes through renderPassdb and the same function.
+func RenderLogins(server *cnmsv1alpha1.MailServer, logins []Login) string {
 	var b strings.Builder
 	b.WriteString("# CNMS-rendered Dovecot passdb (logins) -- do not edit.\n")
-	fmt.Fprintf(&b, "# Source: MailServer %s/%s (ADR 0015)\n\n", req.Server.Namespace, req.Server.Name)
+	fmt.Fprintf(&b, "# Source: MailServer %s/%s (ADR 0015)\n\n", server.Namespace, server.Name)
 	b.WriteString("# Format: login:password::::::user=<account name>\n")
-	for _, u := range plan.Logins {
-		fmt.Fprintf(&b, "%s:%s::::::user=%s\n", u.Address, u.PasswordHash, u.Name)
-		fmt.Fprintf(&b, "%s:%s::::::user=%s\n", u.Name, u.PasswordHash, u.Name)
+	for _, u := range logins {
+		fmt.Fprintf(&b, "%s:%s::::::user=%s\n", u.Address, u.Hash, u.Name)
+		fmt.Fprintf(&b, "%s:%s::::::user=%s\n", u.Name, u.Hash, u.Name)
 	}
 	return b.String()
 }
@@ -73,3 +92,63 @@ func renderUserdb(req *render.RenderRequest, plan *render.AccountPlan) string {
 	}
 	return b.String()
 }
+
+// ParseLive reads the two live files back into the accounts they carry: the
+// state of the running revision for the revocation-only rule of a blocked
+// revision (ADR 0015, section 4.7). It is the one place that knows both
+// formats, next to the renderers. An account with a passdb line can log in and
+// has its hash and primary address from it; an account that is only in the
+// userdb (disabled, suspended, or without a credential) is returned as
+// Disabled. Lines that are not of the form the renderers write are ignored.
+func ParseLive(passdb, userdb string) []addresses.Entry {
+	byName := map[string]*addresses.Entry{}
+	entry := func(name string) *addresses.Entry {
+		if byName[name] == nil {
+			byName[name] = &addresses.Entry{Name: name, Disabled: true}
+		}
+		return byName[name]
+	}
+	for line := range strings.Lines(userdb) {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		f := strings.Split(line, ":")
+		if len(f) < 6 || !strings.HasPrefix(f[5], mailRoot+"/") {
+			continue
+		}
+		e := entry(path.Base(f[5]))
+		if strings.Contains(f[0], "@") {
+			e.Primary = f[0]
+		}
+	}
+	for line := range strings.Lines(passdb) {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		f := strings.Split(line, ":")
+		name, ok := strings.CutPrefix(f[len(f)-1], "user=")
+		if len(f) < 7 || !ok || name == "" {
+			continue
+		}
+		e := entry(name)
+		e.Disabled, e.Credential = false, f[1]
+		if strings.Contains(f[0], "@") {
+			e.Primary = f[0]
+		}
+	}
+	out := make([]addresses.Entry, 0, len(byName))
+	for _, e := range byName {
+		out = append(out, *e)
+	}
+	slices.SortFunc(out, func(a, b addresses.Entry) int { return strings.Compare(a.Name, b.Name) })
+	return out
+}
+
+// The keys of the live Secret: the names of the two files (ADR 0015, section
+// 4.7).
+const (
+	PassdbKey = passdbFile
+	UserdbKey = userdbFile
+)
