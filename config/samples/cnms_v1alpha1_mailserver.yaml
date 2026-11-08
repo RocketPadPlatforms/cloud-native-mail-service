@@ -19,6 +19,15 @@ spec:
       - 2001:db8::/32
   directoryRef:
     name: maildirectory-sample
+  # Namespaces whose MailServiceAccounts may send through this server (see
+  # cnms_v1alpha1_mailserviceaccount.yaml). Without senderDomains a
+  # namespace may send from every domain the server serves; give each
+  # namespace its own domains.
+  serviceAccounts:
+    allowedNamespaces:
+      - name: example-app
+        senderDomains:
+          - example.org
   outbound:
     direct: {}
   tls:

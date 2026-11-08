@@ -22,6 +22,9 @@ resources:
 # default, aiding admins in cluster management. Those roles are
 # not used by the cloud-native-mail-service itself. You can comment the following lines
 # if you do not want those helpers be installed with your Project.
+- mailserviceaccount_admin_role.yaml
+- mailserviceaccount_editor_role.yaml
+- mailserviceaccount_viewer_role.yaml
 - mailuser_admin_role.yaml
 - mailuser_editor_role.yaml
 - mailuser_viewer_role.yaml

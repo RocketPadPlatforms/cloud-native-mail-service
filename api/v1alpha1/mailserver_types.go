@@ -98,6 +98,11 @@ type MailServerSpec struct {
 	// +optional
 	Mailboxes *Mailboxes `json:"mailboxes,omitempty"`
 
+	// ServiceAccounts configures which namespaces may use the server
+	// through a MailServiceAccount (ADR 0008, ADR 0015).
+	// +optional
+	ServiceAccounts *ServerServiceAccounts `json:"serviceAccounts,omitempty"`
+
 	// Postfix workload settings.
 	// +optional
 	Postfix *Postfix `json:"postfix,omitempty"`
@@ -142,6 +147,51 @@ type ServerSPF struct {
 	// +kubebuilder:validation:items:MaxLength=64
 	// +kubebuilder:validation:XValidation:rule="self.all(a, (isIP(a) && ip(a).family() == 6) || (isCIDR(a) && cidr(a).ip().family() == 6))",message="every entry must be an IPv6 address or CIDR"
 	IP6 []string `json:"ip6,omitempty"`
+}
+
+// ServerServiceAccounts holds the consent of a MailServer to the
+// MailServiceAccounts of other namespaces.
+type ServerServiceAccounts struct {
+	// AllowedNamespaces lists the namespaces whose MailServiceAccounts
+	// may reference the server. Unset or empty: no other namespace
+	// does; the MailServiceAccounts of the namespace of the server need
+	// no entry. Removing a namespace revokes its accounts. At most 64:
+	// a limit on the size of the object, far above the number of
+	// tenant namespaces that share one mail server.
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=64
+	// +optional
+	AllowedNamespaces []AllowedNamespace `json:"allowedNamespaces,omitempty"`
+}
+
+// AllowedNamespace is a namespace that may use a MailServer through
+// MailServiceAccounts.
+type AllowedNamespace struct {
+	// Name of the namespace.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Name string `json:"name"`
+
+	// SenderDomains limits the namespace to the sender addresses of
+	// these domains, which are domain names of the MailDomains of the
+	// namespace of the server (the rule of MailDomain.spec.domain).
+	// Unset means every domain the server serves; an empty list is
+	// refused, so that nobody writes it to mean "no domains" and gets
+	// all of them (leave the namespace out of allowedNamespaces
+	// instead). Give every namespace its own domains: the account of a
+	// namespace that shares a domain can take an address from another
+	// namespace's account, and when two accounts claim one address
+	// both lose it (ADR 0015, section 4.2). At most 32, a limit on the
+	// size of the object.
+	// +listType=set
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=32
+	// +kubebuilder:validation:items:MaxLength=253
+	// +kubebuilder:validation:items:Pattern=`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?[.])+[a-z]([a-z0-9-]{0,61}[a-z0-9])?$`
+	// +optional
+	SenderDomains []string `json:"senderDomains,omitempty"`
 }
 
 // Outbound selects the outbound delivery mode.

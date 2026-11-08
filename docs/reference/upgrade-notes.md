@@ -161,6 +161,24 @@ the new CRDs reject or prune the old field names.
   keeps running). The operator role gains `get`, `list` and `watch` on
   `mailusers`, `patch` on `mailusers/status`, `update` on
   `mailusers/finalizers` and `update` on `secrets`.
+- **New resource `MailServiceAccount` and new field
+  `MailServer.spec.serviceAccounts.allowedNamespaces`** ([ADR
+  0008](../decisions/0008-user-sources-and-service-accounts.md), [ADR
+  0015](../decisions/0015-user-sources-directory-users-and-aliases.md),
+  section 4.9). A `MailServiceAccount` lives in the namespace of an
+  application, names a `MailServer` in `spec.serverRef` (with an optional
+  `namespace`) and the one address it may send as in `spec.sender`.
+  `allowedNamespaces` is a list of objects with a `name` and optional
+  `senderDomains`; the names are unique and there are at most 64 of them.
+  Nothing existing changes, and the API is all there is: the operator
+  registers a controller for `MailServiceAccount`s that does nothing, so no
+  credential Secret, NetworkPolicy, status or sender check exists yet and
+  `allowedNamespaces` is not evaluated. Install the new CRDs (`make
+  install`) before the new operator: the operator watches
+  `MailServiceAccount`s and exits at startup while the CRD is missing (the
+  data plane keeps running). The operator role gains `get`, `list` and
+  `watch` on `mailserviceaccounts` and `patch` on
+  `mailserviceaccounts/status`.
 - **Storage sizes are immutable:** `spec.postfix.queueStorage` and
   `spec.mailboxes.storage` cannot be edited once set, and decreasing
   `spec.postfix.replicas` is rejected. Resize the PersistentVolumeClaims

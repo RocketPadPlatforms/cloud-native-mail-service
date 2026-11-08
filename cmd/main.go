@@ -284,6 +284,13 @@ func main() {
 		setupLog.Error(err, "Failed to create controller", "controller", "mailuser")
 		os.Exit(1)
 	}
+	if err := (&controller.MailServiceAccountReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "mailserviceaccount")
+		os.Exit(1)
+	}
 	// +kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
