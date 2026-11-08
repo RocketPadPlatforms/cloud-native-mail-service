@@ -44,6 +44,7 @@ rules:
   - delete
   - get
   - list
+  - update
 - apiGroups:
   - apiextensions.k8s.io
   resources:
@@ -120,6 +121,7 @@ rules:
   resources:
   - maildomains/finalizers
   - mailservers/finalizers
+  - mailusers/finalizers
   verbs:
   - update
 - apiGroups:

@@ -510,10 +510,10 @@ shown is the one `make license-check` enforces against the allow-list.
 - Source: https://pkg.go.dev/golang.org/x/sync?tab=licenses
 
 
-## golang.org/x/sys/unix
+## golang.org/x/sys
 
 - License: BSD-3-Clause
-- Source: https://pkg.go.dev/golang.org/x/sys/unix?tab=licenses
+- Source: https://pkg.go.dev/golang.org/x/sys?tab=licenses
 
 
 ## golang.org/x/term

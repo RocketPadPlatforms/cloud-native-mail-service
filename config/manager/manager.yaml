@@ -45,6 +45,13 @@ spec:
           - --health-probe-bind-address=:8081
         image: controller:latest
         name: manager
+        env:
+        # The MailUser controller hashes passwords with Argon2id, one hash at a time, and one
+        # hash allocates 19 MiB of garbage that the Go collector does not see against the
+        # container limit. GOMEMLIMIT makes it collect before the limit: keep it at about
+        # 5/6 of resources.limits.memory below, and change both together.
+        - name: GOMEMLIMIT
+          value: 160MiB
         ports:
         - containerPort: 8081
           name: health
@@ -75,7 +82,7 @@ spec:
         resources:
           limits:
             cpu: 500m
-            memory: 128Mi
+            memory: 192Mi
           requests:
             cpu: 10m
             memory: 64Mi

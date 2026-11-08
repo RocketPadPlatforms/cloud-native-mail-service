@@ -152,12 +152,15 @@ the new CRDs reject or prune the old field names.
   0015](../decisions/0015-user-sources-directory-users-and-aliases.md)):
   an operator-managed account with a login (the object name), a primary
   address in `domainRef`, up to 32 `aliases` and an optional
-  `passwordSecretRef`. Nothing existing changes, and nothing reads a
-  `MailUser` yet, so creating one has no effect on a running server. Install
-  the new CRD (`make install`) before the new operator: the operator
-  watches `MailUser`s and exits at startup while the CRD is missing (the
-  data plane keeps running). The operator role gains `get`, `list` and `watch` on `mailusers` and `patch` on
-  `mailusers/status`.
+  `passwordSecretRef`. Nothing existing changes. The operator reconciles a
+  `MailUser`: it writes its status and its credential Secret (see the
+  entry on `update` on Secrets below), but the `MailServer` does not read
+  it yet, so creating one has no effect on a running server. Install the
+  new CRD (`make install`) before the new operator: the operator watches
+  `MailUser`s and exits at startup while the CRD is missing (the data plane
+  keeps running). The operator role gains `get`, `list` and `watch` on
+  `mailusers`, `patch` on `mailusers/status`, `update` on
+  `mailusers/finalizers` and `update` on `secrets`.
 - **Storage sizes are immutable:** `spec.postfix.queueStorage` and
   `spec.mailboxes.storage` cannot be edited once set, and decreasing
   `spec.postfix.replicas` is rejected. Resize the PersistentVolumeClaims
@@ -343,6 +346,27 @@ the new CRDs reject or prune the old field names.
 
 ### Network and operator
 
+- **The operator can update Secrets** (`update` on `secrets`, new). The
+  `MailUser` controller makes the credential Secret `<name>-credential`
+  and rewrites it in place when a password changes ([ADR
+  0015](../decisions/0015-user-sources-directory-users-and-aliases.md), section 3,
+  point 4, and 4.7 for the verb). The role is a `ClusterRole`, so the operator can overwrite any Secret
+  it can reach; it could already delete and create any Secret, so `update`
+  adds the overwrite without the delete. An operator that runs with a
+  `ClusterRole` of its own (not the generated one) needs the verb `update` on
+  `secrets` before this version starts, and `update` on
+  `mailusers/finalizers` (for the owner reference of the credential Secret
+  where the OwnerReferencesPermissionEnforcement plugin is on). Nothing else
+  changes for a cluster without `MailUser`s: creating one only writes its
+  status and its credential Secret, and the `MailServer` does not read it yet.
+  The password hash is computed inside the operator (Argon2id, 19 MiB per
+  hash, one at a time), so the memory limit of the manager container is
+  raised from 128Mi to 192Mi and the container gets `GOMEMLIMIT=160MiB`
+  (`config/manager/manager.yaml`); an operator deployed from your own
+  manifests needs both, or a limit of its own that leaves room for 19 MiB of
+  garbage per hash.
+  The hardening that limits the verb to Secrets with the managed-by label (a
+  `ValidatingAdmissionPolicy`) is in the [backlog](../backlog.md).
 - **The operator no longer renders `cnms-no-port25-egress`.** Port-25
   egress for other pods is denied by an admin-owned
   `CiliumClusterwideNetworkPolicy`; start from the example in

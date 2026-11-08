@@ -9,6 +9,11 @@ committed.
 Scoped in [ADR 0015](decisions/0015-user-sources-directory-users-and-aliases.md)
 (three pull requests, see the roadmap):
 
+- The `MailUser` controller runs the address decision over the whole server in
+  every reconcile, so a restart at 1,000 accounts costs about a million
+  account visits (the list is read without copies, and the decision is
+  O(n log n) per pass). If that shows, decide once per server and share the
+  result, for example through the `MailServer` controller.
 - Bind the header From to the login: sender-login maps check only
   `MAIL FROM`, so an authenticated user can still put any served domain in
   the header From and get it signed (ADR 0013, section 3). The check that
