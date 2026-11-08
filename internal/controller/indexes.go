@@ -60,12 +60,22 @@ const (
 	// 4.2, point 5), so that a conflict reaches the claimants and not every
 	// account of the server.
 	mailUserAddressIndex = "spec.claimedAddresses"
+
+	// mailServiceAccountServerIndex indexes MailServiceAccounts by the
+	// MailServer they reference, as <namespace>/<name> (the namespace of
+	// the account when serverRef has none): a server event must reach its
+	// accounts of every namespace, and only those.
+	mailServiceAccountServerIndex = "spec.serverRef.key"
+	// mailServiceAccountSenderIndex indexes MailServiceAccounts by the
+	// sender they claim on a server, as <server key>/<sender>, so that a
+	// conflict reaches the claimants and not every account of the server.
+	mailServiceAccountSenderIndex = "spec.sender.key"
 )
 
-// IndexFields registers the field indexes of MailDomains, MailServers and
-// MailUsers. Call it exactly once per manager, before the MailServer,
-// MailDomain and MailUser reconcilers are set up: they need the indexes, and a
-// manager rejects the same index twice.
+// IndexFields registers the field indexes of MailDomains, MailServers,
+// MailUsers and MailServiceAccounts. Call it exactly once per manager, before
+// the MailServer, MailDomain, MailUser and MailServiceAccount reconcilers are
+// set up: they need the indexes, and a manager rejects the same index twice.
 func IndexFields(mgr ctrl.Manager) error {
 	idx := mgr.GetFieldIndexer()
 	for field, extract := range map[string]client.IndexerFunc{
@@ -93,7 +103,43 @@ func IndexFields(mgr ctrl.Manager) error {
 			return err
 		}
 	}
+	for field, extract := range map[string]client.IndexerFunc{
+		mailServiceAccountServerIndex: indexAccountByServer,
+		mailServiceAccountSenderIndex: indexAccountBySender,
+	} {
+		if err := idx.IndexField(context.Background(), &cnmsv1alpha1.MailServiceAccount{}, field, extract); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// accountServerKey is <namespace>/<name> of the MailServer an account
+// references: serverRef.namespace, or the namespace of the account.
+func accountServerKey(a *cnmsv1alpha1.MailServiceAccount) string {
+	ns := a.Spec.ServerRef.Namespace
+	if ns == "" {
+		ns = a.Namespace
+	}
+	return ns + "/" + a.Spec.ServerRef.Name
+}
+
+// indexAccountByServer is the extractor of mailServiceAccountServerIndex.
+func indexAccountByServer(obj client.Object) []string {
+	a, ok := obj.(*cnmsv1alpha1.MailServiceAccount)
+	if !ok || a.Spec.ServerRef.Name == "" {
+		return nil
+	}
+	return []string{accountServerKey(a)}
+}
+
+// indexAccountBySender is the extractor of mailServiceAccountSenderIndex.
+func indexAccountBySender(obj client.Object) []string {
+	a, ok := obj.(*cnmsv1alpha1.MailServiceAccount)
+	if !ok || a.Spec.ServerRef.Name == "" || a.Spec.Sender == "" {
+		return nil
+	}
+	return []string{accountServerKey(a) + "/" + strings.ToLower(a.Spec.Sender)}
 }
 
 // indexMailDomainByDomain is the extractor of mailDomainDomainIndex.

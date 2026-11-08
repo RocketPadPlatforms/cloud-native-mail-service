@@ -15,6 +15,7 @@ module.exports = {
         'how-to/dkim-keys-and-dns-records',
         'how-to/directories',
         'how-to/users-and-aliases',
+        'how-to/service-accounts',
         'how-to/block-direct-smtp-egress',
       ],
     },

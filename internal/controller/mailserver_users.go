@@ -80,7 +80,9 @@ func (r *MailServerReconciler) mailUserSource(ctx context.Context, server *cnmsv
 	if err != nil {
 		return userSource{}, err
 	}
-	in, _ := serverAddressInput(server.Name, users, namespaceDomains(domains, server.Namespace), ev)
+	// The senders of the service accounts join the decision with the next
+	// step: the MailServer does not serve them yet.
+	in, _ := serverAddressInput(server.Name, users, nil, namespaceDomains(domains, server.Namespace), ev)
 	res := addresses.Decide(in)
 	return userSource{
 		accounts:   render.NewAccounts(res, in.Users, func(name string) string { return hashes[name] }),

@@ -10,8 +10,9 @@
   limits of section 4.7 are enforced; the Rspamd check 2 (header `From`) is
   done; the load test of section 3, point 4 (cgroup `memory.peak`, delivery
   during the flood) is not);
-  3c has started with the API (the `MailServiceAccount` resource and
-  `allowedNamespaces`); its controller is not there
+  3c has the API (the `MailServiceAccount` resource and `allowedNamespaces`)
+  and the controller (consent, sender decision, directory check, credential
+  Secret and egress policy); the `MailServer` does not serve the accounts yet
 - **Date:** 2026-11-06
 
 ## Context
@@ -1214,6 +1215,47 @@ Aliases and senders come from the directory through the **same contract** as
    is refused at admission (`MinItems=1`): unset means every served domain,
    so `[]` would read as "no domains" and mean "all"; to allow nothing, leave
    the namespace out of `allowedNamespaces`.
+5. **The credential Secret and the hash (3c).** The Secret `<name>-credential`
+   in the namespace of the account holds, next to the keys of ADR 0008 (the
+   `username` is the login of point 1, `server` the in-cluster name of the
+   submission Service, `tls` is `mandatory`, `helo` and `tlsServerName` the
+   hostname the server presents, `ca.crt` the `ca.crt` of its certificate
+   Secret when it has one), the `password` and the `passwordHash`. The hash
+   lives there as for a `MailUser` (section 3, point 4): the application has
+   the plaintext anyway, so the hash adds nothing to what the namespace can
+   read. The namespace can **write** the Secret, so the `MailServer` must take
+   from it nothing but the hash: the login comes from the object (point 1,
+   never from `username`), the hash is taken only from a Secret the account
+   controls and only if it has the form the operator writes. The controller
+   verifies the hash against the password (once per resourceVersion of the
+   Secret: any write is checked, an unchanged Secret is not) and replaces both
+   when they do not match. A pair that matches, with the pinned parameters, is
+   **kept** whoever wrote it, so a tenant can choose the password of the login
+   of **its own account**, and of no other: the login comes from the account
+   object and `username` is written again at every reconcile. The right to
+   edit the Secret is the right to set that one password. There is no
+   `passwordSecretRef`: the password is always generated, so a deleted Secret or
+   a restore from GitOps gives the application a new one.
+6. **The NetworkPolicy (3c).** `<name>-submission` selects the pods that carry
+   the label `cnms.rpp.gmbh/mailserviceaccount: <name>` and allows them egress
+   to the Postfix pods of the server (a `namespaceSelector` on
+   `kubernetes.io/metadata.name` and the pod selector of the server's Postfix)
+   on port 587, and DNS. It selects labelled pods only: a policy isolates every
+   pod it selects, so a policy over the whole namespace would cut off the
+   application from everything else.
+7. **Admission is recorded in `status.admittedSender` and
+   `status.admittedFor` (3c).** `admittedFor` is
+   `<server namespace>/<server>/<directory name, or empty>`. The probe of
+   point 3 runs when `spec.sender` differs from `admittedSender` or the
+   server and directory differ from `admittedFor`, so "new account or changed
+   sender" is a comparison, not a history, and an account that names another
+   server, or a server that gains or changes its directory, is asked again.
+   Both are set when the checks pass and cleared when the namespace or the
+   sender is revoked or the directory has the address. They are in the status,
+   which tenants cannot write (an annotation on the Secret could be edited to
+   skip the probe), and are rebuilt by a probe after a restore: a restored
+   account is new. The `MailServer` serves an account only while they equal
+   its `spec.sender` and its own server and directory.
 
 #### 4.10 Not handled in Phase 3
 

@@ -123,6 +123,7 @@ rules:
   resources:
   - maildomains/finalizers
   - mailservers/finalizers
+  - mailserviceaccounts/finalizers
   - mailusers/finalizers
   verbs:
   - update

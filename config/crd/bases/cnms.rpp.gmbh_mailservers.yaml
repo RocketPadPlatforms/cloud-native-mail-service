@@ -318,7 +318,9 @@ spec:
                       AllowedNamespaces lists the namespaces whose MailServiceAccounts
                       may reference the server. Unset or empty: no other namespace
                       does; the MailServiceAccounts of the namespace of the server need
-                      no entry. Removing a namespace revokes its accounts. At most 64:
+                      no entry, unless an entry for that namespace limits its sender
+                      domains with senderDomains. Removing a namespace revokes its
+                      accounts. At most 64:
                       a limit on the size of the object, far above the number of
                       tenant namespaces that share one mail server.
                     items:

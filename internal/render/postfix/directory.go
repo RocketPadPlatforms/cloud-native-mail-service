@@ -252,13 +252,8 @@ func renderPgSQL(t *directory.SQLTarget, u uses) (*directoryMaps, error) {
 		// The owner of an address: the login of the account whose mail
 		// column or alias is the address (the aliases of a removed or
 		// guarded login are owned by nobody, like the recipient lookup).
-		q := fmt.Sprintf("SELECT login FROM %s WHERE lower(mail) = '%%s' AND %s", t.Users.Quoted(), directory.SQLLoginGuard)
-		if t.Aliases != nil {
-			q += fmt.Sprintf(" UNION SELECT u.login FROM %s a JOIN %s u ON lower(u.mail) = lower(a.target) WHERE lower(a.alias) = '%%s' AND %s",
-				t.Aliases.Quoted(), t.Users.Quoted(), directory.SQLLoginGuardOn("u.login"))
-		}
 		m.sender = "pgsql:" + tablePath(pgsqlSenderFile)
-		m.secret[pgsqlSenderFile] = table(q, u.domain)
+		m.secret[pgsqlSenderFile] = table(directory.SQLSenderQuery(*t, true, "'%s'"), u.domain)
 	}
 	// libpq reads the root certificate from the environment; "system"
 	// (libpq 16 and later) verifies against the system roots, like the

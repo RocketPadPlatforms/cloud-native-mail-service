@@ -10,6 +10,7 @@ Task-oriented guides:
 - IP pools
 - [Use an LDAP or PostgreSQL directory](directories.md)
 - [Use MailUsers and aliases](users-and-aliases.md)
+- [Let an application send mail with a MailServiceAccount](service-accounts.md)
 - Relay mode
 - Mailboxes
 - Observability with and without the Prometheus Operator

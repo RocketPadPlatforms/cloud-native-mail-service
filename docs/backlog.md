@@ -61,6 +61,13 @@ Not scoped (ADR 0015, "Limits" and section 4.7):
   two consented namespaces that share a domain cannot make each other lose
   the same sender (ADR 0015, sections 4.2 and 4.9; until then every
   namespace gets its own `senderDomains`).
+- The `MailServiceAccount` controller does not read the static test users
+  (`submission.insecureStaticUsers`), so a sender that equals the address of a
+  static user is reported `Ready` until the `MailServer` decides with all
+  claimants; the CA chain in the credential (`ca.crt`) and a Secret that was
+  deleted come back with the ten-minute requeue, because Secrets are not
+  watched; and a directory that gains the address of an admitted sender later
+  is not asked again (ADR 0015, section 4.9, points 3 and 7).
 - A `ValidatingAdmissionPolicy` that lets the operator update only Secrets
   that carry the CNMS managed-by label, to narrow the `update` verb on
   Secrets (ADR 0015, section 4.7).

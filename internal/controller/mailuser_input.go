@@ -18,6 +18,7 @@ package controller
 
 import (
 	"fmt"
+	"slices"
 
 	cnmsv1alpha1 "github.com/RocketPadPlatforms/cloud-native-mail-service/api/v1alpha1"
 	"github.com/RocketPadPlatforms/cloud-native-mail-service/internal/addresses"
@@ -45,7 +46,14 @@ func namespaceDomains(claims *cnmsv1alpha1.MailDomainList, namespace string) map
 // controller) come from the same decision. The second result holds, for each
 // MailDomain that fails, the message for a condition, by the name of the
 // object. It reads its arguments and changes none of them.
-func serverAddressInput(server string, users []cnmsv1alpha1.MailUser, domains map[string]cnmsv1alpha1.MailDomain, ev *authorizationEvaluator) (addresses.Input, map[string]string) {
+//
+// senders are the senders of the service accounts that claim an address on
+// the server (serviceSenders). A sender names its domain by its DNS name,
+// which is resolved to the MailDomain of the server's namespace (domains) so
+// that it shares the state of a MailUser that names the same object; a
+// domain no object of the namespace carries is not found, under a key that
+// no object name can have (ADR 0015, section 4.9).
+func serverAddressInput(server string, users []cnmsv1alpha1.MailUser, senders []serviceSender, domains map[string]cnmsv1alpha1.MailDomain, ev *authorizationEvaluator) (addresses.Input, map[string]string) {
 	in := addresses.Input{Domains: map[string]addresses.Domain{}}
 	failures := map[string]string{}
 	state := func(ref string) {
@@ -84,7 +92,44 @@ func serverAddressInput(server string, users []cnmsv1alpha1.MailUser, domains ma
 			state(a.DomainRef.Name)
 		}
 	}
+	for _, s := range senders {
+		ref := senderDomainRef(s.domain, domains, state, &in)
+		if _, found := domains[ref]; !found {
+			failures[ref] = fmt.Sprintf("no MailDomain of the namespace of the MailServer is for the domain %q", s.domain)
+		}
+		in.Senders = append(in.Senders, addresses.Sender{Owner: s.owner, Address: addresses.Address{Local: s.local, Domain: ref}})
+	}
 	return in, failures
+}
+
+// senderDomainKeyPrefix starts the key of a sender domain that no MailDomain
+// carries: an object name is a DNS subdomain and has no colon.
+const senderDomainKeyPrefix = "dns:"
+
+// senderDomainRef returns the key into in.Domains for the DNS name of a
+// sender: the name of the MailDomain object that carries it (the one that is
+// ok if several do, else the first by name), after state has judged it, or a
+// key of senderDomainKeyPrefix and the name when none does.
+func senderDomainRef(domain string, domains map[string]cnmsv1alpha1.MailDomain, state func(string), in *addresses.Input) string {
+	var refs []string
+	for name, md := range domains {
+		if md.Spec.Domain == domain {
+			refs = append(refs, name)
+		}
+	}
+	if len(refs) == 0 {
+		ref := senderDomainKeyPrefix + domain
+		in.Domains[ref] = addresses.Domain{State: addresses.DomainNotFound}
+		return ref
+	}
+	slices.Sort(refs)
+	for _, ref := range refs {
+		state(ref)
+		if in.Domains[ref].State == addresses.DomainOK {
+			return ref
+		}
+	}
+	return refs[0]
 }
 
 func aliasAddresses(u *cnmsv1alpha1.MailUser) []addresses.Address {

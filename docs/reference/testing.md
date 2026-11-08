@@ -43,6 +43,34 @@ the pinned Dovecot accepts, the verification of a hash that Dovecot made, the
 bounds of a stored hash, and the map functions of the watches. The specs
 assert that no password or hash reaches a condition, an Event or the log.
 
+The `MailServiceAccount` controller has envtest specs
+(`mailserviceaccount_controller_test.go`) for the credential Secret (its keys
+and the login, the CA chain, a hash that is verified before the password is
+kept and replaced with the password when it does not match, a deleted Secret
+made again, a Secret of the name that the account does not own), the egress
+NetworkPolicy (its shape, put back when changed, removed with the credential
+when the namespace is revoked, a policy of the tenant never taken over), the
+consent and `senderDomains`, a sender in a domain that is not served or not
+authorized, the sender conflicts (two accounts, a `MailUser`, and a namespace
+that is not consented to that must not take the sender away), and the
+directory check with a fake lookup (asked once per sender, a new account or
+sender withheld while the directory is down, an admitted one kept, a hit; an
+account that moves to another server, and a server that gains a directory, are
+asked again), the read of the accounts of a server through the index (a test
+client answers the field selector the way the cache does), the verification of
+the hash only for a Secret whose resourceVersion changed (counted through a
+hook), a pair that the tenant wrote and that is kept for its own login, and a
+server of another namespace that does not exist, which looks like one that does
+not consent.
+Unit tests cover the login with a known answer, the consent and the senders
+that take part in the decision, the shared address input with senders, the
+indexes and the map functions of the watches (through the indexes, not the
+whole cluster), and the filter and the query of the sender lookup of a
+directory (the address is escaped or a parameter). The lookup itself runs
+against closed ports only: a successful lookup against an LDAP or PostgreSQL
+server is not covered, and the manager watches of the accounts are covered by
+the map functions, not by a running manager.
+
 Unit tests check the decision behind them (`render.PlanAccounts`: logins,
 mailboxes, aliases, owners of senders, deferred addresses, refusals) and that
 no unsafe value (a blank, a newline, a colon, a `+`, `..`) reaches a table

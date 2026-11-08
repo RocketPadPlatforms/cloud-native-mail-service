@@ -129,6 +129,13 @@ func services(server *cnmsv1alpha1.MailServer) []client.Object {
 	}
 }
 
+// PostfixPodSelector selects the Postfix pods of a MailServer: the peer of
+// the egress policy that lets a service account reach the submission port
+// from its own namespace (ADR 0008).
+func PostfixPodSelector(server *cnmsv1alpha1.MailServer) *metav1.LabelSelector {
+	return componentSelector(server, render.ComponentPostfix)
+}
+
 func serverInboundServiceTypePtr(server *cnmsv1alpha1.MailServer) *string {
 	if server.Spec.Inbound == nil {
 		return nil

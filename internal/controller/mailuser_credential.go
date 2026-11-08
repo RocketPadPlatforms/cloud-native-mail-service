@@ -56,8 +56,9 @@ const (
 // run holds 19 MiB and leaves 19 MiB of garbage, the operator container is
 // limited to 192 MiB with GOMEMLIMIT 160MiB (config/manager/manager.yaml),
 // and the reconcilers of the MailUsers run in parallel: unbounded, a burst
-// of new users would exceed the limit. The hashes are rare (one per
-// password, not per reconcile), so queueing costs little.
+// of new users would exceed the limit. The hashes of the MailUsers are rare
+// (one per password); the MailServiceAccount controller verifies a hash only
+// when its Secret has changed (verifiedSecrets), so queueing costs little.
 var hashSlots = make(chan struct{}, 1)
 
 // acquireHashSlot waits for the hash slot, or for the end of the context.

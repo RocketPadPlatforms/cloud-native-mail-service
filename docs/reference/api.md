@@ -734,7 +734,11 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `observedGeneration` _integer_ | ObservedGeneration is the generation of the spec last applied. |  | Optional: \{\} <br /> |
-| `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#condition-v1-meta) array_ | Conditions represent the current state of the MailServiceAccount.<br />The "Ready" condition is true when the credential works. |  | Optional: \{\} <br /> |
+| `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#condition-v1-meta) array_ | Conditions represent the current state of the MailServiceAccount.<br />The "Ready" condition is true when the credential and the egress<br />policy of the account are in place. |  | Optional: \{\} <br /> |
+| `credentialSecretName` _string_ | CredentialSecretName is the name of the Secret in the namespace<br />of the account that holds the credential for the application. |  | MaxLength: 253 <br />Optional: \{\} <br /> |
+| `credentialRevision` _string_ | CredentialRevision is the resourceVersion of the credential<br />Secret after the last write that changed the password hash. It is<br />not secret; its change tells the MailServer to pick up the new<br />hash. |  | MaxLength: 253 <br />Optional: \{\} <br /> |
+| `admittedSender` _string_ | AdmittedSender is the spec.sender the credential was issued for:<br />set once the sender passed the checks, including the one against<br />the directory of a server that has one (ADR 0015, section 4.9),<br />and cleared when the namespace or the sender is revoked. A server<br />serves the account only while it equals spec.sender, so a changed<br />sender is not served before it was checked. |  | MaxLength: 318 <br />Optional: \{\} <br /> |
+| `admittedFor` _string_ | AdmittedFor says what the admission was checked against:<br />`<server namespace>/<server>/<directory>`, with the name of the<br />directory of the server, empty for a server without one. A server<br />that gains a directory, or another one, and an account that names<br />another server, are checked again; a server serves the account only<br />while this matches its own. It is not secret. |  | MaxLength: 700 <br />Optional: \{\} <br /> |
 
 
 #### MailUser
@@ -1155,7 +1159,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `allowedNamespaces` _[AllowedNamespace](#allowednamespace) array_ | AllowedNamespaces lists the namespaces whose MailServiceAccounts<br />may reference the server. Unset or empty: no other namespace<br />does; the MailServiceAccounts of the namespace of the server need<br />no entry. Removing a namespace revokes its accounts. At most 64:<br />a limit on the size of the object, far above the number of<br />tenant namespaces that share one mail server. |  | MaxItems: 64 <br />Optional: \{\} <br /> |
+| `allowedNamespaces` _[AllowedNamespace](#allowednamespace) array_ | AllowedNamespaces lists the namespaces whose MailServiceAccounts<br />may reference the server. Unset or empty: no other namespace<br />does; the MailServiceAccounts of the namespace of the server need<br />no entry, unless an entry for that namespace limits its sender<br />domains with senderDomains. Removing a namespace revokes its<br />accounts. At most 64:<br />a limit on the size of the object, far above the number of<br />tenant namespaces that share one mail server. |  | MaxItems: 64 <br />Optional: \{\} <br /> |
 
 
 #### Submission
