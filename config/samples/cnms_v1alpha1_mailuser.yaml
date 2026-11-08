@@ -1,0 +1,35 @@
+# An operator-managed account for a server without a directory (ADR 0015).
+# The name is the login and the local part of the primary address:
+# alice@example.org. The MailServer must not set directoryRef; the server
+# of cnms_v1alpha1_mailserver.yaml does, so this sample is not part of the
+# kustomization.
+apiVersion: cnms.rpp.gmbh/v1alpha1
+kind: MailUser
+metadata:
+  labels:
+    app.kubernetes.io/name: cloud-native-mail-service
+    app.kubernetes.io/managed-by: kustomize
+  name: alice
+spec:
+  # The MailServer that hosts the account (same namespace).
+  serverRef:
+    name: mailserver-sample
+  # The MailDomain of the primary address (same namespace). It must be
+  # served by the same server.
+  domainRef:
+    name: maildomain-sample
+  # Further addresses, also in other domains of the same server. They
+  # deliver into the mailbox of alice and she may send as them. They are
+  # not login names.
+  aliases:
+    - localPart: sales
+      domainRef:
+        name: maildomain-sample
+    - localPart: alice
+      domainRef:
+        name: maildomain-net-sample
+  # Without passwordSecretRef the operator generates the password. In
+  # production bring your own: a Secret with the key "password" (at least
+  # 12 characters), for example from SOPS or an external secret store.
+  # passwordSecretRef:
+  #   name: alice-password

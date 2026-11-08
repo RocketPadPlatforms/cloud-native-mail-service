@@ -148,6 +148,16 @@ the new CRDs reject or prune the old field names.
   name the relations of a PostgreSQL directory, each with an optional
   `schema` (default `public`). The column names are fixed. The API takes no
   SQL and no filter fragments.
+- **New resource `MailUser`** ([ADR
+  0015](../decisions/0015-user-sources-directory-users-and-aliases.md)):
+  an operator-managed account with a login (the object name), a primary
+  address in `domainRef`, up to 32 `aliases` and an optional
+  `passwordSecretRef`. Nothing existing changes, and nothing reads a
+  `MailUser` yet, so creating one has no effect on a running server. Install
+  the new CRD (`make install`) before the new operator: the operator
+  watches `MailUser`s and exits at startup while the CRD is missing (the
+  data plane keeps running). The operator role gains `get`, `list` and `watch` on `mailusers` and `patch` on
+  `mailusers/status`.
 - **Storage sizes are immutable:** `spec.postfix.queueStorage` and
   `spec.mailboxes.storage` cannot be edited once set, and decreasing
   `spec.postfix.replicas` is rejected. Resize the PersistentVolumeClaims

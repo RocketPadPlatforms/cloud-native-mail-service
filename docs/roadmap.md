@@ -39,8 +39,9 @@ the code and the [status conditions](reference/status-conditions.md).
 - **Users (Phase 3, 3a):** a `directoryRef` (LDAP or PostgreSQL) feeds
   recipient validation, aliases and logins in Postfix and Dovecot; the
   static test users (`--enable-insecure-test-features`) are the only other
-  source, and a server has one source (`UserSourceConflict`). No
-  `MailUser`, `MailServiceAccount` or sender binding yet.
+  source, and a server has one source (`UserSourceConflict`). The
+  `MailUser` API exists (3b), but nothing reads it yet. No
+  `MailServiceAccount` or sender binding yet.
 - **Mailboxes (Phase 4):** IMAP, LMTP delivery and the maildir volume
   work with the data plane. Open: quota, Dovecot metrics, the mailbox
   format ADR, and the k8up backup and restore e2e.

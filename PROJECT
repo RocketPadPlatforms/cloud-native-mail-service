@@ -44,4 +44,13 @@ resources:
   kind: MailDomainGrant
   path: github.com/RocketPadPlatforms/cloud-native-mail-service/api/v1alpha1
   version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: rpp.gmbh
+  group: cnms
+  kind: MailUser
+  path: github.com/RocketPadPlatforms/cloud-native-mail-service/api/v1alpha1
+  version: v1alpha1
 version: "3"

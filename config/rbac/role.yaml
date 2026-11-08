@@ -91,6 +91,7 @@ rules:
   - maildirectories
   - maildomaingrants
   - mailservers
+  - mailusers
   verbs:
   - get
   - list
@@ -102,6 +103,7 @@ rules:
   - maildomaingrants/status
   - maildomains/status
   - mailservers/status
+  - mailusers/status
   verbs:
   - patch
 - apiGroups:

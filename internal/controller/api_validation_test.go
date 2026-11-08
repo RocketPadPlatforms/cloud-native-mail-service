@@ -867,3 +867,182 @@ var _ = Describe("printer columns", func() {
 		Expect(printerCell(ns, "maildomains", apiDomainName, "Server")).To(Equal(apiServerName))
 	})
 })
+
+// Names shared by the MailUser cases.
+const (
+	apiUserName    = "alice"
+	apiUserAddress = "alice@example.org"
+	apiNetDomain   = "dom-net"
+	userAliasField = "spec.aliases[0].localPart"
+	userNameField  = "metadata.name"
+	specKey        = "spec"
+	serverRefKey   = "serverRef"
+	domainRefKey   = "domainRef"
+	refNameKey     = "name"
+	refNSKey       = "namespace"
+)
+
+// validUser is a MailUser called name in ns that the API server accepts.
+func validUser(ns, name string) *cnmsv1alpha1.MailUser {
+	return &cnmsv1alpha1.MailUser{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+		Spec: cnmsv1alpha1.MailUserSpec{
+			ServerRef: cnmsv1alpha1.NameReference{Name: apiServerName},
+			DomainRef: cnmsv1alpha1.NameReference{Name: apiDomainName},
+		},
+	}
+}
+
+// createUserObject is the unstructured form of validUser(ns, apiUserName).
+func createUserObject(ns string) (map[string]any, error) {
+	return runtime.DefaultUnstructuredConverter.ToUnstructured(validUser(ns, apiUserName))
+}
+
+// aliasOf is an alias in the MailDomain dom (example.org).
+func aliasOf(localPart string) cnmsv1alpha1.MailUserAlias {
+	return cnmsv1alpha1.MailUserAlias{LocalPart: localPart, DomainRef: cnmsv1alpha1.NameReference{Name: apiDomainName}}
+}
+
+// createUser creates a valid MailUser called name in ns after applying
+// mutate, and returns it with the create error.
+func createUser(ns, name string, mutate func(*cnmsv1alpha1.MailUser)) (*cnmsv1alpha1.MailUser, error) {
+	u := validUser(ns, name)
+	if mutate != nil {
+		mutate(u)
+	}
+	return u, k8sClient.Create(ctx, u)
+}
+
+var _ = Describe("API validation of MailUser", func() {
+	named := func(name string) func(string) error {
+		return func(ns string) error {
+			_, err := createUser(ns, name, nil)
+			return err
+		}
+	}
+	aliases := func(a ...cnmsv1alpha1.MailUserAlias) func(string) error {
+		return func(ns string) error {
+			_, err := createUser(ns, apiUserName, func(u *cnmsv1alpha1.MailUser) { u.Spec.Aliases = a })
+			return err
+		}
+	}
+	localPart := func(lp string) func(string) error { return aliases(aliasOf(lp)) }
+	many := func(n int) func(string) error {
+		list := make([]cnmsv1alpha1.MailUserAlias, n)
+		for i := range list {
+			list[i] = aliasOf(fmt.Sprintf("a%d", i))
+		}
+		return aliases(list...)
+	}
+	// raw sends a valid user as unstructured data after edit changed
+	// its spec, so a missing or unknown field reaches the API server;
+	// strict validation rejects the unknown ones that pruning would
+	// drop silently.
+	raw := func(edit func(spec map[string]any)) func(string) error {
+		return func(ns string) error {
+			typed, err := createUserObject(ns)
+			Expect(err).NotTo(HaveOccurred())
+			u := &unstructured.Unstructured{Object: typed}
+			u.SetGroupVersionKind(cnmsv1alpha1.GroupVersion.WithKind("MailUser"))
+			edit(u.Object[specKey].(map[string]any))
+			return k8sClient.Create(ctx, u, client.FieldValidation("Strict"))
+		}
+	}
+	netAlias := cnmsv1alpha1.MailUserAlias{LocalPart: apiUserName, DomainRef: cnmsv1alpha1.NameReference{Name: apiNetDomain}}
+
+	runAPICases([]apiCase{
+		{name: "accepts a user without aliases", mutate: named(apiUserName)},
+		{name: "accepts aliases in two domains", mutate: aliases(aliasOf("sales"), netAlias)},
+		{name: "accepts the primary local part as an alias in another domain", mutate: aliases(netAlias)},
+		{name: "accepts 32 aliases", mutate: many(32)},
+		{name: "accepts a name with dots", mutate: named("alice.smith")},
+		{name: "accepts the name sa", mutate: named("sa")},
+		{name: "accepts a 64 character name", mutate: named(strings.Repeat("a", 64))},
+		{name: "accepts a password Secret", mutate: func(ns string) error {
+			_, err := createUser(ns, apiUserName, func(u *cnmsv1alpha1.MailUser) {
+				u.Spec.PasswordSecretRef = &cnmsv1alpha1.SecretReference{Name: "alice-password"}
+			})
+			return err
+		}},
+		{name: "rejects a duplicate alias", mutate: aliases(aliasOf("sales"), aliasOf("sales")), wantErr: "aliases must be unique"},
+		{name: "rejects an alias equal to the primary address", mutate: aliases(aliasOf(apiUserName)), wantErr: "must not be the primary address"},
+		{name: "rejects more than 32 aliases", mutate: many(33), wantErr: "spec.aliases"},
+		{name: "rejects a name that starts with sa.", mutate: named("sa.abc"), wantErr: "reserved for service accounts"},
+		{name: "rejects a 65 character name", mutate: named(strings.Repeat("a", 65)), wantErr: "at most 64 characters"},
+		{name: "rejects an upper-case name", mutate: named("Alice"), wantErr: userNameField},
+		{name: "rejects a name with an underscore", mutate: named("alice_smith"), wantErr: userNameField},
+		{name: "rejects a name with a colon", mutate: named("alice:smith"), wantErr: userNameField},
+		{name: "rejects a name with a slash", mutate: named("alice/smith"), wantErr: userNameField},
+		{name: "rejects a name starting with a dot", mutate: named(".alice"), wantErr: userNameField},
+		{name: "rejects a name with two dots", mutate: named("alice..smith"), wantErr: userNameField},
+		{name: "rejects a name ending with a hyphen", mutate: named("alice-"), wantErr: userNameField},
+		{name: "accepts a 64 character local part", mutate: localPart(strings.Repeat("a", 64))},
+		{name: "accepts dot, underscore and hyphen inside a local part", mutate: localPart("a.b_c-d")},
+		{name: "rejects a 65 character local part", mutate: localPart(strings.Repeat("a", 65)), wantErr: userAliasField},
+		{name: "rejects an empty local part", mutate: localPart(""), wantErr: userAliasField},
+		{name: "rejects an upper-case local part", mutate: localPart("Sales"), wantErr: userAliasField},
+		{name: "rejects a local part with two dots", mutate: localPart("a..b"), wantErr: "two consecutive dots"},
+		{name: "rejects a local part starting with a dot", mutate: localPart(".a"), wantErr: userAliasField},
+		{name: "rejects a local part ending with a dot", mutate: localPart("a."), wantErr: userAliasField},
+		{name: "rejects a local part starting with a hyphen", mutate: localPart("-a"), wantErr: userAliasField},
+		{name: "rejects a local part with a plus", mutate: localPart("a+b"), wantErr: userAliasField},
+		{name: "rejects a local part with an at sign", mutate: localPart("a@b"), wantErr: userAliasField},
+		{name: "rejects a local part with a colon", mutate: localPart("a:b"), wantErr: userAliasField},
+		{name: "rejects a local part with a slash", mutate: localPart("a/b"), wantErr: userAliasField},
+		{name: "rejects a local part with a blank", mutate: localPart("a b"), wantErr: userAliasField},
+		{name: "rejects a local part that is not ASCII", mutate: localPart("jürgen"), wantErr: userAliasField},
+		{name: "rejects a user without a server reference", mutate: raw(func(s map[string]any) {
+			delete(s, serverRefKey)
+		}), wantErr: "spec.serverRef"},
+		{name: "rejects a user without a domain reference", mutate: raw(func(s map[string]any) {
+			delete(s, domainRefKey)
+		}), wantErr: "spec.domainRef"},
+		{name: "rejects an alias without a domain reference", mutate: raw(func(s map[string]any) {
+			s["aliases"] = []any{map[string]any{"localPart": "sales"}}
+		}), wantErr: "spec.aliases[0].domainRef"},
+		{name: "rejects a domain reference with a namespace prefix", mutate: raw(func(s map[string]any) {
+			s[domainRefKey] = map[string]any{refNameKey: "elsewhere/" + apiDomainName}
+		}), wantErr: "spec.domainRef.name"},
+		{name: "rejects a namespace field in a reference", mutate: raw(func(s map[string]any) {
+			s[domainRefKey] = map[string]any{refNameKey: apiDomainName, refNSKey: "elsewhere"}
+		}), wantErr: "namespace"},
+		{name: "rejects an unknown field", mutate: raw(func(s map[string]any) {
+			s["quota"] = "1Gi"
+		}), wantErr: "quota"},
+	})
+})
+
+var _ = Describe("API validation of MailUser status", func() {
+	status := func(addrs ...cnmsv1alpha1.MailUserAddressStatus) func(string) error {
+		return func(ns string) error {
+			u, err := createUser(ns, apiUserName, nil)
+			Expect(err).NotTo(HaveOccurred())
+			u.Status.Address = apiUserAddress
+			u.Status.Addresses = addrs
+			u.Status.CredentialSecretName = "alice-credential"
+			u.Status.CredentialRevision = "12345"
+			return k8sClient.Status().Update(ctx, u)
+		}
+	}
+	primary := cnmsv1alpha1.MailUserAddressStatus{
+		Address: apiUserAddress, Kind: cnmsv1alpha1.AddressKindPrimary, Served: true, Reason: "Served",
+	}
+	runAPICases([]apiCase{
+		{name: "accepts the addresses of a user", mutate: status(primary, cnmsv1alpha1.MailUserAddressStatus{
+			Address: "sales@example.net", Kind: cnmsv1alpha1.AddressKindAlias, Reason: "AliasDomainNotFound",
+		})},
+		{name: "rejects an address of an unknown kind", mutate: status(cnmsv1alpha1.MailUserAddressStatus{
+			Address: apiUserAddress, Kind: "bogus", Reason: "Served",
+		}), wantErr: "status.addresses[0].kind"},
+		{name: "rejects the same address twice", mutate: status(primary, primary), wantErr: "status.addresses"},
+	})
+})
+
+var _ = Describe("MailUser printer columns", func() {
+	It("shows the server of a MailUser", func() {
+		ns := newAPINamespace()
+		_, err := createUser(ns, apiUserName, nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(printerCell(ns, "mailusers", apiUserName, "Server")).To(Equal(apiServerName))
+	})
+})
