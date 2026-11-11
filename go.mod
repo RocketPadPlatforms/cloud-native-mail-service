@@ -5,7 +5,7 @@ go 1.27.3
 require (
 	github.com/emersion/go-msgauth v0.7.0
 	github.com/go-ldap/ldap/v3 v3.4.15
-	github.com/jackc/pgx/v5 v5.12.0
+	github.com/jackc/pgx/v5 v5.13.0
 	github.com/onsi/ginkgo/v2 v2.34.0
 	github.com/onsi/gomega v1.44.0
 	golang.org/x/crypto v0.58.0
