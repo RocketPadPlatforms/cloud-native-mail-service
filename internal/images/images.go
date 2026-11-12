@@ -55,7 +55,7 @@ const (
 	OpenLDAP = "osixia/openldap:2.6.15-rc@sha256:caf6a875d6cab9543e415ac5623f1cefd20795b220a3aa896438be7eaaab02e0"
 	// PostgreSQL is the e2e SQL directory (ADR 0015, section 9). It is
 	// an official image, which has no namespace in its name.
-	PostgreSQL = "postgres:18.6-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395"
+	PostgreSQL = "postgres:18.7-alpine@sha256:75dcac3dfb1cd01ca3536910bbc84128759362f8b118bf8c55b38a94f68f3b73"
 )
 
 // CNMS-built images (version tag only, see package docs).
