@@ -37,7 +37,7 @@ const (
 	// Dovecot is the IMAP/LMTP/SASL engine (ADR 0001).
 	Dovecot = "dovecot/dovecot:2.4.5@sha256:43c14def08a57f25107593cbcf64a0a6fbae84a7b9de7aa038513c9b21e91914"
 	// Rspamd is the filtering and DKIM engine (ADR 0001).
-	Rspamd = "rspamd/rspamd:4.2.3@sha256:47e00f62105f8a60009a30a590ebcf3bfd0b992d45468222d34afa5ca2103690"
+	Rspamd = "rspamd/rspamd:4.3.0@sha256:0d89891908f93ab1ce53c17fa90430130b48ad720216192ec44e646997c0a8e1"
 	// Valkey is the per-MailServer Rspamd state store (ADR 0001).
 	Valkey = "valkey/valkey:9.1.3@sha256:3add1a336a920ea54770a001ab6feb3da5fceea96a40373a3a2cd469b815f0b7"
 	// RedisExporter exports the Valkey metrics (ADR 0005).
