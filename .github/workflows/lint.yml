@@ -46,5 +46,5 @@ jobs:
 
       - name: Validate renovate.json
         env:
-          RENOVATE_VERSION: 44.226.2
+          RENOVATE_VERSION: 44.239.1
         run: npx --yes --package "renovate@${RENOVATE_VERSION}" renovate-config-validator --strict
