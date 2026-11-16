@@ -35,7 +35,7 @@ package images
 // Upstream images (version tag + digest).
 const (
 	// Dovecot is the IMAP/LMTP/SASL engine (ADR 0001).
-	Dovecot = "dovecot/dovecot:2.4.5@sha256:43c14def08a57f25107593cbcf64a0a6fbae84a7b9de7aa038513c9b21e91914"
+	Dovecot = "dovecot/dovecot:2.4.5@sha256:a2e908c9a93698f3923104ea5be7f4beacde9586242aff5d8059599d0042c62a"
 	// Rspamd is the filtering and DKIM engine (ADR 0001).
 	Rspamd = "rspamd/rspamd:4.2.3@sha256:47e00f62105f8a60009a30a590ebcf3bfd0b992d45468222d34afa5ca2103690"
 	// Valkey is the per-MailServer Rspamd state store (ADR 0001).
